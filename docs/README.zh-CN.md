@@ -8,6 +8,7 @@
 
 ## 当前指南
 
+- [本地检索与 GPU](LOCAL-RAG.zh-CN.md)
 - [架构](ARCHITECTURE.zh-CN.md)
 - [功能指南](FEATURES.zh-CN.md)
 - [对话、进度与恢复](INTERACTION.zh-CN.md)

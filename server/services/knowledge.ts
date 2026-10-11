@@ -1,3 +1,8 @@
+import { retrievalTarget } from '../../shared/retrieval.js';
+import { knowledgeStatus } from './retrieval-status.js';
+import type { RetrievalSettings } from '../../shared/retrieval.js';
+import { externalVectorSearch, rerankCandidates, retrievalPost } from './retrieval-extensions.js';
+import { KnowledgeGraph } from './knowledge-graph.js';
 import { dirname, join } from 'node:path';
 import { structuredChunks, documentAt, documentEligibilitySQL } from './knowledge-versions.js';
 import { AnnIndex } from './ann.js';
@@ -20,6 +25,7 @@ export class Knowledge {
   constructor(
     private store: Store,
     private embeddings?: Embeddings,
+    private retrieval: () => RetrievalSettings = () => ({}),
   ) {
     this.ann = new AnnIndex(
       store.path === ':memory:' ? undefined : join(dirname(store.path), 'ann-cache'),
@@ -66,30 +72,28 @@ export class Knowledge {
       status: total && completed === total ? 'indexed' : completed ? 'partial' : 'pending',
     };
   }
-  diagnostics(scopes: string[]) {
-    const documents = this.store
-      .list<any>('document')
-      .filter((d) => scopes.includes(d.scope) && d.validUntil == null);
-    const sources = this.store.list<any>('knowledge-watch').filter((w) => scopes.includes(w.id));
+  statistics(scopes: string[], asOf = Date.now(), memoryBudgetMiB?: number) {
+    return knowledgeStatus(
+      this.store,
+      scopes,
+      this.embeddings?.fingerprint() || '',
+      !!this.embeddings?.enabled(),
+      asOf,
+      memoryBudgetMiB,
+    );
+  }
+  diagnostics(scopes: string[], asOf = Date.now()) {
+    const statistics = this.statistics(scopes, asOf);
     return {
-      status: !scopes.length
-        ? 'disabled'
-        : !documents.length
-          ? sources.some((w) => w.error || w.issues?.length)
-            ? 'import_failed'
-            : 'not_imported'
-          : 'no_match',
-      documents: documents.length,
-      sources: sources.map((w) => ({
-        scope: w.id,
-        status: w.status,
-        error: w.error,
-        issueCount: (w.issues || []).length,
-        issues: (w.issues || []).slice(0, 20).map((x: any) => ({ stage: x.stage, error: x.error })),
-      })),
-      note: 'Chat history is not automatically imported into knowledge. Results are limited to authorized scopes.',
+      status: statistics.state === 'ready' ? 'no_match' : statistics.state,
+      queryOutcome: 'no_match',
+      documents: statistics.documents.current,
+      sources: statistics.sources,
+      statistics,
+      note: 'Chat history is not automatically imported. Index completeness and query relevance are separate.',
     };
   }
+
   import(
     scope: string,
     name: string,
@@ -202,6 +206,7 @@ export class Knowledge {
           scope: d.scope,
           text: d.text,
           score,
+          scoreKind: 'lexical',
           ...this.citation(d.document_id, d.id),
         };
       })
@@ -283,15 +288,17 @@ export class Knowledge {
     asOf = Date.now(),
     bypassPolicy = false,
   ) {
+    this.lastRetrieval = {};
+    if (!query.trim() || !scopes.length) return [];
     if (
       !bypassPolicy &&
       scopes.length === 1 &&
       this.store.maybe<any>('retrieval-policy', scopes[0])?.mode === 'lexical'
     )
-      return this.search(scopes, query, limit, asOf);
+      return this.finish(this.search(scopes, query, 30, asOf), scopes, query, limit, asOf, signal);
     const lexical = this.search(scopes, query, 30, asOf);
     if (!this.embeddings?.enabled() || !scopes.length)
-      return this.enrich(lexical, query, limit, asOf);
+      return this.finish(lexical, scopes, query, limit, asOf, signal);
     const [q] = await this.embeddings.encode([query], signal, 'query');
     const rows = this.store.db
       .prepare(
@@ -309,9 +316,28 @@ export class Knowledge {
           r.v.values.length === q.length &&
           r.v.values.every(Number.isFinite),
       );
-    if (!vectors.length) return this.enrich(lexical, query, limit, asOf);
+    if (!vectors.length) return this.finish(lexical, scopes, query, limit, asOf, signal);
     let ranked: { id: string; score: number }[];
-    if (vectors.length < 2000) {
+    const external = this.retrieval().vectors;
+    if (external?.enabled) {
+      const revision = (
+        this.store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any
+      ).version;
+      const result = await externalVectorSearch(
+        external,
+        vectors.map((r) => ({ id: r.id, values: r.v.values })),
+        q,
+        signal,
+      );
+      assert(
+        (this.store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any)
+          .version === revision,
+        'INDEX_CHANGED',
+        'Knowledge changed during external retrieval; search again.',
+      );
+      ranked = result.result;
+      this.lastRetrieval = { ...result, result: undefined, chunks: vectors.length };
+    } else if (vectors.length < 2000) {
       ranked = vectors
         .map((r) => ({ id: r.id, score: cosine(q, r.v.values) }))
         .sort((a, b) => b.score - a.score)
@@ -363,21 +389,246 @@ export class Knowledge {
           scope: r.scope,
           text: r.text,
           score: hit.score,
+          embeddingDimension: q.length,
           ...this.citation(r.document_id, r.id),
         };
       });
     const merged = new Map<string, any>();
-    for (const list of [lexical, semantic])
+    for (const [channel, list] of [
+      ['lexical', lexical],
+      ['semantic', semantic],
+    ] as const)
       list.forEach((r, i) => {
         const old = merged.get(r.id);
-        merged.set(r.id, { ...r, score: (old?.score || 0) + 1 / (60 + i + 1) });
+        const fusionScore = (old?.fusionScore || 0) + 1 / (60 + i + 1);
+        merged.set(r.id, {
+          ...old,
+          ...r,
+          score: fusionScore,
+          fusionScore,
+          scoreKind: 'rrf',
+          retrievalChannels: {
+            ...old?.retrievalChannels,
+            [channel]: { rank: i + 1, rawScore: r.score },
+          },
+        });
       });
-    return this.enrich(
+    return this.finish(
       [...merged.values()].sort((a, b) => b.score - a.score),
+      scopes,
       query,
       limit,
       asOf,
+      signal,
     );
+  }
+  private lightSyncBusy = false;
+  async syncLightRag() {
+    const c = this.retrieval().lightRag;
+    if (!c?.enabled || c.authorizedTarget !== retrievalTarget('lightRag', c))
+      return { status: 'disabled' };
+    if (this.lightSyncBusy) return { status: 'processing' };
+    this.lightSyncBusy = true;
+    try {
+      const target = retrievalTarget('lightRag', c);
+      const id = createHash('sha256').update(target).digest('hex');
+      const previous = this.store.maybe<any>('lightrag-sync', id);
+      const rows = this.store.db
+        .prepare(
+          'SELECT id,document_id,text FROM chunks WHERE scope=? ORDER BY document_id,ordinal',
+        )
+        .all(c.scope)
+        .filter((r: any) =>
+          documentAt(this.store.maybe('document', r.document_id), Date.now()),
+        ) as any[];
+      const completed = new Set<string>(previous?.completed || []);
+      if (previous?.jobId) {
+        const job = await retrievalPost('lightRag', c, '/documents/status', {
+          jobId: previous.jobId,
+        });
+        if (job.status !== 'completed')
+          return { status: job.status, completed: completed.size, total: rows.length };
+        for (const key of previous.batch) completed.add(key);
+        this.store.put('lightrag-sync', { id, completed: [...completed] });
+      } else if (previous?.status === 'unknown') {
+        return {
+          status: 'unknown',
+          completed: completed.size,
+          total: rows.length,
+          notice:
+            'Submission result unknown; inspect local LightRAG before resetting synchronization.',
+        };
+      }
+      const latest = this.retrieval().lightRag;
+      if (
+        !latest?.enabled ||
+        latest.authorizedTarget !== target ||
+        retrievalTarget('lightRag', latest) !== target
+      )
+        return { status: 'disabled' };
+      const batch = rows
+        .filter(
+          (r) =>
+            !completed.has(r.id) &&
+            documentAt(this.store.maybe('document', r.document_id), Date.now()),
+        )
+        .slice(0, 16);
+      if (!batch.length) return { status: 'synced', completed: completed.size, total: rows.length };
+      // Save intent before sending; an unknown submission is never blindly replayed.
+      this.store.put('lightrag-sync', { id, completed: [...completed], status: 'unknown' });
+      const result = await retrievalPost('lightRag', c, '/documents/texts', {
+        scope: c.scope,
+        texts: batch.map((r) => r.text),
+        file_sources: batch.map((r) => 'amadeus-' + r.document_id + '-' + r.id),
+      });
+      assert(
+        typeof result.jobId === 'string',
+        'LIGHTRAG_JOB',
+        'Expected a local LightRAG ingestion job.',
+      );
+      this.store.put('lightrag-sync', {
+        id,
+        completed: [...completed],
+        jobId: result.jobId,
+        batch: batch.map((r) => r.id),
+      });
+      return { status: result.status, completed: completed.size, total: rows.length };
+    } finally {
+      this.lightSyncBusy = false;
+    }
+  }
+  private async finish(
+    rows: any[],
+    scopes: string[],
+    query: string,
+    limit: number,
+    asOf: number,
+    signal?: AbortSignal,
+  ) {
+    const options = this.retrieval(),
+      pool = new Map(rows.map((r) => [r.id, r]));
+    const addEvidence = (documentId: string, quote: string, origin: string, edgeId?: string) => {
+      const doc = this.store.maybe<any>('document', documentId);
+      if (!doc || !scopes.includes(doc.scope) || !documentAt(doc, asOf) || !quote.trim()) return;
+      const chunk = this.store.db
+        .prepare(
+          'SELECT * FROM chunks WHERE document_id=? AND instr(text,?)>0 ORDER BY ordinal LIMIT 1',
+        )
+        .get(documentId, quote) as any;
+      if (!chunk) return;
+      const old = pool.get(chunk.id);
+      pool.set(chunk.id, {
+        ...(old || {
+          id: chunk.id,
+          documentId,
+          scope: doc.scope,
+          name: doc.name,
+          ordinal: chunk.ordinal,
+          text: chunk.text,
+          score: 1 / 61,
+          scoreKind: origin,
+          ...this.citation(documentId, chunk.id),
+        }),
+        supplementalEvidence: [
+          ...(old?.supplementalEvidence || []).filter(
+            (e: any) => e.edgeId !== edgeId || e.origin !== origin,
+          ),
+          { origin, edgeId, quote },
+        ].slice(0, 8),
+      });
+    };
+    if (options.graph !== false) {
+      const graph = new KnowledgeGraph(this.store).search(scopes, query, asOf, 2);
+      for (const path of graph.paths)
+        for (const edge of path.edges)
+          for (const evidence of edge.evidence)
+            if (evidence.type === 'document')
+              addEvidence(evidence.id, evidence.quote, 'document-graph', edge.id);
+    }
+    const light = options.lightRag;
+    if (light?.enabled && scopes.includes(light.scope)) {
+      const response = await retrievalPost(
+        'lightRag',
+        light,
+        '/query/data',
+        { scope: light.scope, query, mode: light.mode, top_k: 20, chunk_top_k: 20 },
+        signal,
+      );
+      assert(
+        Array.isArray(response?.data?.chunks),
+        'LIGHTRAG_RESPONSE',
+        'Expected LightRAG data.chunks.',
+      );
+      const docs = this.store
+        .list<any>('document')
+        .filter((d) => d.scope === light.scope && documentAt(d, asOf));
+      for (const r of response.data.chunks.slice(0, 30)) {
+        if (
+          typeof r.content !== 'string' ||
+          r.content.length > 20000 ||
+          typeof r.file_path !== 'string'
+        )
+          continue;
+        // Never trust external answers or names alone. Import with this stable source ID.
+        const doc = docs.find((d) => r.file_path.startsWith('amadeus-' + d.id + '-'));
+        if (doc) {
+          const chunkId = r.file_path.slice(('amadeus-' + doc.id + '-').length);
+          const chunk = this.store.db
+            .prepare('SELECT text FROM chunks WHERE id=? AND document_id=?')
+            .get(chunkId, doc.id) as any;
+          if (chunk?.text.includes(r.content)) addEvidence(doc.id, r.content, 'lightrag');
+        }
+      }
+    }
+    let result = this.enrich(
+      [...pool.values()].sort((a, b) => b.score - a.score),
+      query,
+      30,
+      asOf,
+    );
+    if (options.rerank?.enabled)
+      result = await rerankCandidates(options.rerank, query, result, signal);
+    return result
+      .filter(
+        (r) =>
+          scopes.includes(r.scope) && documentAt(this.store.maybe('document', r.documentId), asOf),
+      )
+      .slice(0, limit);
+  }
+  async investigate(
+    scopes: string[],
+    queries: string[],
+    limit = 6,
+    signal?: AbortSignal,
+    asOf = Date.now(),
+  ) {
+    assert(
+      queries.length > 0 && queries.length <= 4,
+      'RESEARCH_BUDGET',
+      'Use one to four focused queries.',
+    );
+    const results = new Map<string, any>(),
+      rounds: any[] = [];
+    for (const query of [...new Set(queries.map((q) => q.trim()).filter(Boolean))]) {
+      if (signal?.aborted) throw new Error('Retrieval cancelled');
+      const hits = await this.hybrid(scopes, query, limit, signal, asOf);
+      let added = 0;
+      for (const hit of hits) {
+        if (!results.has(hit.id)) added++;
+        results.set(hit.id, hit);
+      }
+      rounds.push({ query, hits: hits.length, newChunks: added });
+    }
+    return {
+      results: [...results.values()].slice(0, 24),
+      rounds,
+      budget: { maxQueries: 4, hostPlanningModelCalls: 0 },
+      next: results.size
+        ? 'Compare cited evidence; unresolved conflicts may require a focused follow-up.'
+        : 'No grounded results; refine query or inspect ingestion and scope.',
+      notice:
+        'Agent-directed query variants; host does not infer correctness or launch an unlimited reasoning loop.',
+    };
   }
   private citation(documentId: string, chunkId: string) {
     const d = this.store.maybe<any>('document', documentId);
@@ -395,12 +646,24 @@ export class Knowledge {
     const queryTerms = new Set(terms(query));
     const ranked = rows
       .filter((r) => documentAt(this.store.maybe('document', r.documentId), asOf))
-      .map((r, i) => ({
-        ...r,
-        score:
-          1 / (60 + i) +
-          [...new Set(terms(r.heading || ''))].filter((t) => queryTerms.has(t)).length * 0.002,
-      }));
+      .map((r) => {
+        const headingBoost =
+          [...new Set(terms(r.heading || ''))].filter((t) => queryTerms.has(t)).length * 0.002;
+        return {
+          ...r,
+          baseScore: r.score,
+          headingBoost,
+          score: r.score + headingBoost,
+          ranking: {
+            method: r.scoreKind === 'rrf' ? 'rrf-plus-heading' : 'lexical-plus-heading',
+            rrfK: r.scoreKind === 'rrf' ? 60 : null,
+            semanticReranker: 'none',
+            relevanceCalibrated: false,
+            embeddingModel: r.retrievalChannels?.semantic ? this.embeddings?.fingerprint() : null,
+            embeddingDimension: r.embeddingDimension ?? null,
+          },
+        };
+      });
     const seen = new Set<string>();
     return ranked
       .sort((a, b) => b.score - a.score)
@@ -415,10 +678,15 @@ export class Knowledge {
         ...r,
         asOf,
         alternativeSources: ranked
-          .filter((x) => x.documentId !== r.documentId)
+          .filter(
+            (x) =>
+              x.documentId !== r.documentId &&
+              x.text.replace(/\s+/g, ' ').trim() === r.text.replace(/\s+/g, ' ').trim(),
+          )
           .slice(0, 4)
           .map((x) => ({
             documentId: x.documentId,
+            match: 'whitespace-normalized-exact',
             version: x.version,
             source: x.source,
             quote: x.text.slice(0, 500),
@@ -429,7 +697,7 @@ export class Knowledge {
           )
           .all(r.documentId, Math.max(0, r.ordinal - 1), r.ordinal + 1, r.id),
         evidenceNotice:
-          'Retrieved passages may conflict; compare source versions and quotes. Retrieval is not a verification verdict.',
+          'Ranking is not calibrated relevance or a verification verdict; weak or unrelated candidates may be returned. Compare source versions and quotes. Alternative sources match normalized chunk text; other corroboration is not implied.',
       }));
   }
   remove(key: string) {

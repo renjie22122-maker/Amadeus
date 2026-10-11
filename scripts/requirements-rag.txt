@@ -1,0 +1,6 @@
+lightrag-hku==1.5.7
+sentence-transformers==5.1.2
+faiss-cpu==1.12.0; sys_platform == "win32"
+faiss-cpu>=1.12,<2; sys_platform != "win32"
+qdrant-client>=1.15,<2
+pymilvus>=2.6,<3

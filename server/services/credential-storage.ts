@@ -42,9 +42,20 @@ export function protectSettings(value: Settings, codec: SecretCodec) {
   const secret = {
     profiles: output.profiles.map((p) => ({ id: p.id, key: p.apiKey })),
     embedding: output.embedding.apiKey,
+    retrieval: Object.fromEntries(
+      ['vectors', 'rerank', 'lightRag'].map((k) => [
+        k,
+        (output.retrieval as any)?.[k]?.apiKey || '',
+      ]),
+    ),
     media: (output.media?.connections || []).map((p) => ({ id: p.id, key: p.apiKey })),
   };
-  if (!secret.profiles.some((p) => p.key) && !secret.embedding && !secret.media.some((p) => p.key))
+  if (
+    !secret.profiles.some((p) => p.key) &&
+    !secret.embedding &&
+    !Object.values(secret.retrieval).some(Boolean) &&
+    !secret.media.some((p) => p.key)
+  )
     return output;
   const credentialEnvelope = {
     version: 1,
@@ -53,6 +64,8 @@ export function protectSettings(value: Settings, codec: SecretCodec) {
   };
   for (const p of output.profiles) p.apiKey = '';
   output.embedding.apiKey = '';
+  for (const k of ['vectors', 'rerank', 'lightRag'])
+    if ((output.retrieval as any)?.[k]) (output.retrieval as any)[k].apiKey = '';
   for (const p of output.media?.connections || []) p.apiKey = '';
   return { ...output, credentialEnvelope };
 }
@@ -70,6 +83,8 @@ export function restoreSettings(raw: any, codec?: SecretCodec) {
   for (const p of result.profiles || [])
     p.apiKey = secret.profiles.find((s: any) => s.id === p.id)?.key || '';
   result.embedding.apiKey = secret.embedding || '';
+  for (const k of ['vectors', 'rerank', 'lightRag'])
+    if (result.retrieval?.[k]) result.retrieval[k].apiKey = secret.retrieval?.[k] || '';
   for (const p of result.media?.connections || [])
     p.apiKey = secret.media.find((s: any) => s.id === p.id)?.key || '';
   return result;

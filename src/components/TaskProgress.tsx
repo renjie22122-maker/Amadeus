@@ -20,6 +20,15 @@ export function TaskProgress({
     done = tasks.filter((t) => t.status === 'done').length;
   const active = tasks.find((t) => t.status === 'running'),
     blocked = tasks.filter((t) => t.status === 'blocked');
+  const running = tasks.filter((t) => t.status === 'running').length;
+  const pending = tasks.filter((t) => t.status === 'pending').length;
+  const delivered = new Set(
+    detail.events.filter((e) => e.type === 'user.delivered').flatMap((e) => e.data.eventIds || []),
+  );
+  const queued = detail.events.filter(
+    (e) =>
+      e.runId === run?.id && e.type === 'user.message' && e.data.steering && !delivered.has(e.id),
+  ).length;
   const waiting = detail.inputs.some((i) => i.status === 'pending');
   const label = waiting
     ? zh
@@ -147,6 +156,27 @@ export function TaskProgress({
           </ol>
         </div>
       )}
+      <div className="task-progress-counts" role="status" aria-live="polite">
+        <span>
+          {zh ? '已提交' : 'Reported done'} {done}
+        </span>
+        <span>
+          {zh ? '进行中' : 'Working'} {running}
+        </span>
+        <span>
+          {zh ? '待开始' : 'Pending'} {pending}
+        </span>
+        {blocked.length > 0 && (
+          <span>
+            {zh ? '受阻' : 'Blocked'} {blocked.length}
+          </span>
+        )}
+        {queued > 0 && (
+          <span>
+            {zh ? '新消息待接收' : 'New messages queued'} {queued}
+          </span>
+        )}
+      </div>
       <button
         type="button"
         className="task-progress-toggle"

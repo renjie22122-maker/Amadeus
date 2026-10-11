@@ -173,7 +173,11 @@ export class Runtime implements TeamPort {
       this.filesForConversation(store.get<Conversation>('conversation', run.conversationId)),
     );
     this.inputs = new Inputs(store, (r, p, s) => reviewer.review(r, p, s));
-    this.knowledge = new Knowledge(store, new Embeddings(() => config.get().embedding));
+    this.knowledge = new Knowledge(
+      store,
+      new Embeddings(() => config.get().embedding),
+      () => config.get().retrieval || {},
+    );
     this.memories = new MemoryIndex(store, new Embeddings(() => config.get().embedding));
     this.environment = new RunEnvironment(store, config, directory, this.memories);
     store.onEvent = (e) => {
@@ -565,7 +569,14 @@ export class Runtime implements TeamPort {
           .sort((a, b) => Number(a.id) - Number(b.id));
         const messages = pending;
         this.steering.set(key, []);
-        if (messages.length) cognitive.reset(run);
+        if (messages.length) {
+          cognitive.reset(run);
+          run.checkpoints.push({
+            role: 'system',
+            content:
+              'New user input is being delivered. Reassess the current task plan. For changed multi-step scope, inspect_plan and extend_plan with new acceptance checks; preserve completed work and evidence. A question or status request does not require adding tasks. Do not claim the plan was updated until its tool succeeds.',
+          });
+        }
         for (const message of messages) {
           const last: Run['checkpoints'][number] = { role: 'user', content: message.content };
           run.checkpoints.push(last);

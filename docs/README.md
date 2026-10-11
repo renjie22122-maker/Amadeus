@@ -8,6 +8,7 @@ This is the maintained English/Chinese documentation set, reviewed on 2026-10-05
 
 ## Current guides
 
+- [Local retrieval and GPU](LOCAL-RAG.md)
 - [Architecture](ARCHITECTURE.md)
 - [Feature guide](FEATURES.md)
 - [Conversations, progress and recovery](INTERACTION.md)

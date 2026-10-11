@@ -20,3 +20,14 @@ build/
 !/scripts/build-server.mjs
 !/scripts/check-docs.mjs
 !/scripts/smoke-server.mjs
+
+!/scripts/retrieval_service.py
+!/scripts/local-rag-config.ts
+!/scripts/requirements-rag.txt
+
+# Offline dependencies, model weights and temporary environments
+/Amadeus-offline/
+
+!scripts/prepare_retrieval_models.py
+
+!tests/model-preparation.test.py

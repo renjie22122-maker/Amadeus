@@ -59,3 +59,7 @@ Short Markdown/formula pastes open Preview; Edit returns to the unchanged source
 Quick Start checks source fingerprints and rebuilds when the service is stopped. An already running service is only reopened; rebuilding files does not reload its in-memory code. Finish tasks and stop the service before running Start-Amadeus.cmd again. First-Start-Amadeus.cmd prepares locked dependencies and builds; it refuses to replace dependencies underneath a running service.
 
 Malformed tool arguments get at most two consecutive repair attempts, reset after each successful model response. Exhaustion is a recoverable interruption; incomplete calls are never executed. Network reconnection is separate. Historical failures do not describe the currently installed implementation. Security review designs are untested suggestions, not evidence of vulnerability discovery or remediation.
+
+## Live task progress
+
+The composer shows reported-done, working, pending and blocked counts. SSE updates and reconnect refresh the board. Queued messages are not yet plan changes; after delivery the model can extend_plan with new requirements while retaining existing status and evidence. Reported done is not independent acceptance.

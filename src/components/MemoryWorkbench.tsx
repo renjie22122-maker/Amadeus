@@ -318,6 +318,11 @@ export function MemoryWorkbench({ scope, go, zh, memories = [] }: any) {
             }}
           />
         </div>
+        <p className="muted">
+          {zh
+            ? '开启资料文件夹的实体关系自动提取后，有原文依据且无歧义的关系会自动入库。已确认实体可复用；新增别名、重名歧义和手工候选仍需确认。自动提取范围与费用沿用该资料文件夹设置。'
+            : 'Folder graph extraction automatically saves unambiguous, source-backed relations. Confirmed entities are reusable; new aliases, ambiguous names and manual candidates still need confirmation. Folder settings control extraction scope and cost.'}
+        </p>
         <details>
           <summary>
             {zh ? '高级：手工创建实体和关系' : 'Advanced: create entities and relations'}

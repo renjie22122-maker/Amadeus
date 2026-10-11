@@ -194,7 +194,15 @@ test('graph extraction rejects invented quotes and never reuses entities from an
   const { store } = fixture(t);
   const knowledge = new Knowledge(store);
   t.after(() => knowledge.close());
-  const doc = knowledge.import('project:p', 'source', 'Alpha owns Beta.');
+  const doc = knowledge.import('project:p', 'source', 'Alpha owns Beta. Twin owns Other.');
+  for (const id of ['twin1', 'twin2'])
+    store.put('memory-entity', {
+      id,
+      scope: 'project:p',
+      name: 'Twin',
+      aliases: [],
+      confirmed: true,
+    });
   store.put('memory-entity', {
     id: 'foreign',
     scope: 'project:other',
@@ -215,6 +223,7 @@ test('graph extraction rejects invented quotes and never reuses entities from an
               relations: [
                 { from: 'Alpha', to: 'Beta', relation: 'owns', quote: 'Alpha owns Beta.' },
                 { from: 'Alpha', to: 'Gamma', relation: 'owns', quote: 'Alpha owns Gamma.' },
+                { from: 'Twin', to: 'Other', relation: 'owns', quote: 'Twin owns Other.' },
               ],
             }),
           },
@@ -225,6 +234,7 @@ test('graph extraction rejects invented quotes and never reuses entities from an
   await learning.document(doc, 'm', 'm|https://fixture.test', () => true);
   const edges = new KnowledgeGraph(store).list('project:p');
   assert.equal(edges.length, 1);
+  assert.equal(store.list<any>('graph-learning')[0].deferred.length, 1);
   assert.notEqual(edges[0].from, 'foreign');
   assert.equal(store.list<any>('memory-entity').filter((e) => e.name === 'Gamma').length, 0);
 });

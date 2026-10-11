@@ -475,6 +475,20 @@ export function installPlanning(registry: ToolRegistry) {
     }),
   });
   registry.add({
+    name: 'extend_plan',
+    effect: 'coordinate',
+    atomic: true,
+    description:
+      'Add tasks for newly received requirements to the existing shared plan. Read inspect_plan first. Preserve existing tasks, ownership, evidence and completion. Add dependencies and new acceptance checks; never mark new requirements completed from old evidence.',
+    schema: z.object({
+      revision: z.number().int().min(0),
+      tasks: z.array(taskInput).min(1).max(50),
+    }),
+    run: (a, c) => ({
+      content: JSON.stringify(new TaskBoard(c.store).extend(c.run, a.tasks, a.revision)),
+    }),
+  });
+  registry.add({
     name: 'update_task',
     effect: 'coordinate',
     atomic: true,

@@ -169,6 +169,43 @@ const schema = z.object({
   approveFileWrites: z.boolean().default(false),
   nativePython: z.string().default(''),
   nativeNetwork: z.enum(['deny', 'host']).default('deny'),
+  retrieval: z
+    .object({
+      graph: z.boolean().default(true),
+      vectors: z
+        .object({
+          enabled: z.boolean().default(false),
+          baseUrl: z.string().default(''),
+          apiKey: z.string().default(''),
+          authorizedTarget: z.string().optional(),
+          backend: z.enum(['faiss', 'milvus', 'qdrant']),
+          index: z.enum(['flat', 'hnsw', 'ivf-flat', 'ivf-pq']),
+        })
+        .optional(),
+      rerank: z
+        .object({
+          enabled: z.boolean().default(false),
+          baseUrl: z.string().default(''),
+          apiKey: z.string().default(''),
+          authorizedTarget: z.string().optional(),
+          model: z.string().min(1),
+          candidates: z.number().int().min(1).max(30).default(20),
+          minScore: z.number().finite().optional(),
+        })
+        .optional(),
+      lightRag: z
+        .object({
+          enabled: z.boolean().default(false),
+          baseUrl: z.string().default(''),
+          apiKey: z.string().default(''),
+          authorizedTarget: z.string().optional(),
+          scope: z.string().min(1),
+          embeddingModel: z.string().optional(),
+          mode: z.enum(['local', 'global', 'hybrid', 'mix']).default('mix'),
+        })
+        .optional(),
+    })
+    .optional(),
   embedding: z
     .object({
       baseUrl: z.string(),
@@ -239,6 +276,15 @@ export class Configuration {
         })),
       },
       profiles: this.value.profiles.map(({ apiKey, ...rest }) => ({ ...rest, hasKey: !!apiKey })),
+      retrieval: this.value.retrieval && {
+        ...this.value.retrieval,
+        ...Object.fromEntries(
+          ['vectors', 'rerank', 'lightRag'].map((k) => {
+            const c = (this.value.retrieval as any)[k];
+            return [k, c && { ...c, apiKey: undefined, hasKey: !!c.apiKey }];
+          }),
+        ),
+      },
       embedding: {
         ...this.value.embedding,
         apiKey: undefined,
@@ -248,6 +294,12 @@ export class Configuration {
   }
   save(input: unknown) {
     const raw = input as any;
+    for (const k of ['vectors', 'rerank', 'lightRag']) {
+      const c = raw.retrieval?.[k],
+        old = (this.value.retrieval as any)?.[k];
+      if (c && c.apiKey === undefined)
+        c.apiKey = old?.baseUrl === c.baseUrl ? old.apiKey || '' : '';
+    }
     for (const p of raw.profiles || [])
       if (p.apiKey === undefined) {
         const old = this.value.profiles.find((x) => x.id === p.id);
@@ -332,6 +384,8 @@ export class Configuration {
     ) {
       for (const p of persisted.profiles) p.apiKey = '';
       persisted.embedding.apiKey = '';
+      for (const k of ['vectors', 'rerank', 'lightRag'])
+        if ((persisted.retrieval as any)?.[k]) (persisted.retrieval as any)[k].apiKey = '';
       for (const p of persisted.media?.connections || []) p.apiKey = '';
     }
     const codec = this.codec();

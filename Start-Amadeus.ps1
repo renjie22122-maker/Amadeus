@@ -3,6 +3,10 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
 $taskUrl = 'http://127.0.0.1:8810'
 . (Join-Path $taskRoot 'Launcher.Common.ps1')
+if (Test-Path (Join-Path $(if ($env:AGENTDEMO_DATA_DIR) { $env:AGENTDEMO_DATA_DIR } else { Join-Path $taskRoot '.data' }) 'retrieval-service/config.json')) {
+    try { & (Join-Path $taskRoot 'Start-Local-RAG.ps1') -NoWait }
+    catch { Write-Warning ("Optional local RAG did not start: " + $_.Exception.Message) }
+}
 $taskHealth = $null
 try { $taskHealth = Invoke-RestMethod "$taskUrl/api/health" -TimeoutSec 2 } catch {}
 if ($taskHealth.application -in @('Amadeus', 'AgentDemo')) {

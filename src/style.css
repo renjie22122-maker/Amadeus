@@ -3926,3 +3926,12 @@ input.team-switch:checked::after {
 .composer textarea[hidden] {
   display: none;
 }
+
+.task-progress-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 4px 10px 7px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}

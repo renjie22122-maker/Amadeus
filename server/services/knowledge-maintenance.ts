@@ -206,6 +206,13 @@ export class KnowledgeMaintenance {
     );
   }
   private async scan() {
+    // Explicit retrieval consent is checked again inside sync; keep watch ingestion independent.
+    try {
+      await this.knowledge.syncLightRag();
+    } catch {
+      /* A failed optional sidecar must not stop local import. */
+    }
+
     await this.batches();
     for (let w of this.store.list<KnowledgeWatch>('knowledge-watch')) {
       if (!w.enabled || this.stopped) continue;

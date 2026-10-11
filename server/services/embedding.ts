@@ -48,7 +48,12 @@ export class Embeddings {
         'Content-Type': 'application/json',
         ...(s.apiKey ? { Authorization: 'Bearer ' + s.apiKey } : {}),
       },
-      body: JSON.stringify({ model: s.model, input: texts }),
+      body: JSON.stringify({
+        model: s.model,
+        input: /^intfloat\/multilingual-e5-(small|base|large)$/.test(s.model)
+          ? texts.map((text) => (purpose === 'query' ? 'query: ' : 'passage: ') + text)
+          : texts,
+      }),
       signal: signal
         ? AbortSignal.any([signal, AbortSignal.timeout(60000)])
         : AbortSignal.timeout(60000),

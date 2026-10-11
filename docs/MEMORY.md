@@ -106,3 +106,21 @@ Experience dispositions now record a fingerprint of the declared task contract (
 - `compare_acceptance_contracts` compares an earlier root run in the same conversation with the current plan. Added, removed and changed contracts are explicit. Stable task IDs are required for matching; renames appear removed/added. It is structural comparison, not semantic weakening detection or permission to remove requirements.
 - `inspect_learning_outcomes` reports current eligible experience dispositions and existing intervention assessments for up to the latest 100 runs in this conversation. Changed trajectory, cleared errors and recorded progress remain distinct. Disabled memory returns no metrics. The report does not calculate defect prevention, calibrated confidence or causal improvement, nor automatically change routing or permissions.
   Automatic tool choice remains model-driven. No new dependency or launcher change is needed; restart the stopped service to load the compiled backend. Retrospective reports do not execute tests or replay operations.
+
+### Retrieval diagnostics and graph automation (2026-10-11)
+
+Knowledge retrieval uses SQLite lexical retrieval plus optional local/API vectors, exact search below 2,000 eligible vectors and HNSW above that boundary. The default is a custom chunk pipeline; optional LightRAG is now available through the local sidecar. Local multilingual-e5-small is 384-dimensional with query/passage prefixes. Optional cross-encoder reranking and windowed embeddings are documented in [Local retrieval](LOCAL-RAG.md); the built-in small encoder still has a fixed tokenizer budget.
+
+Hybrid results retain channel ranks/raw scores and RRF contributions instead of overwriting fusion scores with ranks. Heading boost is separate; scores are not calibrated probabilities and may rank unrelated candidates. Alternative sources require whitespace-normalized identical chunk text among retrieved candidates, not arbitrary documents or exhaustive duplicate discovery. Empty queries return no candidates.
+
+Authorized folder graph extraction already activates source-backed unambiguous relations automatically (bounded to the first 8 chunks/14,000 characters). Ambiguous entity relations are recorded as deferred while valid relations continue. Unique confirmed same-scope entity names with already-confirmed aliases are reused by proposal tools. New aliases and ambiguous matches still require review; quoted co-occurrence is not semantic truth. No additional remote calls or expanded consent scopes are introduced.
+
+Remaining evaluation includes controlled reindexing, bilingual held-out retrieval and threshold calibration. Index/database replacement and 1024 dimensions alone do not establish improved relevance.
+
+### Retrieval inventory for agents
+
+The core read-only tool `inspect_retrieval_status` reports only the current conversation's authorized knowledge scopes and accessible memories. It includes current/retained documents, chunks, UTF-8 chunk payload bytes, vector coverage and dimensions, missing/stale/invalid vectors, import health, and memory state versus recall eligibility. It does not expose source text, credentials, other conversations' private memories or global database totals. Serialized vector bytes and estimated float32 payload size are not physical disk/RAM usage; shared database and remote collection sizes remain unknown rather than guessed.
+
+Empty knowledge searches include inventory diagnostics that distinguish disabled scope, no import, import failure, awaiting import, no searchable chunks, lexical-only mode, incomplete indexing, mixed dimensions and a fully indexed search with no match. These states do not certify relevance or truth.
+
+Index recommendations are advisory. The built-in route remains exact below 2,000 eligible vectors and HNSW otherwise. A supplied `memoryBudgetMiB` only informs the recommendation; it changes no settings. IVF needs representative training and tuning; PQ is lossy compression and must pass recall evaluation. Count alone never triggers a backend switch, download, network health check or rebuild. Configured external backends are reported separately from verified service health.

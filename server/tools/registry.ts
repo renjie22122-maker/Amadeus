@@ -1,3 +1,5 @@
+import { memoryStatus } from '../services/retrieval-status.js';
+import { Embeddings } from '../services/embedding.js';
 import { capabilityDecision } from '../services/capability-kernel.js';
 import { memoryActivity } from '../services/memory-activity.js';
 import { relatedToolNames } from './discovery.js';
@@ -884,9 +886,24 @@ export function tools() {
     run: async (a, c) => {
       const results = await c.knowledge.hybrid(c.scopes, a.query, a.limit, c.signal, a.asOf);
       return text(
-        results.length ? results : { results, diagnostics: c.knowledge.diagnostics(c.scopes) },
+        results.length
+          ? results
+          : { results, diagnostics: c.knowledge.diagnostics(c.scopes, a.asOf) },
       );
     },
+  });
+  registry.add({
+    name: 'investigate_knowledge',
+    effect: 'read',
+    description:
+      'Bounded agentic RAG: supply up to four focused query variants or counterqueries. Inspect trace and citations, then decide whether another investigation is needed. No automatic truth verdict.',
+    schema: z.object({
+      queries: z.array(z.string().trim().min(1).max(1000)).min(1).max(4),
+      limit: z.number().int().min(1).max(6).default(6),
+      asOf: z.number().int().nonnegative().optional(),
+    }),
+    run: async (a, c) =>
+      text(await c.knowledge.investigate(c.scopes, a.queries, a.limit, c.signal, a.asOf)),
   });
   const memoryScopes = (c: ToolContext) =>
     c.conversation.memory === false
@@ -897,6 +914,41 @@ export function tools() {
             ...(c.conversation.includeUserMemory ? ['user'] : []),
           ]
         : ['user'];
+  registry.add({
+    name: 'inspect_retrieval_status',
+    description:
+      'Read authorized knowledge and memory corpus counts, byte sizes, vector coverage, dimensions, import health and advisory index choices. No model calls, rebuilds, downloads or global totals. Use before diagnosing empty RAG results. Memory budget is advisory, not a configuration change.',
+    effect: 'read',
+    parallelSafe: true,
+    schema: z.object({ memoryBudgetMiB: z.number().positive().finite().optional() }),
+    run: (a, c) => {
+      const embedding = new Embeddings(() => c.config.get().embedding);
+      const settings = c.config.get().retrieval;
+      return text({
+        observedAt: Date.now(),
+        knowledge: c.knowledge.statistics(c.scopes, Date.now(), a.memoryBudgetMiB),
+        memory: memoryStatus(
+          c.store,
+          memoryScopes(c),
+          c.conversation.id,
+          embedding.fingerprint(),
+          embedding.enabled(),
+        ),
+        configured: {
+          vectorBackend: settings?.vectors?.enabled ? settings.vectors.backend : 'builtin',
+          vectorIndex: settings?.vectors?.enabled
+            ? settings.vectors.index
+            : 'exact-below-2000-otherwise-hnsw',
+          rerankerEnabled: !!settings?.rerank?.enabled,
+          lightRagEnabledForScope:
+            !!settings?.lightRag?.enabled && c.scopes.includes(settings.lightRag.scope),
+          serviceHealth: 'not_probed',
+        },
+        limits:
+          'Configuration is not proof a service is healthy. No keys, endpoints, private source text or unauthorized corpus totals are returned.',
+      });
+    },
+  });
   registry.add({
     name: 'recall_memories',
     description:
@@ -960,7 +1012,7 @@ export function tools() {
   registry.add({
     name: 'suggest_memory_entity',
     description:
-      'Suggest an entity and aliases with an exact source quote. User confirmation is required before graph use; never merge entities across scopes.',
+      'Suggest a sourced entity. Reuse a unique confirmed same-scope name when all requested aliases are already confirmed. New entities, aliases and ambiguity require confirmation; never merge across scopes.',
     effect: 'coordinate',
     atomic: true,
     schema: z.object({
@@ -980,6 +1032,24 @@ export function tools() {
         'ENTITY_EVIDENCE',
         'Source quote must exist in the same scope.',
       );
+      const normalize = (s: string) => s.normalize('NFKC').trim().toLocaleLowerCase();
+      const matches = c.store
+        .list<any>('memory-entity')
+        .filter(
+          (e) =>
+            e.scope === scope &&
+            e.confirmed !== false &&
+            [e.name, ...(e.aliases || [])].some((label) => normalize(label) === normalize(a.name)),
+        );
+      if (
+        matches.length === 1 &&
+        a.aliases.every((alias: string) =>
+          [matches[0].name, ...(matches[0].aliases || [])].some(
+            (label) => normalize(label) === normalize(alias),
+          ),
+        )
+      )
+        return text({ ...matches[0], reused: true, confirmationRequired: false });
       return text(
         c.store.put('memory-entity', {
           id: id(),

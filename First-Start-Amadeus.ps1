@@ -1,4 +1,4 @@
-param([switch]$NoBrowser, [switch]$SetupOnly)
+param([switch]$NoBrowser, [switch]$SetupOnly, [switch]$LocalRag, [string]$Python = 'python', [string]$OfflineBundle, [switch]$Gpu)
 $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
 # Never replace dependencies underneath a live runtime.
@@ -28,6 +28,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed; service was not started.' }
     Set-Content -LiteralPath (Join-Path $taskRoot 'dist/.agentdemo-build') -Value (Get-AgentDemoFingerprint $taskRoot)
     Write-Host '[3/3] Setup complete: backend and frontend rebuilt. Existing conversations are preserved.'
+    if ($LocalRag -or $OfflineBundle) { & (Join-Path $taskRoot 'Setup-Local-RAG.ps1') -Python $Python -OfflineBundle $OfflineBundle -Gpu:$Gpu }
+    Write-Host 'Optional local knowledge graph and reranker: run Setup-Local-RAG.cmd, or First Start with -LocalRag -Python <path>.'
     if ($SetupOnly) { Write-Host 'SetupOnly: no service was started. Run Start-Amadeus.cmd to load this build.' }
 } finally { Pop-Location }
 if (-not $SetupOnly) { & (Join-Path $taskRoot 'Start-Amadeus.ps1') -NoBrowser:$NoBrowser }

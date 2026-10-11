@@ -96,3 +96,10 @@ Generic multi-result bridge with editable records, batch draft insertion, source
 - 49a6a6a: scoped media references, inspection/export and browser popup continuity.
 - 9552c9d: stable review prefixes, in-flight review deduplication and separate cache metrics.
 - See [historical source documents](docs/history/README.md) for earlier implementation notes and dated experiments. Those documents may describe superseded behavior; use current guides for operation.
+
+## 2026-10-11 — Local retrieval and evolving task plans
+
+- Scoped retrieval inventory, bounded investigation, optional cross-encoder and LightRAG. Offline GPU setup supports E5-large 1024 dimensions; extraction uses an authorized connection.
+- Isolated native FAISS workers with explicit exact fallback, embedded Qdrant and Milvus server adapter.
+- Task status counts, SSE refresh and plan extensions retaining existing evidence.
+- Updated launchers and bilingual guides; offline bundles and user data are excluded.

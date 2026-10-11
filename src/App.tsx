@@ -237,12 +237,17 @@ export function App() {
               void load(e.conversationId).catch(() => {});
           }
           if (
+            e.type === 'plan.updated' ||
             e.type === 'team.assigned' ||
             e.type === 'team.lifecycle' ||
             (e.type === 'tool.completed' &&
-              ['create_plan', 'update_task', 'record_verification', 'handoff_task'].includes(
-                e.data.name,
-              ))
+              [
+                'create_plan',
+                'extend_plan',
+                'update_task',
+                'record_verification',
+                'handoff_task',
+              ].includes(e.data.name))
           ) {
             const current = selectedRef.current;
             if (

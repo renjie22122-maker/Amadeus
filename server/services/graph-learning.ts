@@ -73,6 +73,7 @@ export class GraphLearning {
       const lifecycle = new MemoryLifecycle(this.store),
         graph = new KnowledgeGraph(this.store);
       let count = 0;
+      const deferred: { from: string; to: string; reason: string }[] = [];
       this.store.transaction(() => {
         const entity = (name: string) => {
           const matches = this.store
@@ -85,7 +86,7 @@ export class GraphLearning {
                   (s: string) => normalizedMemory(s) === normalizedMemory(name),
                 ),
             );
-          if (matches.length > 1) throw Error('Ambiguous entity');
+          if (matches.length > 1) return null;
           return matches[0] || lifecycle.saveEntity(doc.scope, name, []);
         };
         for (const r of data.relations) {
@@ -97,6 +98,10 @@ export class GraphLearning {
             continue;
           const from = entity(r.from),
             to = entity(r.to);
+          if (!from || !to) {
+            deferred.push({ from: r.from, to: r.to, reason: 'ambiguous-entity' });
+            continue;
+          }
           if (
             graph
               .list(doc.scope)
@@ -127,6 +132,7 @@ export class GraphLearning {
           documentId: doc.id,
           status: 'completed',
           relations: count,
+          deferred,
           usage: result.usage,
           coverage: 'first 8 chunks / 14000 characters',
         });

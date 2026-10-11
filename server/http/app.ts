@@ -1,3 +1,4 @@
+import { configureLocalRag } from '../services/local-rag.js';
 import { memoryRoutes } from './memory.js';
 import { SkillPackages } from '../services/skill-packages.js';
 import { ScheduledWorkService } from '../services/scheduled-work.js';
@@ -738,6 +739,30 @@ export async function createApp(options: { directory: string; dist?: string; run
   app.get<{ Querystring: { scope: string } }>('/api/knowledge/index-status', async (req) => {
     checkScope(req.query.scope);
     return runtime.knowledge.indexStatuses(req.query.scope);
+  });
+  app.post('/api/retrieval/local', async (req) => {
+    const data = z
+      .object({
+        scope: z.string(),
+        profileId: z.string(),
+        embeddingModel: z
+          .enum([
+            'intfloat/multilingual-e5-small',
+            'intfloat/multilingual-e5-base',
+            'intfloat/multilingual-e5-large',
+          ])
+          .optional(),
+        embeddingPath: z.string().optional(),
+        rerankPath: z.string().optional(),
+      })
+      .parse(req.body);
+    checkScope(data.scope);
+    return configureLocalRag(config, directory, data.scope, data.profileId, data);
+  });
+  app.post('/api/knowledge/lightrag-sync', async () => runtime.knowledge.syncLightRag());
+  app.get<{ Querystring: { scope: string } }>('/api/knowledge/statistics', async (req) => {
+    checkScope(req.query.scope);
+    return runtime.knowledge.statistics([req.query.scope]);
   });
   app.post('/api/knowledge/batch-index', async (req) => {
     const { scope } = z.object({ scope: z.string() }).parse(req.body);

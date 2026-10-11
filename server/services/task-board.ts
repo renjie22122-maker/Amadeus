@@ -120,6 +120,57 @@ export class TaskBoard {
       });
     });
   }
+  extend(run: Run, input: z.infer<typeof taskInput>[], revision: number) {
+    assert(
+      new Teams(this.store).authority(run, 'planner'),
+      'PLAN_OWNER',
+      'Only the planner extends the shared plan.',
+    );
+    return this.store.transaction(() => {
+      const board = this.get(run);
+      assert(board.revision === revision, 'PLAN_CHANGED', 'Read the latest plan revision.');
+      assert(board.tasks.length > 0, 'PLAN_MISSING', 'Create the initial plan first.');
+      assert(
+        board.tasks.length + input.length <= 100,
+        'PLAN_SIZE',
+        'Split larger work into separate plans.',
+      );
+      const ids = new Set(board.tasks.map((t) => t.id));
+      assert(
+        input.every((t) => !ids.has(t.id)),
+        'TASK_EXISTS',
+        'Use new task IDs; existing work is preserved.',
+      );
+      const compiled = compilePlan(
+        [...board.tasks.map((t) => taskInput.parse(t)), ...input],
+        this.store.get<any>('conversation', run.conversationId).permission === 'read-only',
+      );
+      // Extending scope cannot silently change dependencies of work already underway.
+      for (const old of board.tasks) {
+        const next = compiled.tasks.find((t) => t.id === old.id)!;
+        assert(
+          JSON.stringify([...old.dependsOn].sort()) === JSON.stringify([...next.dependsOn].sort()),
+          'PLAN_DEPENDENCY_CHANGE',
+          'New tasks must not change dependencies of existing work.',
+        );
+      }
+      const additions = compiled.tasks
+        .filter((t) => !ids.has(t.id))
+        .map((t) => ({
+          ...t,
+          status: 'pending' as const,
+          owner: null,
+          evidence: [],
+          note: '',
+        }));
+      this.store.put('compiled-plan', { id: board.id, ...compiled, createdAt: Date.now() });
+      return this.save({
+        ...board,
+        revision: board.revision + 1,
+        tasks: [...board.tasks, ...additions],
+      });
+    });
+  }
   update(
     run: Run,
     taskId: string,
@@ -335,6 +386,8 @@ export class TaskBoard {
   }
   private save(board: Board) {
     this.store.put('task-board', board);
+    const root = this.store.runHeader(board.id);
+    this.store.event(root.conversationId, root.id, 'plan.updated', { revision: board.revision });
     return board;
   }
 }

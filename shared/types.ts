@@ -130,6 +130,7 @@ export interface Settings {
   commandBackend: 'approval-host' | 'docker' | 'native-windows';
   nativePython?: string;
   nativeNetwork?: 'deny' | 'host';
+  retrieval?: import('./retrieval.js').RetrievalSettings;
   embedding: { baseUrl: string; apiKey: string; model: string; backend?: 'remote' | 'local' };
   mcp: {
     id: string;

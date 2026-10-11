@@ -1313,3 +1313,43 @@ test('capability admission rejects changed workspace after an awaited hook befor
   );
   assert.equal((await import('node:fs')).existsSync(join(f.dir, 'never.txt')), false);
 });
+
+test('entity proposals reuse unique confirmed names without silently adding aliases or crossing scope', async (t) => {
+  const f = fixture(t);
+  const ev = f.store.event('c', 'r', 'user.message', { content: 'Alpha is our component.' });
+  const input = {
+    name: 'Alpha',
+    aliases: [],
+    evidence: {
+      type: 'event',
+      id: String(ev.id),
+      conversationId: 'c',
+      quote: 'Alpha is our component.',
+    },
+  };
+  f.store.put('memory-entity', {
+    id: 'known',
+    scope: 'project:p',
+    name: 'Alpha',
+    aliases: [],
+    confirmed: true,
+  });
+  f.store.put('memory-entity', {
+    id: 'foreign',
+    scope: 'project:other',
+    name: 'Alpha',
+    aliases: [],
+    confirmed: true,
+  });
+  const reused = JSON.parse(
+    (await f.registry.invoke('suggest_memory_entity', input, f.ctx)).content,
+  );
+  assert.equal(reused.id, 'known');
+  assert.equal(reused.confirmationRequired, false);
+  const novel = JSON.parse(
+    (await f.registry.invoke('suggest_memory_entity', { ...input, aliases: ['New Alias'] }, f.ctx))
+      .content,
+  );
+  assert.equal(novel.confirmed, false);
+  assert.deepEqual(f.store.get<any>('memory-entity', 'known').aliases, []);
+});

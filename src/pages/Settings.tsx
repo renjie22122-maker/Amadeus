@@ -1,3 +1,4 @@
+import { RetrievalSettings } from '../components/RetrievalSettings';
 import { ToolEcosystemSettings } from '../components/ToolEcosystemSettings';
 import { ApprovalSettings } from '../components/ApprovalSettings';
 import { MediaSettings } from '../components/MediaSettings';
@@ -617,8 +618,8 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
         </label>
         <p className="muted">
           {t('settings') === 'Settings'
-            ? 'Local multilingual E5 runs on CPU; first use downloads model files. Documents stay local. API mode sends chunks to the configured endpoint. Retrieval uses local FTS and HNSW.'
-            : '本地多语言 E5 使用 CPU，首次下载模型，文档不上传。API 模式将分块发送到配置的服务。FTS 与 HNSW 检索均在本机执行。'}
+            ? 'Local multilingual E5 runs on CPU; first use downloads model files. Documents stay local. API mode sends chunks to the configured endpoint. Default retrieval uses local FTS and HNSW; optional services are configured below.'
+            : '本地多语言 E5 使用 CPU，首次下载模型，文档不上传。API 模式将分块发送到配置的服务。默认 FTS 与 HNSW 检索在本机执行，可选服务在下方配置。'}
         </p>
         <div className="form-grid">
           <label>
@@ -652,6 +653,7 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
           </label>
         </div>
       </section>
+      <RetrievalSettings value={value} setValue={setValue} zh={t('settings') !== 'Settings'} />
       <ToolEcosystemSettings value={value} setValue={setValue} zh={t('settings') !== 'Settings'} />
       <section className="panel">
         <div className="section-title">
