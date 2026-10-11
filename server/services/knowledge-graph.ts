@@ -1,3 +1,4 @@
+import { terms } from './memory-retrieval.js';
 import { memoryAccessible } from '../../shared/memory-scope.js';
 import { Store, id } from '../storage/store.js';
 import { MemoryLifecycle, memoryValid, normalizedMemory, sourceKey } from './memory-lifecycle.js';
@@ -101,17 +102,8 @@ export class KnowledgeGraph {
   list(scope: string) {
     return this.store.list<GraphEdge>('knowledge-edge').filter((e) => e.scope === scope);
   }
-  search(scopes: string[], query: string, at = Date.now(), depth = 2, conversationId?: string) {
-    const entities = this.store
-      .list<any>('memory-entity')
-      .filter((e) => scopes.includes(e.scope) && e.confirmed !== false);
-    const q = normalizedMemory(query);
-    const seeds = entities
-      .filter((e) =>
-        [e.id, e.name, ...e.aliases].some((label: string) => q.includes(normalizedMemory(label))),
-      )
-      .map((e) => e.id);
-    const allowed = this.store
+  private visibleEdges(scopes: string[], at: number, conversationId?: string) {
+    return this.store
       .list<GraphEdge>('knowledge-edge')
       .filter(
         (e) =>
@@ -119,13 +111,139 @@ export class KnowledgeGraph {
           e.active &&
           e.validFrom <= at &&
           (e.validUntil == null || at < e.validUntil) &&
+          e.evidence.length > 0 &&
           e.evidence.every(
             (x) =>
               this.supported(e.scope, x, at) &&
               (x.type !== 'memory' ||
-                memoryAccessible(this.store.get('memory', x.id), conversationId)),
+                memoryAccessible(this.store.get('memory', x.id), conversationId)) &&
+              (x.type !== 'event' || e.scope !== 'user' || x.conversationId === conversationId),
           ),
       );
+  }
+  private visibleEntities(scopes: string[], at: number, conversationId?: string) {
+    const lifecycle = new MemoryLifecycle(this.store);
+    const supportedNodes = new Set(
+      this.visibleEdges(scopes, at, conversationId).flatMap((e) => [e.from, e.to]),
+    );
+    return this.store
+      .list<any>('memory-entity')
+      .filter((e) => scopes.includes(e.scope) && e.confirmed !== false)
+      .flatMap((e) => {
+        if (e.automatic && !supportedNodes.has(e.id)) return [];
+        if (!e.name.startsWith('memory:')) return [{ ...e, kind: 'entity', displayName: e.name }];
+        const m = this.store.maybe<any>('memory', e.name.slice(7));
+        if (
+          !m ||
+          m.scope !== e.scope ||
+          !memoryValid(m, at) ||
+          !memoryAccessible(m, conversationId) ||
+          !lifecycle.evidenceValid(m)
+        )
+          return [];
+        return [
+          {
+            ...e,
+            kind: 'memory-source',
+            displayName: m.content.slice(0, 160),
+            memoryId: m.id,
+            sourceRevision: m.revision,
+            searchableText: m.content,
+          },
+        ];
+      });
+  }
+  catalog(
+    scopes: string[],
+    options: {
+      asOf?: number;
+      conversationId?: string;
+      query?: string;
+      offset?: number;
+      limit?: number;
+      includeSources?: boolean;
+    } = {},
+  ) {
+    const at = options.asOf ?? Date.now();
+    const rows = this.visibleEntities(scopes, at, options.conversationId);
+    const q = terms(options.query || '');
+    const filtered = rows
+      .filter(
+        (e) =>
+          (options.includeSources !== false || e.kind !== 'memory-source') &&
+          (!options.query || this.match(e, options.query, q) > 0),
+      )
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const offset = Math.max(0, options.offset || 0),
+      limit = Math.min(200, Math.max(1, options.limit || 50));
+    const edges = this.visibleEdges(scopes, at, options.conversationId);
+    return {
+      entities: filtered.slice(offset, offset + limit).map(({ searchableText, ...e }) => e),
+      total: filtered.length,
+      offset,
+      limit,
+      nextOffset: offset + limit < filtered.length ? offset + limit : null,
+      statistics: {
+        semanticEntities: rows.filter((e) => e.kind === 'entity').length,
+        memorySources: rows.filter((e) => e.kind === 'memory-source').length,
+        usableRelations: edges.filter((e) => e.relation !== 'has recorded memory').length,
+        provenanceRelations: edges.filter((e) => e.relation === 'has recorded memory').length,
+      },
+      notice:
+        'Counts cover current permitted scope and conversation only. Memory-source nodes are provenance, not extracted semantic entities.',
+    };
+  }
+  private match(e: any, query: string, tokens: Set<string>) {
+    const q = normalizedMemory(query);
+    const labels = [e.id, e.name, ...(e.aliases || [])];
+    if (labels.some((label) => label && q.includes(normalizedMemory(label)))) return 100;
+    const words = terms([e.displayName, e.searchableText, ...labels].join(' '));
+    return [...tokens].filter((t) => words.has(t)).length;
+  }
+  search(scopes: string[], query: string, at = Date.now(), depth = 2, conversationId?: string) {
+    const entities = this.visibleEntities(scopes, at, conversationId);
+    const allowed = this.visibleEdges(scopes, at, conversationId);
+    const q = terms(query);
+    const scored = new Map(entities.map((e) => [e.id, this.match(e, query, q)]));
+    // Evidence can find a semantic relation even when the query doesn't contain its entire label.
+    for (const edge of allowed) {
+      const words = terms(edge.relation + ' ' + edge.evidence.map((e) => e.quote).join(' '));
+      const score = [...q].filter((t) => words.has(t)).length;
+      if (score)
+        for (const id of [edge.from, edge.to]) scored.set(id, Math.max(scored.get(id) || 0, score));
+    }
+    const allSeeds = [...scored]
+      .filter(([, score]) => score > 0)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([id]) => id);
+    const seeds = allSeeds.slice(0, 12);
+    const diagnostics = {
+      matchedNodes: allSeeds.length,
+      usableEdges: allowed.length,
+      status:
+        !entities.length && !allowed.length
+          ? 'no-visible-graph'
+          : !allSeeds.length
+            ? 'no-matching-nodes'
+            : !allowed.length
+              ? 'nodes-without-usable-edges'
+              : 'matched',
+      notice:
+        'Empty paths do not prove the graph has no edges. Provenance links do not assert semantic relationships or causality.',
+    };
+    const present = (seen: Set<string>) => [
+      ...entities.filter((e) => seen.has(e.id)).map(({ searchableText, ...e }) => e),
+      ...scopes
+        .filter((scope) => seen.has(scope))
+        .map((scope) => ({
+          id: scope,
+          scope,
+          name: scope,
+          displayName: scope,
+          kind: 'scope',
+          aliases: [],
+        })),
+    ];
     const seen = new Set(seeds),
       paths: { entities: string[]; edges: GraphEdge[] }[] = seeds
         .slice(0, 12)
@@ -147,12 +265,18 @@ export class KnowledgeGraph {
           }
           if (results.length >= 40)
             return {
-              entities: entities.filter((e) => seen.has(e.id)),
+              entities: present(seen),
+              diagnostics,
               paths: results,
               truncated: true,
             };
         }
     }
-    return { entities: entities.filter((e) => seen.has(e.id)), paths: results, truncated: false };
+    return {
+      entities: present(seen),
+      diagnostics,
+      paths: results,
+      truncated: allSeeds.length > seeds.length,
+    };
   }
 }

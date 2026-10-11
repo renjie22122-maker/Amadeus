@@ -115,7 +115,20 @@ export function memoryRoutes(
   });
   app.get<{ Querystring: { scope: string } }>('/api/memory-entities', async (req) => {
     checkMemoryScope(req.query.scope);
-    return store.list<any>('memory-entity').filter((e) => e.scope === req.query.scope);
+    return store
+      .list<any>('memory-entity')
+      .filter((e) => e.scope === req.query.scope)
+      .map((e) => {
+        const m = e.name.startsWith('memory:')
+          ? store.maybe<Memory>('memory', e.name.slice(7))
+          : null;
+        return {
+          ...e,
+          displayName: m?.content.slice(0, 160) || e.name,
+          sourceStatus: m?.status,
+          kind: e.name.startsWith('memory:') ? 'memory-source' : 'entity',
+        };
+      });
   });
   app.post('/api/memory-entities', async (req) => {
     const d = z

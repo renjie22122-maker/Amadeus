@@ -175,3 +175,42 @@ test('one batch can activate several records and cannot downgrade unsupported ex
     f.store.close();
   }
 });
+
+test('old automatic false conflicts can coexist after source review without replacing either memory', async () => {
+  const f = await fixture();
+  try {
+    f.add('first', { active: true, automatic: true, content: 'First independent record' });
+    f.add('second', {
+      automatic: true,
+      content: 'Second independent record',
+      conflictsWith: ['first'],
+    });
+    assert.equal(f.store.get<Memory>('memory', 'second').status, 'disputed');
+    await reviewMemoryCandidates(
+      f.store,
+      f.c,
+      profile,
+      {
+        complete: async () =>
+          reply([
+            {
+              id: 'second',
+              approve: true,
+              quote: 'I prefer concise technical answers.',
+              kind: 'episode',
+              coexistsWith: ['first'],
+              factCardinality: 'multiple',
+            },
+          ]),
+      },
+      new AbortController().signal,
+      () => true,
+      () => false,
+    );
+    assert.equal(f.store.get<Memory>('memory', 'first').active, true);
+    assert.equal(f.store.get<Memory>('memory', 'second').active, true);
+    assert.deepEqual(f.store.get<Memory>('memory', 'second').conflictsWith, []);
+  } finally {
+    f.store.close();
+  }
+});

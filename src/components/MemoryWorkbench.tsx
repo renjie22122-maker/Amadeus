@@ -255,7 +255,8 @@ export function MemoryWorkbench({ scope, go, zh, memories = [] }: any) {
     const memory = memories.find((m: any) => m.id === entity.name.slice(7));
     return (
       (zh ? '记忆来源：' : 'Memory source: ') +
-      (memory?.content?.slice(0, 100) || (zh ? '已失效' : 'Unavailable'))
+      ((entity.displayName !== entity.name ? entity.displayName : memory?.content?.slice(0, 100)) ||
+        (zh ? '已失效' : 'Unavailable'))
     );
   };
   const visibleEntities = entities.filter((e) => showInternal || !internal(e));

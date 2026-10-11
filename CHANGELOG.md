@@ -103,3 +103,7 @@ Generic multi-result bridge with editable records, batch draft insertion, source
 - Isolated native FAISS workers with explicit exact fallback, embedded Qdrant and Milvus server adapter.
 - Task status counts, SSE refresh and plan extensions retaining existing evidence.
 - Updated launchers and bilingual guides; offline bundles and user data are excluded.
+
+## 2026-10-11 — Memory graph discovery and conflict semantics
+
+Readable legacy source nodes, paginated graph diagnostics, source-bound automatic relation backfill, invalid-source filtering, and source-reviewed coexistence of additive memories. Shared topics no longer imply conflicts; manual deactivation is preserved.

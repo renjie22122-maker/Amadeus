@@ -279,6 +279,7 @@ export interface Memory {
   conflictsWith?: string[];
   entityId?: string;
   attribute?: string;
+  factCardinality?: 'single' | 'multiple';
   value?: string;
   conditions?: string;
   evidence?: { conversationId: string; eventId: number; quote?: string }[];

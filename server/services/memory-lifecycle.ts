@@ -182,15 +182,13 @@ export class MemoryLifecycle {
           x.scope === m.scope &&
           memoryPartition(x) === memoryPartition(m) &&
           memoryValid(x) &&
-          ((m.entityId &&
-            m.attribute &&
-            x.entityId === m.entityId &&
-            normalizedMemory(x.attribute || '') === normalizedMemory(m.attribute)) ||
-            (!m.attribute &&
-              m.kind !== 'episode' &&
-              x.kind !== 'episode' &&
-              m.topic &&
-              x.topic === m.topic)) &&
+          m.factCardinality !== 'multiple' &&
+          x.factCardinality !== 'multiple' &&
+          !!m.entityId &&
+          !!m.attribute &&
+          x.entityId === m.entityId &&
+          normalizedMemory(x.attribute || '') === normalizedMemory(m.attribute) &&
+          normalizedMemory(x.conditions || '') === normalizedMemory(m.conditions || '') &&
           normalizedMemory(x.value || x.content) !== normalizedMemory(m.value || m.content),
       );
   }

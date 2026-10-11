@@ -1003,11 +1003,23 @@ export function tools() {
   });
   registry.add({
     name: 'list_memory_entities',
-    description: 'List stable entity IDs and confirmed aliases in permitted memory scopes.',
+    description:
+      'List readable current graph nodes, pagination and usable relation counts. Distinguishes memory sources from semantic entities; excludes inaccessible or invalid sources.',
     effect: 'read',
-    schema: z.object({}),
-    run: (_a, c) =>
-      text(c.store.list<any>('memory-entity').filter((e) => memoryScopes(c).includes(e.scope))),
+    schema: z.object({
+      query: z.string().optional(),
+      offset: z.number().int().min(0).default(0),
+      limit: z.number().int().min(1).max(200).default(50),
+      includeSources: z.boolean().default(true),
+      asOf: z.number().optional(),
+    }),
+    run: (a, c) =>
+      text(
+        new KnowledgeGraph(c.store).catalog(memoryScopes(c), {
+          ...a,
+          conversationId: c.conversation.id,
+        }),
+      ),
   });
   registry.add({
     name: 'suggest_memory_entity',
