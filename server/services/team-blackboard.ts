@@ -1,3 +1,4 @@
+import { evidenceDiversity } from './evidence-diversity.js';
 import type { Run } from '../../shared/types.js';
 import type { Store } from '../storage/store.js';
 import { TaskBoard } from './task-board.js';
@@ -29,6 +30,8 @@ export function teamBlackboard(store: Store, run: Run) {
       requires: t.requires || [],
       requireIndependent: t.requireIndependent === true,
       independent: t.verification?.independent === true,
+      independenceMeaning: 'executor distinct from author; source independence is not established',
+      evidenceDiversity: evidenceDiversity(store, board.id, t.evidence || []),
       missingDependencies: t.dependsOn.filter(
         (id) =>
           !board.tasks.some(

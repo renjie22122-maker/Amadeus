@@ -24,7 +24,7 @@ Embedding and reranking run locally. LightRAG uses local JSON, NetworkX and Nano
 
 Long embedding inputs use overlapping windows and normalized mean pooling with query/passage prefixes. This avoids prefix-only truncation but is not a native long-context encoder. Changing dimensions requires new indexes.
 
-Cross-encoder reranking runs after fusion on up to 30 candidates. Its score is not a calibrated probability; evaluate thresholds on representative bilingual queries.
+Cross-encoder reranking runs after fusion on up to 60 candidates. Its score is not a calibrated probability; evaluate thresholds on representative bilingual queries.
 
 FAISS supports flat/HNSW/IVF-flat/IVF-PQ. Small training sets fall back to flat (2496/9984 rows for IVF/PQ respectively; PQ requires compatible dimensions). Native execution runs in a bounded child process; crashes/timeouts return explicitly labeled exact fallback. Successful native indexes are cached locally by vector-content hash; up to four generations are retained. Embedded Qdrant uses exact search, not server HNSW.
 

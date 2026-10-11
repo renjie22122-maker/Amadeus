@@ -189,7 +189,7 @@ const schema = z.object({
           apiKey: z.string().default(''),
           authorizedTarget: z.string().optional(),
           model: z.string().min(1),
-          candidates: z.number().int().min(1).max(30).default(20),
+          candidates: z.number().int().min(1).max(60).default(40),
           minScore: z.number().finite().optional(),
         })
         .optional(),

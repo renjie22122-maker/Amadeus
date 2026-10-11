@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+CODE_HASH = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 ROOT = Path(os.environ.get("AGENTDEMO_DATA_DIR", str(Path(__file__).resolve().parent.parent / ".data"))) / "retrieval-service"
 ROOT.mkdir(parents=True, exist_ok=True)
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
@@ -73,8 +74,8 @@ def embeddings(texts, purpose="passage"):
 def rerank(data):
     import torch
     query, texts = data["query"], data["texts"]
-    if not isinstance(query, str) or not isinstance(texts, list) or not 0 < len(texts) <= 30 or not all(isinstance(t, str) for t in texts):
-        raise ValueError("Expected query and 1-30 texts")
+    if not isinstance(query, str) or not isinstance(texts, list) or not 0 < len(texts) <= 60 or not all(isinstance(t, str) for t in texts):
+        raise ValueError("Expected query and 1-60 texts")
     if sum(map(len, texts)) + len(query) * len(texts) > 200000:
         raise ValueError("Rerank input too large")
     scorer = model("rerank")
@@ -122,7 +123,7 @@ def vector_search(data):
         except subprocess.TimeoutExpired:
             failure = "Native FAISS worker timed out; exact fallback"
         scores = x @ q[0]
-        order = np.argsort(-scores)[:min(int(data.get("limit",30)),30,len(rows))]
+        order = np.argsort(-scores)[:min(int(data.get("limit",60)),60,len(rows))]
         return {"result":[{"id":rows[int(i)]["id"],"score":float(scores[i])} for i in order],
             "effectiveIndex":"flat-numpy","fallbackReason":failure}
 
@@ -130,7 +131,7 @@ def vector_search(data):
     if requested.startswith("ivf") and (len(x) < (9984 if requested == "ivf-pq" else 2496) or (requested == "ivf-pq" and x.shape[1] % 8)):
         effective, reason = "flat", "Insufficient representative training rows or incompatible PQ dimensions; exact fallback"
     key = hashlib.sha256(x.tobytes() + json.dumps([r["id"] for r in rows]).encode() + backend.encode() + effective.encode()).hexdigest()
-    top = min(int(data.get("limit", 30)), 30, len(rows))
+    top = min(int(data.get("limit", 60)), 60, len(rows))
     with LOCK:
         if backend == "faiss":
             import faiss
@@ -300,7 +301,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
     def do_GET(self):
         if self.path == "/health":
-            return self.send(200, {"application":"Amadeus Local RAG", "ready":list(MODELS), "protocol":1})
+            return self.send(200, {"application":"Amadeus Local RAG", "ready":list(MODELS), "protocol":1, "codeHash":CODE_HASH})
         self.send(404, {"error":"Not found"})
     def do_POST(self):
         auth = self.headers.get("Authorization","").removeprefix("Bearer ") or self.headers.get("X-API-Key","")

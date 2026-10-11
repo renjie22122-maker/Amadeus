@@ -63,3 +63,7 @@ Malformed tool arguments get at most two consecutive repair attempts, reset afte
 ## Live task progress
 
 The composer shows reported-done, working, pending and blocked counts. SSE updates and reconnect refresh the board. Queued messages are not yet plan changes; after delivery the model can extend_plan with new requirements while retaining existing status and evidence. Reported done is not independent acceptance.
+
+### Collaboration evidence
+
+Team blackboard distinguishes unique evidence events, repeated observations, executors and grouped retrieval passages. Multiple agents quoting identical retrieved text do not establish independent sources. Repeating a test is replication; different outputs require inspection, not an automatic contradiction verdict. Existing task challenges still require newer current-artifact evidence and cannot be resolved by vote. Source independence remains explicitly unestablished where lineage is unknown.

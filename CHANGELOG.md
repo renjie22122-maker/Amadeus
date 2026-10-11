@@ -107,3 +107,7 @@ Generic multi-result bridge with editable records, batch draft insertion, source
 ## 2026-10-11 — Memory graph discovery and conflict semantics
 
 Readable legacy source nodes, paginated graph diagnostics, source-bound automatic relation backfill, invalid-source filtering, and source-reviewed coexistence of additive memories. Shared topics no longer imply conflicts; manual deactivation is preserved.
+
+## 2026-10-12 — Retrieval investigations and evidence diversity
+
+Document-scoped follow-up search, narrow passage reranking, automatic conservative cutoff, local retrieval audits and bounded investigation. Team evidence separates repeated sources from independent execution. No new dependency or data migration required; restart app and local RAG service to load changes.

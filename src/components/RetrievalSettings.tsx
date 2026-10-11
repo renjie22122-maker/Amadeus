@@ -22,7 +22,7 @@ export function RetrievalSettings({ value, setValue, zh }: any) {
       enabled: false,
       baseUrl: 'http://127.0.0.1:8811',
       model: 'BAAI/bge-reranker-v2-m3',
-      candidates: 20,
+      candidates: 40,
     },
     lightRag: {
       enabled: false,
@@ -211,7 +211,7 @@ export function RetrievalSettings({ value, setValue, zh }: any) {
                           type="number"
                           min="1"
                           max="30"
-                          value={c.candidates ?? 20}
+                          value={c.candidates ?? 40}
                           onChange={(e) => update(key, { candidates: Number(e.target.value) })}
                         />
                       </label>

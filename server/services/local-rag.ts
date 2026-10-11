@@ -68,7 +68,7 @@ export function configureLocalRag(
     baseUrl: vectors.baseUrl,
     apiKey: local.token,
     model: local.rerankModel,
-    candidates: 20,
+    candidates: 40,
   };
   // Extraction remains disabled until the user explicitly authorizes the selected scope.
   settings.retrieval = {

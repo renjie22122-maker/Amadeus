@@ -19,15 +19,15 @@ export function structuredChunks(
       heading = line;
       start = offset;
     }
-    if (buffer.length + line.length > 1600) flush();
-    if (line.length > 1800) {
+    if (buffer.length + line.length > 600) flush();
+    if (line.length > 600) {
       flush();
-      for (let i = 0; i < line.length; i += 1400)
+      for (let i = 0; i < line.length; i += 480)
         out.push({
-          text: (heading ? heading + '\n' : '') + line.slice(i, i + 1800),
+          text: (heading ? heading + '\n' : '') + line.slice(i, i + 600),
           heading,
           start: offset + i,
-          end: offset + Math.min(line.length, i + 1800),
+          end: offset + Math.min(line.length, i + 600),
         });
       offset += line.length + 1;
       start = offset;

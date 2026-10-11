@@ -1,3 +1,4 @@
+import { terms } from './memory-retrieval.js';
 import { createHash } from 'node:crypto';
 import {
   retrievalTarget,
@@ -115,14 +116,14 @@ export async function externalVectorSearch(
       dimensions,
       vectorsBase64: packed.toString('base64'),
       query,
-      limit: 30,
+      limit: 60,
     },
     signal,
   );
   const ids = new Set(rows.map((r) => r.id)),
     seen = new Set<string>();
   assert(
-    Array.isArray(result.result) && result.result.length <= 30,
+    Array.isArray(result.result) && result.result.length <= 60,
     'VECTOR_RESPONSE',
     'Invalid vector response.',
   );
@@ -148,46 +149,109 @@ export async function rerankCandidates(
   rows: any[],
   signal?: AbortSignal,
 ) {
-  const pool = rows.slice(0, c.candidates ?? 20);
+  const pool = rows.slice(0, c.candidates ?? 40);
   if (!pool.length) return [];
-  // TEI serves a configured cross-encoder; model is a declared configuration identity, not a request-time selector.
-  const result = await retrievalPost(
-    'rerank',
-    c,
-    '/rerank',
-    { query, texts: pool.map((r) => r.text), raw_scores: false, return_text: false },
-    signal,
+  const passages = pool.flatMap((row, index) =>
+    candidatePassages(row.text, query).map((p) => ({ ...p, index })),
   );
-  assert(
-    Array.isArray(result) && result.length === pool.length,
-    'RERANK_RESPONSE',
-    'Reranker must score every candidate.',
-  );
-  const seen = new Set<number>();
-  for (const r of result) {
-    assert(
-      Number.isInteger(r.index) &&
-        r.index >= 0 &&
-        r.index < pool.length &&
-        !seen.has(r.index) &&
-        Number.isFinite(r.score),
-      'RERANK_RESPONSE',
-      'Invalid or duplicate reranker result.',
+  const best = new Map<number, { index: number; score: number; passage: any }>();
+  for (let offset = 0; offset < passages.length; offset += 30) {
+    const batch = passages.slice(offset, offset + 30);
+    const scored = await retrievalPost(
+      'rerank',
+      c,
+      '/rerank',
+      { query, texts: batch.map((p) => p.text), raw_scores: false, return_text: false },
+      signal,
     );
-    seen.add(r.index);
+    assert(
+      Array.isArray(scored) && scored.length === batch.length,
+      'RERANK_RESPONSE',
+      'Reranker must score every candidate.',
+    );
+    const seen = new Set<number>();
+    for (const row of scored) {
+      assert(
+        Number.isInteger(row.index) &&
+          row.index >= 0 &&
+          row.index < batch.length &&
+          !seen.has(row.index) &&
+          Number.isFinite(row.score),
+        'RERANK_RESPONSE',
+        'Invalid or duplicate reranker result.',
+      );
+      seen.add(row.index);
+      const p = batch[row.index],
+        old = best.get(p.index);
+      if (!old || row.score > old.score)
+        best.set(p.index, { index: p.index, score: row.score, passage: p });
+    }
   }
-  return result
+  const result = [...best.values()];
+  const eligible = result
     .sort((a, b) => b.score - a.score)
-    .filter((r) => c.minScore == null || r.score >= c.minScore)
-    .map((r) => ({
-      ...pool[r.index],
-      rerankScore: r.score,
-      ranking: {
-        ...pool[r.index].ranking,
-        semanticReranker: c.model,
-        rerankCandidates: pool.length,
-        threshold: c.minScore ?? null,
-        relevanceCalibrated: false,
+    .filter((r) => c.minScore == null || r.score >= c.minScore);
+  const selection = adaptiveCutoff(eligible);
+  return selection.kept.map((r) => ({
+    ...pool[r.index],
+    rerankScore: r.score,
+    relevantPassage: {
+      text: r.passage.text,
+      start: r.passage.start,
+      end: r.passage.end,
+      partial: r.passage.partial,
+    },
+    ranking: {
+      ...pool[r.index].ranking,
+      semanticReranker: c.model,
+      rerankCandidates: pool.length,
+      threshold: c.minScore ?? null,
+      relevanceCalibrated: false,
+      cutoff: {
+        method: selection.method,
+        before: eligible.length,
+        after: selection.kept.length,
+        deferred: selection.deferred.map((x) => ({ chunkId: pool[x.index].id, score: x.score })),
+        notice:
+          'Relative separation is not proof of relevance. Deferred evidence remains searchable.',
       },
-    }));
+    },
+  }));
+}
+
+// Conservative score-gap heuristic for sigmoid scores, not probability calibration.
+// Flat/short lists keep their evidence; always retain at least two complementary passages.
+export function adaptiveCutoff<T extends { score: number }>(rows: T[]) {
+  if (rows.length < 4 || rows.some((r) => r.score < 0 || r.score > 1))
+    return { kept: rows, deferred: [] as T[], method: 'retain-uncertain' };
+  const gaps = rows.slice(0, -1).map((r, i) => r.score - rows[i + 1].score);
+  const baseline = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+  const boundary = gaps.findIndex(
+    (gap, i) => i >= 1 && gap >= 0.15 && gap > 4 * Math.max(baseline, 0.01),
+  );
+  if (boundary < 0) return { kept: rows, deferred: [] as T[], method: 'retain-uncertain' };
+  return {
+    kept: rows.slice(0, boundary + 1),
+    deferred: rows.slice(boundary + 1),
+    method: 'relative-gap',
+  };
+}
+
+// Query-local windows for legacy large chunks; original citations and text stay intact.
+export function candidatePassages(text: string, query: string) {
+  if (text.length <= 600) return [{ text, start: 0, end: text.length, partial: false }];
+  const q = terms(query),
+    windows = [];
+  for (let start = 0; start < text.length; start += 480) {
+    const value = text.slice(start, start + 600),
+      tokens = terms(value);
+    windows.push({
+      text: value,
+      start,
+      end: start + value.length,
+      partial: true,
+      score: [...q].filter((t) => tokens.has(t)).length,
+    });
+  }
+  return windows.sort((a, b) => b.score - a.score || a.start - b.start).slice(0, 3);
 }

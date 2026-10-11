@@ -171,7 +171,13 @@ export class Knowledge {
     });
     return this.store.get('document', key);
   }
-  search(scopes: string[], query: string, limit = 6, asOf = Date.now()) {
+  search(
+    scopes: string[],
+    query: string,
+    limit = 6,
+    asOf = Date.now(),
+    documentIds: string[] = [],
+  ) {
     if (!scopes.length) return [];
     const tokens = [...new Set(terms(query))].slice(0, 40);
     if (!tokens.length) return [];
@@ -182,9 +188,13 @@ export class Knowledge {
           scopes.map(() => '?').join(',') +
           ') AND c.document_id IN (' +
           documentEligibilitySQL +
-          ') ORDER BY rank LIMIT 500',
+          ')' +
+          (documentIds.length
+            ? ' AND c.document_id IN (' + documentIds.map(() => '?').join(',') + ')'
+            : '') +
+          ' ORDER BY rank LIMIT 500',
       )
-      .all(expression, ...scopes, asOf, asOf) as any[];
+      .all(expression, ...scopes, asOf, asOf, ...documentIds) as any[];
     const q = [...new Set(terms(query))],
       N = rows.length;
     const docs = rows.map((r) => ({ ...r, t: terms(r.text) }));
@@ -287,6 +297,69 @@ export class Knowledge {
     signal?: AbortSignal,
     asOf = Date.now(),
     bypassPolicy = false,
+    documentIds: string[] = [],
+  ) {
+    const traceId = id(),
+      startedAt = Date.now();
+    const record = (extra: any) => {
+      this.store.put('retrieval-trace', {
+        id: traceId,
+        scopes: [...scopes],
+        query,
+        asOf,
+        documentIds: [...documentIds],
+        embedding: this.embeddings?.fingerprint() || null,
+        reranker: this.retrieval().rerank?.model || null,
+        candidateBudget: this.retrieval().rerank?.candidates || 40,
+        requested: limit,
+        startedAt,
+        durationMs: Date.now() - startedAt,
+        ...extra,
+      });
+      const old = this.store.list<any>('retrieval-trace').sort((a, b) => b.startedAt - a.startedAt);
+      for (const row of old.slice(500)) this.store.remove('retrieval-trace', row.id);
+    };
+    try {
+      const results = await this.retrieve(
+        scopes,
+        query,
+        limit,
+        signal,
+        asOf,
+        bypassPolicy,
+        documentIds,
+      );
+      record({
+        status: results.length ? 'candidates' : 'no-candidates',
+        hits: results.map((r) => ({
+          chunkId: r.id,
+          documentId: r.documentId,
+          version: r.version,
+          contentHash: createHash('sha256').update(r.text).digest('hex'),
+          ranking: r.ranking,
+          rerankScore: r.rerankScore,
+          score: r.score,
+        })),
+        conclusion: 'unassessed',
+      });
+      return results.map((r) => ({
+        ...r,
+        retrievalTraceId: traceId,
+        relevanceStatus: 'unassessed',
+      }));
+    } catch (error) {
+      record({ status: signal?.aborted ? 'cancelled' : 'failed' });
+      throw error;
+    }
+  }
+  async retrieve(
+    scopes: string[],
+    query: string,
+    limit = 6,
+    signal?: AbortSignal,
+    asOf = Date.now(),
+    bypassPolicy = false,
+    documentIds: string[] = [],
   ) {
     this.lastRetrieval = {};
     if (!query.trim() || !scopes.length) return [];
@@ -295,10 +368,18 @@ export class Knowledge {
       scopes.length === 1 &&
       this.store.maybe<any>('retrieval-policy', scopes[0])?.mode === 'lexical'
     )
-      return this.finish(this.search(scopes, query, 30, asOf), scopes, query, limit, asOf, signal);
-    const lexical = this.search(scopes, query, 30, asOf);
+      return this.finish(
+        this.search(scopes, query, 60, asOf, documentIds),
+        scopes,
+        query,
+        limit,
+        asOf,
+        signal,
+        documentIds,
+      );
+    const lexical = this.search(scopes, query, 60, asOf, documentIds);
     if (!this.embeddings?.enabled() || !scopes.length)
-      return this.finish(lexical, scopes, query, limit, asOf, signal);
+      return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
     const [q] = await this.embeddings.encode([query], signal, 'query');
     const rows = this.store.db
       .prepare(
@@ -311,12 +392,14 @@ export class Knowledge {
       .map((r) => ({ ...r, v: JSON.parse(r.vector) }))
       .filter(
         (r) =>
+          (documentIds.length === 0 || documentIds.includes(r.document_id)) &&
           documentAt(this.store.maybe('document', r.document_id), asOf) &&
           r.v.model === this.embeddings!.fingerprint() &&
           r.v.values.length === q.length &&
           r.v.values.every(Number.isFinite),
       );
-    if (!vectors.length) return this.finish(lexical, scopes, query, limit, asOf, signal);
+    if (!vectors.length)
+      return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
     let ranked: { id: string; score: number }[];
     const external = this.retrieval().vectors;
     if (external?.enabled) {
@@ -341,7 +424,7 @@ export class Knowledge {
       ranked = vectors
         .map((r) => ({ id: r.id, score: cosine(q, r.v.values) }))
         .sort((a, b) => b.score - a.score)
-        .slice(0, 30);
+        .slice(0, 60);
       this.lastRetrieval = { backend: 'exact', chunks: vectors.length };
     } else {
       const revision = (
@@ -357,7 +440,7 @@ export class Knowledge {
         generation,
         vectors.map((r) => ({ id: r.id, values: r.v.values })),
         q,
-        30,
+        60,
         signal,
       );
       assert(
@@ -420,6 +503,7 @@ export class Knowledge {
       limit,
       asOf,
       signal,
+      documentIds,
     );
   }
   private lightSyncBusy = false;
@@ -504,12 +588,20 @@ export class Knowledge {
     limit: number,
     asOf: number,
     signal?: AbortSignal,
+    documentIds: string[] = [],
   ) {
     const options = this.retrieval(),
       pool = new Map(rows.map((r) => [r.id, r]));
     const addEvidence = (documentId: string, quote: string, origin: string, edgeId?: string) => {
       const doc = this.store.maybe<any>('document', documentId);
-      if (!doc || !scopes.includes(doc.scope) || !documentAt(doc, asOf) || !quote.trim()) return;
+      if (
+        !doc ||
+        (documentIds.length > 0 && !documentIds.includes(documentId)) ||
+        !scopes.includes(doc.scope) ||
+        !documentAt(doc, asOf) ||
+        !quote.trim()
+      )
+        return;
       const chunk = this.store.db
         .prepare(
           'SELECT * FROM chunks WHERE document_id=? AND instr(text,?)>0 ORDER BY ordinal LIMIT 1',
@@ -583,7 +675,7 @@ export class Knowledge {
     let result = this.enrich(
       [...pool.values()].sort((a, b) => b.score - a.score),
       query,
-      30,
+      60,
       asOf,
     );
     if (options.rerank?.enabled)
@@ -609,20 +701,56 @@ export class Knowledge {
     );
     const results = new Map<string, any>(),
       rounds: any[] = [];
+    const startedAt = Date.now();
+    let stopReason = 'query-budget-exhausted',
+      duplicateRounds = 0;
     for (const query of [...new Set(queries.map((q) => q.trim()).filter(Boolean))]) {
       if (signal?.aborted) throw new Error('Retrieval cancelled');
-      const hits = await this.hybrid(scopes, query, limit, signal, asOf);
+      if (Date.now() - startedAt >= 60000) {
+        stopReason = 'time-budget';
+        break;
+      }
+      let hits: any[];
+      try {
+        hits = await this.hybrid(
+          scopes,
+          query,
+          limit,
+          AbortSignal.any([
+            ...(signal ? [signal] : []),
+            AbortSignal.timeout(Math.max(1, 60000 - (Date.now() - startedAt))),
+          ]),
+          asOf,
+        );
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        stopReason = Date.now() - startedAt >= 60000 ? 'time-budget' : 'retrieval-failed';
+        rounds.push({ query, status: stopReason, hits: 0, newChunks: 0 });
+        break;
+      }
       let added = 0;
       for (const hit of hits) {
         if (!results.has(hit.id)) added++;
         results.set(hit.id, hit);
       }
-      rounds.push({ query, hits: hits.length, newChunks: added });
+      rounds.push({
+        query,
+        hits: hits.length,
+        newChunks: added,
+        traceId: hits[0]?.retrievalTraceId ?? null,
+        assessment: 'unassessed',
+        missingEvidence: hits.length ? null : 'No candidates; corpus absence is not proven.',
+      });
+      duplicateRounds = added === 0 ? duplicateRounds + 1 : 0;
+      if (duplicateRounds >= 2) {
+        stopReason = 'no-new-evidence';
+        break;
+      }
     }
     return {
       results: [...results.values()].slice(0, 24),
       rounds,
-      budget: { maxQueries: 4, hostPlanningModelCalls: 0 },
+      budget: { maxQueries: 4, maxDurationMs: 60000, stopReason, hostPlanningModelCalls: 0 },
       next: results.size
         ? 'Compare cited evidence; unresolved conflicts may require a focused follow-up.'
         : 'No grounded results; refine query or inspect ingestion and scope.',
