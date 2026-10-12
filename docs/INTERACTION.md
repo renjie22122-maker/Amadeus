@@ -67,3 +67,7 @@ The composer shows reported-done, working, pending and blocked counts. SSE updat
 ### Collaboration evidence
 
 Team blackboard distinguishes unique evidence events, repeated observations, executors and grouped retrieval passages. Multiple agents quoting identical retrieved text do not establish independent sources. Repeating a test is replication; different outputs require inspection, not an automatic contradiction verdict. Existing task challenges still require newer current-artifact evidence and cannot be resolved by vote. Source independence remains explicitly unestablished where lineage is unknown.
+
+## Sidebar navigation
+
+Projects and ordinary conversations share one scroll area, with initial visible counts adapted to the sidebar height (up to five per list) and See more / See less controls. Project chats also expand progressively. Pinned conversations remain first and visible; other chats use most recent activity. Projects use the later of creation and active conversation activity. The selected conversation and its project remain available when lists collapse. Search includes project names and all matching conversations regardless of collapsed counts. Projects start collapsed except the current project and search matches. No settings or startup changes are required.

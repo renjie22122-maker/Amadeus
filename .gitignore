@@ -37,3 +37,5 @@ build/
 !/scripts/check-chart-ui.mjs
 
 !/scripts/check-local-media-ui.mjs
+
+!/scripts/check-sidebar-ui.mjs

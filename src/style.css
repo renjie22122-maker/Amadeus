@@ -3963,3 +3963,54 @@ input.team-switch:checked::after {
 .draft-attachment .local-media-attachment {
   max-width: 240px;
 }
+
+/* One shared scroll surface; lists expand without nested scrollbars. */
+.chat-navigation {
+  display: block;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 12px;
+  overscroll-behavior: contain;
+}
+.sidebar-list-items {
+  overflow: visible;
+}
+.sidebar-list-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 5px 4px;
+}
+.sidebar-list-controls button {
+  font-size: 0.875rem;
+  color: var(--muted);
+  gap: 4px;
+  padding: 4px 7px;
+}
+.sidebar-list-controls button:hover {
+  color: var(--text);
+  background: var(--surface2);
+}
+.sidebar-list.nested {
+  padding-left: 12px;
+}
+.sidebar-empty {
+  color: var(--dim);
+  font-size: 0.875rem;
+  padding: 10px;
+}
+.sidebar > .brand,
+.sidebar > .new-chat,
+.sidebar > .search,
+.sidebar > .sidebar-tools,
+.sidebar > .sidebar-bottom {
+  flex-shrink: 0;
+}
+
+.project-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.project-group[open] > summary > .project-chevron {
+  transform: rotate(90deg);
+}

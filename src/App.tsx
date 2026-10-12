@@ -577,7 +577,10 @@ export function App() {
         (state.projects.some((p) => p.id === c.projectId && p.removedAt)
           ? archived
           : c.archived === archived) &&
-        c.title.toLowerCase().includes(query.toLowerCase()) &&
+        (c.title.toLowerCase().includes(query.toLowerCase()) ||
+          state.projects.some(
+            (p) => p.id === c.projectId && p.name.toLowerCase().includes(query.toLowerCase()),
+          )) &&
         (!!query ||
           c.id === selected ||
           !state?.runs.some(
@@ -778,6 +781,7 @@ export function App() {
       </div>
       {sidebar && (
         <Sidebar
+          selected={selected || ''}
           editProject={(p) => {
             setEditingProject(p);
             setProjectName(p.name);

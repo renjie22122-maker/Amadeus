@@ -1,5 +1,9 @@
+import { useEffect, useRef, useState } from 'react';
+import { SidebarList } from './SidebarList';
+import { recentChats, recentProjects } from '../sidebar-lists';
 import {
   Archive,
+  ChevronRight,
   BookOpen,
   Brain,
   Folder,
@@ -20,6 +24,7 @@ import { type Language } from '../i18n';
 import type { Action, UiState } from '../types';
 
 interface SidebarProps {
+  selected: string;
   editProject: (project: Project) => void;
   t: (key: string) => string;
   state: UiState;
@@ -41,6 +46,7 @@ interface SidebarProps {
   setTheme: Dispatch<SetStateAction<string>>;
 }
 export function Sidebar({
+  selected,
   editProject,
   t,
   state,
@@ -61,6 +67,32 @@ export function Sidebar({
   theme,
   setTheme,
 }: SidebarProps) {
+  const navRef = useRef<HTMLElement>(null);
+  const [initialCount, setInitialCount] = useState(2);
+  useEffect(() => {
+    const node = navRef.current;
+    if (!node) return;
+    const resize = () =>
+      setInitialCount(Math.max(1, Math.min(5, Math.floor((node.clientHeight / 2 - 72) / 44))));
+    const observer = new ResizeObserver(resize);
+    observer.observe(node);
+    resize();
+    return () => observer.disconnect();
+  }, []);
+  const chats = recentChats(filtered);
+  const searching = !!query.trim();
+  const projects = recentProjects(
+    state.projects.filter(
+      (p) =>
+        (!p.removedAt || archived) &&
+        (!searching ||
+          p.name.toLowerCase().includes(query.toLowerCase()) ||
+          chats.some((c) => c.projectId === p.id)),
+    ),
+    state.conversations,
+  );
+  const selectedProject =
+    state.conversations.find((c) => c.id === selected)?.projectId || undefined;
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -89,18 +121,28 @@ export function Sidebar({
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
-      <nav className="chat-navigation">
+      <nav className="chat-navigation" ref={navRef}>
         <div className="nav-heading">
           <span>{t('projects')}</span>
           <button title={t('addProject')} onClick={() => setProjectDialog(true)}>
             <Plus size={15} />
           </button>
         </div>
-        {state.projects
-          .filter((p: Project) => !p.removedAt || archived)
-          .map((p: Project) => (
-            <details className="project-group" key={p.id} open>
+        <SidebarList
+          items={projects}
+          initial={initialCount}
+          selected={selectedProject}
+          searching={searching}
+          zh={language === 'zh'}
+          label={t('projects')}
+          render={(p) => (
+            <details
+              className="project-group"
+              key={p.id}
+              open={searching || p.id === selectedProject}
+            >
               <summary>
+                <ChevronRight size={12} className="project-chevron" />
                 <Folder size={15} />
                 <span>
                   {p.name}
@@ -126,9 +168,19 @@ export function Sidebar({
                   <Plus size={14} />
                 </button>
               </summary>
-              {filtered.filter((c: any) => c.projectId === p.id).map(chatLink)}
+              <SidebarList
+                nested
+                items={chats.filter((c) => c.projectId === p.id)}
+                initial={5}
+                selected={selected}
+                searching={searching}
+                zh={language === 'zh'}
+                label={p.name}
+                render={chatLink}
+              />
             </details>
-          ))}
+          )}
+        />
         {!state.projects.length && (
           <button className="add-project" onClick={() => setProjectDialog(true)}>
             <FolderPlus size={15} />
@@ -141,7 +193,15 @@ export function Sidebar({
             <Archive size={14} />
           </button>
         </div>
-        {filtered.filter((c: any) => !c.projectId).map(chatLink)}
+        <SidebarList
+          items={chats.filter((c) => !c.projectId)}
+          initial={5}
+          selected={selected}
+          searching={searching}
+          zh={language === 'zh'}
+          label={t('chats')}
+          render={chatLink}
+        />
       </nav>
       <div className="sidebar-tools">
         {[

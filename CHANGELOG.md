@@ -140,3 +140,8 @@ Document-scoped follow-up search, narrow passage reranking, automatic conservati
 
 - Removed the fixed local-media upload/import size cap; streaming import, playback ranges, integrity inspection and no-clobber export bound memory. Failed/cancelled transfers do not publish partial files.
 - 保留独立的视觉解码、API参考输入限制；本地保存与播放不受该限制。
+
+### Sidebar navigation / 侧栏列表
+
+- Shared scrolling with progressive See more / See less for projects, ordinary conversations and project chats; recent activity ordering, pinned and selected retention, project-name search.
+- 项目和普通对话共用滚动条，默认少量展示，展开不增加嵌套滚动区。
