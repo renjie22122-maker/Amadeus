@@ -243,3 +243,7 @@ The UI releases submission state after the message acknowledgement, independentl
 Limits: an uncached conversation still transfers its complete event history; the five-entry cache is not durable history pagination. Large single turns and synchronous background database work can still affect responsiveness. This change does not close malicious ancestor replacement races or certify unavailable Docker/strict AppContainer backends.
 
 Message submission returns run metadata without model checkpoints.
+
+## Model session and knowledge tool modules
+
+core/model-session.ts owns provider completion observation, context/prefix accounting and usage ledger updates. Runtime delegates to it while retaining model-loop and lifecycle coordination. tools/knowledge-tools.ts installs knowledge search, bounded investigation, trace inspection and evidence assessment; ToolRegistry still owns invocation policy, approvals, effects and schema enforcement. This is incremental decomposition, not a claim that the composition roots are fully decomposed. Persisted vector validation lives in services/vector-record.ts and is reused by knowledge and memory caches.

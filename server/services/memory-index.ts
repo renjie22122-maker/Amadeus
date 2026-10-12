@@ -1,3 +1,5 @@
+import { validVector } from './vector-record.js';
+import { AppError } from '../core/errors.js';
 import { memoryActivity } from './memory-activity.js';
 import { memoryAccessible } from '../../shared/memory-scope.js';
 import { memoryValid, MemoryLifecycle } from './memory-lifecycle.js';
@@ -15,6 +17,14 @@ export class MemoryIndex {
     private store: Store,
     private embeddings: Embeddings,
   ) {}
+  private storedVector(key: string) {
+    try {
+      return this.store.maybe<any>('memory-vector', key);
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'RECORD_CORRUPT') return { values: null };
+      throw error;
+    }
+  }
   // Explicit user action only: inactive candidates never leave the machine for embedding.
   async index(scope?: string, allowed: () => boolean = () => true) {
     const fingerprint = this.embeddings.fingerprint();
@@ -27,8 +37,13 @@ export class MemoryIndex {
           memoryValid(m) &&
           new MemoryLifecycle(this.store).evidenceValid(m),
       )) {
-      const existing = this.store.maybe<any>('memory-vector', m.id);
-      if (existing?.hash === hash(m) && existing?.model === fingerprint) continue;
+      const existing = this.storedVector(m.id);
+      if (
+        existing?.hash === hash(m) &&
+        existing?.model === fingerprint &&
+        validVector(existing.values)
+      )
+        continue;
       if (!allowed() || this.embeddings.fingerprint() !== fingerprint) break;
       const [values] = await this.embeddings.encode([m.content]);
       const current = this.store.maybe<Memory>('memory', m.id);
@@ -68,15 +83,26 @@ export class MemoryIndex {
         memoryValid(m, asOf) &&
         (m.scope === 'user' || (!!projectId && m.scope === 'project:' + projectId)),
     );
+    let invalidVectors = 0;
     const vectors = eligible
-      .map((m) => ({ m, v: this.store.maybe<any>('memory-vector', m.id) }))
-      .filter(({ m, v }) => v?.hash === hash(m) && v.model === this.embeddings.fingerprint());
+      .map((m) => ({ m, v: this.storedVector(m.id) }))
+      .filter(({ m, v }) => {
+        if (v && !validVector(v.values)) {
+          invalidVectors++;
+          return false;
+        }
+        return v?.hash === hash(m) && v.model === this.embeddings.fingerprint();
+      });
     let method = 'scoped-lexical',
       fallback: string | undefined;
     if (this.embeddings.enabled() && vectors.length) {
       try {
         const [q] = await this.embeddings.encode([query], signal, 'query');
         for (const { m, v } of vectors) {
+          if (!validVector(v.values, q.length)) {
+            invalidVectors++;
+            continue;
+          }
           const score = cosine(q, v.values);
           if (score >= 0.35) scores.set(m.id, score);
         }
@@ -109,6 +135,7 @@ export class MemoryIndex {
       ),
       method,
       fallback,
+      invalidVectors,
     };
   }
 }

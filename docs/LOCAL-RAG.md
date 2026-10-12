@@ -43,3 +43,9 @@ LightRAG synthetic ingestion and retrieval also passed: 3 entities, 2 relations 
 ## Managed installation
 
 Offline bundles are optional. Setup installs Python packages into the application data directory and prepares models under retrieval-service/models. With no local source, models download from Hugging Face; rerunning setup reuses completed downloads. Local sources are copied and SHA-256 checked before configuration changes, so subsequent startup does not depend on the bundle. Keep the source until setup succeeds. GPU online setup accepts -Gpu and an optional -TorchIndexUrl matching your driver; CPU remains the default. Model download failures preserve existing data.
+
+## Damaged vector tolerance
+
+Knowledge retrieval validates persisted vectors row by row (JSON/object shape, finite numeric values, nonzero finite norm, model and query dimension). Invalid or incompatible rows cannot poison healthy semantic candidates; their text remains available to lexical retrieval. Query embedding failure falls back to lexical retrieval with an explicit degraded reason. Cancellation and database failures still propagate.
+
+Each hybrid result and its retrieval trace carry request-local retrievalDiagnostics, including scanned/usable/invalid/incompatible vector counts; concurrent searches do not share these trace diagnostics. Normal document indexing no longer trusts a matching model name alone: malformed vectors are regenerated and are excluded from reuse. Index status exposes invalid counts. Memory vector caches use the same value validator and tolerate RECORD_CORRUPT for this derived record kind only; ordinary storage failures are not converted into missing data. Incompatible dimensions are skipped at query time; this does not silently migrate models or rebuild an entire corpus. External ANN, reranker or LightRAG service failures are not universally hidden by this policy.

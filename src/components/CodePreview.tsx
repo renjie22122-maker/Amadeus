@@ -1,3 +1,4 @@
+import { chartDocument } from '../chart-spec';
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Eye, Code2, RotateCcw, Copy, Check, ShieldCheck, ArrowDownToLine, X } from 'lucide-react';
 import { previewDocument } from '../markdown-rich';
@@ -32,7 +33,31 @@ export function CodePreview({
   const frame = useRef<HTMLIFrameElement>(null);
   const count = useRef(0);
   const token = useMemo(() => crypto.randomUUID(), [ready, version]);
+  const [theme, setTheme] = useState(document.documentElement.dataset.theme);
+  useEffect(() => {
+    if (language !== 'chart') return;
+    const observer = new MutationObserver(() => setTheme(document.documentElement.dataset.theme));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+    return () => observer.disconnect();
+  }, [language]);
   const isDiagram = language === 'mermaid';
+  const chart = useMemo(() => {
+    if (language !== 'chart') return null;
+    try {
+      return { html: chartDocument(ready, theme), error: '' };
+    } catch {
+      return {
+        html: '',
+        error: label(
+          'Chart data is incomplete or invalid. Open Code to inspect it.',
+          '图表数据尚未完整或格式不正确，可切换代码查看。',
+        ),
+      };
+    }
+  }, [language, ready, zh, theme]);
   useEffect(() => {
     const timer = setTimeout(() => setReady(source), 450);
     return () => clearTimeout(timer);
@@ -172,7 +197,13 @@ export function CodePreview({
           title={label('Isolated preview; no host access', '隔离预览，不能访问宿主页面')}
         >
           <ShieldCheck size={13} />
-          {isDiagram ? 'Mermaid' : language === 'svg' ? 'SVG' : 'HTML'}
+          {isDiagram
+            ? 'Mermaid'
+            : language === 'chart'
+              ? label('Chart', '图表')
+              : language === 'svg'
+                ? 'SVG'
+                : 'HTML'}
         </span>
         <div className="preview-utilities">
           <select
@@ -251,6 +282,8 @@ export function CodePreview({
             ) : (
               <p role="status">{label('Rendering…', '正在绘制…')}</p>
             )
+          ) : chart?.error ? (
+            <p role="status">{chart.error}</p>
           ) : ready ? (
             <iframe
               ref={frame}
@@ -261,7 +294,7 @@ export function CodePreview({
               srcDoc={previewDocument(
                 language === 'svg'
                   ? '<style>svg{max-width:100%;height:auto;display:block}</style>' + ready
-                  : ready,
+                  : chart?.html || ready,
                 onResult ? token : undefined,
                 token,
               )}

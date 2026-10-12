@@ -1,3 +1,4 @@
+import { vectorRecord, validVector } from './vector-record.js';
 import { retrievalTarget } from '../../shared/retrieval.js';
 import { knowledgeStatus } from './retrieval-status.js';
 import type { RetrievalSettings } from '../../shared/retrieval.js';
@@ -37,40 +38,40 @@ export class Knowledge {
     CREATE TRIGGER IF NOT EXISTS vectors_update AFTER UPDATE OF vector ON chunks BEGIN UPDATE vector_revision SET version=version+1 WHERE id=1; END;
     CREATE TRIGGER IF NOT EXISTS vectors_delete AFTER DELETE ON chunks BEGIN UPDATE vector_revision SET version=version+1 WHERE id=1; END;`);
   }
+  private vectorStatuses(rows: Iterable<any>) {
+    const statuses: Record<
+      string,
+      { completed: number; total: number; invalid: number; status: string }
+    > = {};
+    for (const row of rows) {
+      const item = (statuses[row.document_id] ||= {
+        completed: 0,
+        total: 0,
+        invalid: 0,
+        status: 'pending',
+      });
+      item.total++;
+      const vector = vectorRecord(row.vector);
+      if (row.vector != null && !vector) item.invalid++;
+      if (vector?.model === this.embeddings?.fingerprint()) item.completed++;
+      item.status =
+        item.completed === item.total ? 'indexed' : item.completed ? 'partial' : 'pending';
+    }
+    return statuses;
+  }
   indexStatuses(scope: string) {
-    const rows = this.store.db
-      .prepare(
-        `SELECT document_id id,count(*) total,sum(CASE WHEN json_valid(vector) AND json_extract(vector,'$.model')=? THEN 1 ELSE 0 END) completed FROM chunks WHERE scope=? GROUP BY document_id`,
-      )
-      .all(this.embeddings?.fingerprint() || '', scope) as any[];
-    return Object.fromEntries(
-      rows.map((r) => {
-        const completed = Number(r.completed || 0),
-          total = Number(r.total);
-        return [
-          r.id,
-          {
-            completed,
-            total,
-            status: total && completed === total ? 'indexed' : completed ? 'partial' : 'pending',
-          },
-        ];
-      }),
+    return this.vectorStatuses(
+      this.store.db.prepare('SELECT document_id,vector FROM chunks WHERE scope=?').iterate(scope),
     );
   }
   indexStatus(key: string) {
-    const rows = this.store.db
-      .prepare(
-        `SELECT count(*) total, sum(CASE WHEN json_valid(vector) AND json_extract(vector,'$.model')=? THEN 1 ELSE 0 END) completed FROM chunks WHERE document_id=?`,
-      )
-      .get(this.embeddings?.fingerprint() || '', key) as any;
-    const completed = Number(rows.completed || 0),
-      total = Number(rows.total || 0);
-    return {
-      completed,
-      total,
-      status: total && completed === total ? 'indexed' : completed ? 'partial' : 'pending',
-    };
+    return (
+      this.vectorStatuses(
+        this.store.db
+          .prepare('SELECT document_id,vector FROM chunks WHERE document_id=?')
+          .iterate(key),
+      )[key] || { completed: 0, total: 0, invalid: 0, status: 'pending' }
+    );
   }
   statistics(scopes: string[], asOf = Date.now(), memoryBudgetMiB?: number) {
     return knowledgeStatus(
@@ -239,7 +240,7 @@ export class Knowledge {
     for (let i = 0; i < rows.length; i += 16) {
       const batch = rows.slice(i, i + 16).filter((r) => {
         try {
-          return JSON.parse(r.vector || 'null')?.model !== this.embeddings!.fingerprint();
+          return !vectorRecord(r.vector, fingerprint);
         } catch {
           return true;
         }
@@ -263,7 +264,7 @@ export class Knowledge {
         const cached = reuse
           .map((r) => {
             try {
-              return JSON.parse(r.vector);
+              return vectorRecord(r.vector, fingerprint);
             } catch {
               return null;
             }
@@ -301,6 +302,7 @@ export class Knowledge {
   ) {
     const traceId = id(),
       startedAt = Date.now();
+    const diagnostics: Record<string, unknown> = {};
     const record = (extra: any) => {
       this.store.put('retrieval-trace', {
         id: traceId,
@@ -314,6 +316,7 @@ export class Knowledge {
         requested: limit,
         startedAt,
         durationMs: Date.now() - startedAt,
+        diagnostics,
         ...extra,
       });
       const old = this.store.list<any>('retrieval-trace').sort((a, b) => b.startedAt - a.startedAt);
@@ -328,6 +331,7 @@ export class Knowledge {
         asOf,
         bypassPolicy,
         documentIds,
+        diagnostics,
       );
       record({
         status: results.length ? 'candidates' : 'no-candidates',
@@ -345,6 +349,7 @@ export class Knowledge {
       return results.map((r) => ({
         ...r,
         retrievalTraceId: traceId,
+        retrievalDiagnostics: diagnostics,
         relevanceStatus: 'unassessed',
       }));
     } catch (error) {
@@ -360,8 +365,9 @@ export class Knowledge {
     asOf = Date.now(),
     bypassPolicy = false,
     documentIds: string[] = [],
+    diagnostics: Record<string, unknown> = {},
   ) {
-    this.lastRetrieval = {};
+    this.lastRetrieval = diagnostics;
     if (!query.trim() || !scopes.length) return [];
     if (
       !bypassPolicy &&
@@ -380,7 +386,19 @@ export class Knowledge {
     const lexical = this.search(scopes, query, 60, asOf, documentIds);
     if (!this.embeddings?.enabled() || !scopes.length)
       return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
-    const [q] = await this.embeddings.encode([query], signal, 'query');
+    let q: number[];
+    try {
+      [q] = await this.embeddings.encode([query], signal, 'query');
+      assert(validVector(q), 'INVALID_QUERY_VECTOR', 'Invalid query embedding.');
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      Object.assign(diagnostics, {
+        backend: 'lexical',
+        degraded: true,
+        reason: 'query_embedding_unavailable',
+      });
+      return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
+    }
     const rows = this.store.db
       .prepare(
         'SELECT * FROM chunks WHERE vector IS NOT NULL AND scope IN (' +
@@ -388,16 +406,36 @@ export class Knowledge {
           ')',
       )
       .all(...scopes) as any[];
-    const vectors = rows
-      .map((r) => ({ ...r, v: JSON.parse(r.vector) }))
-      .filter(
-        (r) =>
-          (documentIds.length === 0 || documentIds.includes(r.document_id)) &&
-          documentAt(this.store.maybe('document', r.document_id), asOf) &&
-          r.v.model === this.embeddings!.fingerprint() &&
-          r.v.values.length === q.length &&
-          r.v.values.every(Number.isFinite),
-      );
+    const eligible = rows.filter(
+      (r) =>
+        (documentIds.length === 0 || documentIds.includes(r.document_id)) &&
+        documentAt(this.store.maybe('document', r.document_id), asOf),
+    );
+    let invalid = 0,
+      incompatible = 0;
+    const vectors = eligible.flatMap((r) => {
+      const v = vectorRecord(r.vector);
+      if (!v) {
+        invalid++;
+        return [];
+      }
+      if (v.model !== this.embeddings!.fingerprint() || v.values.length !== q.length) {
+        incompatible++;
+        return [];
+      }
+      return [{ ...r, v }];
+    });
+    const vectorHealth = {
+      scanned: eligible.length,
+      usable: vectors.length,
+      invalid,
+      incompatible,
+    };
+    Object.assign(diagnostics, {
+      vectorHealth,
+      degraded: invalid > 0 || incompatible > 0,
+      backend: 'lexical',
+    });
     if (!vectors.length)
       return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
     let ranked: { id: string; score: number }[];
@@ -419,13 +457,18 @@ export class Knowledge {
         'Knowledge changed during external retrieval; search again.',
       );
       ranked = result.result;
-      this.lastRetrieval = { ...result, result: undefined, chunks: vectors.length };
+      Object.assign(diagnostics, {
+        ...diagnostics,
+        ...result,
+        result: undefined,
+        chunks: vectors.length,
+      });
     } else if (vectors.length < 2000) {
       ranked = vectors
         .map((r) => ({ id: r.id, score: cosine(q, r.v.values) }))
         .sort((a, b) => b.score - a.score)
         .slice(0, 60);
-      this.lastRetrieval = { backend: 'exact', chunks: vectors.length };
+      Object.assign(diagnostics, { ...diagnostics, backend: 'exact', chunks: vectors.length });
     } else {
       const revision = (
         this.store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any
@@ -450,18 +493,24 @@ export class Knowledge {
         'Knowledge changed during retrieval; search again.',
       );
       ranked = result.result;
-      this.lastRetrieval = {
+      Object.assign(diagnostics, {
+        ...diagnostics,
         backend: result.backend,
         cacheSource: result.cacheSource,
         calibration: result.calibration,
         chunks: vectors.length,
         buildMs: result.buildMs,
         searchMs: result.searchMs,
-      };
+      });
     }
     const byId = new Map(vectors.map((r) => [r.id, r]));
     const semantic = ranked
-      .filter((r) => this.store.db.prepare('SELECT id FROM chunks WHERE id=?').get(r.id))
+      .filter(
+        (r) =>
+          byId.has(r.id) &&
+          Number.isFinite(r.score) &&
+          this.store.db.prepare('SELECT id FROM chunks WHERE id=?').get(r.id),
+      )
       .map((hit) => {
         const r = byId.get(hit.id)!;
         return {

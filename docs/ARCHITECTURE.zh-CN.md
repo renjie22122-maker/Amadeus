@@ -198,3 +198,7 @@ Store.maybe 仅在 NOT_FOUND 时返回 undefined。记录 JSON 损坏抛出 RECO
 限制：首次打开未缓存对话仍传输完整历史，五项缓存不等于持久分页。单轮超长输出及同步数据库后台工作仍可能影响响应。本次不代表消除了恶意父目录替换竞态，也不代表不可用的 Docker 或严格 AppContainer 已通过隔离验证。
 
 消息提交回执只含运行元数据，不回传模型检查点。
+
+## 模型请求与知识工具模块
+
+core/model-session.ts 负责模型请求观测、上下文与前缀统计、用量台账；Runtime 委托这些工作，仍保留模型主循环及生命周期协调。tools/knowledge-tools.ts 注册知识检索、有界调查、轨迹读取和证据评估；ToolRegistry 继续统一执行策略、审批、副作用与参数校验。属于增量拆分，不代表协调器已全部拆完。services/vector-record.ts 提供知识及记忆缓存共用的持久化向量校验。

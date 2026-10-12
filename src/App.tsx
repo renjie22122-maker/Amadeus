@@ -125,6 +125,7 @@ export function App() {
     if (['knowledge', 'memory', 'memories'].includes(page))
       void refresh().catch((e) => notify(e.message));
   }, [page, refresh, notify]);
+  const authenticated = useRef(false);
   const detailCache = useRef(new Map<string, ConversationDetail>());
   const patches = useRef(new Map<string, Record<string, unknown>>());
   const updateQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -187,7 +188,7 @@ export function App() {
     setStreams({});
     stick.current = !anchor;
     setDraft(localStorage.getItem('agentdemo.draft.' + selected) || '');
-    if (selected) void load(selected).catch((e) => notify(e.message));
+    if (selected && authenticated.current) void load(selected).catch((e) => notify(e.message));
   }, [selected, load, notify]);
   useEffect(() => {
     localStorage.setItem('agentdemo.draft.' + selected, draft);
@@ -311,6 +312,7 @@ export function App() {
       setConnection,
       async () => {
         await bootstrap();
+        authenticated.current = true;
         await refresh();
       },
     );

@@ -65,3 +65,16 @@ Pending records are local UI state, not durable storage: reset, reload or unmoun
 HTML and SVG previews default to Fit content. Height follows content changes, image loads and available width without resetting component state; source view remains scrollable. Fit window, Compact, Standard and Tall remain available. Long content is capped at 2400px with an explicit hint so an untrusted component cannot expand the chat indefinitely. Viewport-relative layouts or internally scrolling widgets may still scroll.
 
 Size messages are accepted only from the current sandbox iframe with the current token; the preview retains its opaque origin and restrictive CSP. A size message cannot submit a result or access host tools.
+
+## Declarative charts and comparison cards
+
+A fenced chart block contains JSON, not executable JavaScript. Preview is the default; use Code to inspect/copy the source and the existing height selector to fit content or the window. The renderer follows the application theme and keeps wide tables horizontally scrollable.
+
+Supported schemas (all allow title and caption):
+
+- Bar: {"type":"bar","title":"Latency","unit":" ms","data":[{"label":"Before","value":120},{"label":"After","value":75}]}. Optional max sets a scale at least as large as the data; zero and negative values are supported.
+- Line: {"type":"line","data":[{"label":"First","value":3},{"label":"Second","value":7}]}. Points are equally spaced categories; hover for values or expand Data for every label/value.
+- Flow cards: {"type":"flow","steps":[{"title":"Observe","detail":"Collect evidence"},{"title":"Verify"}]}.
+- Table: {"type":"table","columns":["Variant","Result"],"rows":[["A","Passed"],["B","Pending"]]}.
+
+Use Mermaid for actual relationship edges, sequence/state/entity diagrams; standard Markdown tables and sandboxed HTML/SVG remain supported. Chart JSON is validated and labels are escaped. Limits: 100 data points/table rows, 20 columns, 50 flow steps, 100,000 source characters; invalid or unfinished input shows an explanation with source access. This is a presentation format, not measured evidence: models must not fabricate scores or probabilities to fill a chart.

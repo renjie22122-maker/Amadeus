@@ -123,3 +123,10 @@ Document-scoped follow-up search, narrow passage reranking, automatic conservati
 - Lightweight shell state, coalesced refresh, non-overlapping background polling and cancelled stale model discovery. / 轻量页面状态、合并刷新、后台轮询不叠加、取消过时模型发现请求。
 - Extract conversation-view routing; add a real-browser slow-refresh regression. Launchers need no new dependencies. / 拆出对话读取路由，增加真实浏览器慢刷新回归；启动项无需新依赖。
 - Existing filesystem ancestor-race and unverified isolation-backend limitations remain explicit. / 保留文件父目录竞态及隔离后端未验证的限制说明。
+
+## Retrieval resilience and general conversation charts / 检索容错与通用对话图表
+
+- Validate vectors per row, repair malformed cache entries through normal indexing, expose scoped request-local degradation diagnostics. / 逐条校验向量、通过正常索引修复损坏缓存，暴露同范围请求级降级诊断。
+- Extract model-session accounting and knowledge-tool registration from coordinators; preserve policy gates. / 拆分模型请求记账与知识工具注册，保留统一策略门控。
+- Add declarative bar/line/flow/table previews with source switch, theme adaptation and bounded validated data; retain Mermaid and Markdown. / 新增条形、折线、流程卡片与表格预览，支持源码切换、主题适配与数据校验，保留 Mermaid 和 Markdown。
+- Defer restored-conversation loading until local authentication bootstrap completes. / 恢复对话等待本地身份初始化完成，避免启动误报。

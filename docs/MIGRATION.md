@@ -41,3 +41,7 @@ No additional package or installer migration is required. Both launchers already
 ## Responsive conversation reads
 
 Restart to load the server changes and reload the browser. The existing Start/First-Start launchers fingerprint src/shared/server and rebuild changed code; no new dependency or user configuration is required. Store startup creates a conversation lookup index without rewriting or removing records. First launch on a large database can spend additional time building that index.
+
+## Vector tolerance and chart presentation
+
+No dependency, configuration, startup command or database schema migration is required. Existing Start/First-Start launchers fingerprint changed server/shared/src files and rebuild them. Restart the service and reload the browser to activate the update; existing chart-format messages can render immediately. Damaged vector payloads are skipped during reads, not deleted; an already authorized normal index job repairs malformed vectors. Index repair still obeys the selected embedding destination and data authorization.

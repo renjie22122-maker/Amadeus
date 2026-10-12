@@ -33,3 +33,5 @@ build/
 !tests/model-preparation.test.py
 
 !/scripts/check-chat-ui.mjs
+
+!/scripts/check-chart-ui.mjs
