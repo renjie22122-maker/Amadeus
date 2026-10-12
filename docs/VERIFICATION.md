@@ -56,3 +56,11 @@ Task done records execution completion with attached observations. record_verifi
 Set requireSemantic on substantive implementation/delivery contracts to require accepted semantic assessment before delivery. Rejected assessments block delivery even on optional contracts. Changed criteria or stale artifact stamps invalidate the assessment. requireIndependent additionally rejects the author as semantic reviewer and author-only evidence. Permission approvals do not populate human acceptance; that field remains not-recorded. The blackboard and delivery projection expose these layers separately. This is evidence-bound review, not automatic proof of software correctness.
 
 Validation on 2026-10-12 for the boundary/receipt/decomposition update: 425 tests, 423 passed, 2 environment-dependent skips; TypeScript, production build and compiled HTTP/document/image/ONNX smoke checks passed. No paid model requests were used. Large frontend bundle warnings remain. The live strict-native refusal and unavailable Docker checks are recorded in the security guide and are not successful sandbox-containment tests.
+
+## Slow-refresh UI regression
+
+After building, run node scripts/check-chat-ui.mjs (install a Playwright browser first, or set BROWSER_CHANNEL=msedge for an installed Edge). It uses a temporary database and fake provider, blocks refresh GETs after submitting, verifies the send spinner ends at acknowledgement, checks the next draft remains editable, then releases refresh and checks timeline convergence. No live user conversation or paid provider is used.
+
+Chat-performance regressions also check metadata-only active lookups with intentionally corrupt historical checkpoints, scoped records, incremental events, and SSE gap repair. These are behavioral checks, not production latency benchmarks.
+
+Validation for this update: 428 tests, 426 passed, 2 skipped; TypeScript, production build, compiled-service smoke and the isolated Edge slow-refresh regression passed. Skipped native desktop tests are not containment evidence.

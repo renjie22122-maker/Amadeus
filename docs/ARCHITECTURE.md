@@ -233,3 +233,13 @@ resume-preparation owns interrupted checkpoint repair without replay; recovery-t
 Store.maybe returns undefined only for NOT_FOUND. Corrupt record JSON raises RECORD_CORRUPT without including record content; database faults propagate rather than becoming missing data. A storage failure during reconciliation is not silently treated as an unknown file.
 
 Service composition now lives in core/runtime-services and http/maintenance-services; MCP discovery/browser/desktop registration lives in tools/mcp-tools, with file transfers using FileScope handles. Built-in tools remain host-registered; agents discover enabled MCP services, while skills and generated scripts do not automatically become trusted tools with higher privileges.
+
+## Conversation read path and responsive submission
+
+Conversation HTTP projection lives in server/http/conversation-view.ts. Conversation-scoped records are filtered in SQLite before JSON decoding. Activity checks read run metadata; starting another turn hydrates only the latest checkpoint, rather than every historical run. The projection computes task members/board once per request.
+
+The UI releases submission state after the message acknowledgement, independently of subsequent refresh. Cached conversations fetch events after the last HTTP snapshot cursor (never the latest SSE event, which may have gaps). Delivery state is refreshed even for older messages. Concurrent global refreshes share a request. Chat/settings/background shell refreshes omit the memory/document catalog; library pages request the full state. Background polling waits for completion before scheduling another poll; model discovery requests are cancelled when leaving their connection.
+
+Limits: an uncached conversation still transfers its complete event history; the five-entry cache is not durable history pagination. Large single turns and synchronous background database work can still affect responsiveness. This change does not close malicious ancestor replacement races or certify unavailable Docker/strict AppContainer backends.
+
+Message submission returns run metadata without model checkpoints.

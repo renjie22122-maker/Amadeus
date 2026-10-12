@@ -115,3 +115,11 @@ Readable legacy source nodes, paginated graph diagnostics, source-bound automati
 ## 2026-10-12 — Retrieval investigations and evidence diversity
 
 Document-scoped follow-up search, narrow passage reranking, automatic conservative cutoff, local retrieval audits and bounded investigation. Team evidence separates repeated sources from independent execution. No new dependency or data migration required; restart app and local RAG service to load changes.
+
+## Conversation and panel responsiveness / 对话与面板响应
+
+- Release send state on server acknowledgement; refresh independently. / 收到服务器确认即结束发送状态，独立刷新。
+- Incremental cached conversation history, scoped SQL reads and latest-only checkpoint hydration. / 缓存历史增量读取、SQL 范围过滤、仅加载最近检查点。
+- Lightweight shell state, coalesced refresh, non-overlapping background polling and cancelled stale model discovery. / 轻量页面状态、合并刷新、后台轮询不叠加、取消过时模型发现请求。
+- Extract conversation-view routing; add a real-browser slow-refresh regression. Launchers need no new dependencies. / 拆出对话读取路由，增加真实浏览器慢刷新回归；启动项无需新依赖。
+- Existing filesystem ancestor-race and unverified isolation-backend limitations remain explicit. / 保留文件父目录竞态及隔离后端未验证的限制说明。

@@ -222,6 +222,18 @@ test('HTTP requires local host, cookie and CSRF for state changes', async () => 
   const boot = await app.inject({ url: '/api/bootstrap', headers: { host: '127.0.0.1:8810' } });
   const cookie = String(boot.headers['set-cookie']).split(';')[0],
     csrf = boot.json().csrf;
+  f.store.put('memory', { id: 'state-memory', content: 'library only' });
+  const shell = (
+    await app.inject({ url: '/api/state?view=shell', headers: { host: '127.0.0.1:8810', cookie } })
+  ).json();
+  assert.equal(shell.memories, undefined);
+  assert.equal(shell.documents, undefined);
+  assert(Array.isArray(shell.conversations));
+  const full = (
+    await app.inject({ url: '/api/state', headers: { host: '127.0.0.1:8810', cookie } })
+  ).json();
+  assert(full.memories.some((m: any) => m.id === 'state-memory'));
+
   assert.equal(
     (
       await app.inject({

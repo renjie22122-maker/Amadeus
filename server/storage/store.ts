@@ -51,6 +51,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS run_metadata(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL,created_at INTEGER NOT NULL,data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS run_metadata_conversation ON run_metadata(conversation_id,created_at);
       INSERT OR IGNORE INTO run_metadata SELECT id,COALESCE(json_extract(data,'$.conversationId'),''),COALESCE(json_extract(data,'$.createdAt'),0),json_remove(data,'$.checkpoints') FROM records WHERE kind='run';
+      CREATE INDEX IF NOT EXISTS records_conversation_scope ON records(kind,CASE WHEN json_valid(data) THEN json_extract(data,'$.conversationId') END);
       CREATE INDEX IF NOT EXISTS effects_unfinished ON effects(run_id) WHERE state='started';
       CREATE TABLE IF NOT EXISTS run_checkpoints(id TEXT PRIMARY KEY,data TEXT NOT NULL);
       INSERT OR IGNORE INTO run_checkpoints SELECT id,COALESCE(json_extract(data,'$.checkpoints'),'[]') FROM records WHERE kind='run';
@@ -135,6 +136,24 @@ export class Store {
     return (
       this.db.prepare('SELECT data FROM records WHERE kind=?').all(kind) as { data: string }[]
     ).map((row) => JSON.parse(row.data));
+  }
+  /** Filter in SQLite before decoding unrelated conversations' payloads. */
+  forConversation<T>(kind: string, conversationId: string): T[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT id,data FROM records WHERE kind=? AND CASE WHEN json_valid(data) THEN json_extract(data,'$.conversationId') END=?",
+        )
+        .all(kind, conversationId) as { id: string; data: string }[]
+    ).map((row) => parseStored(row.data, kind, row.id));
+  }
+  latestRun(conversationId: string): Run | undefined {
+    const row = this.db
+      .prepare(
+        'SELECT id FROM run_metadata WHERE conversation_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1',
+      )
+      .get(conversationId) as { id: string } | undefined;
+    return row ? this.get<Run>('run', row.id) : undefined;
   }
   remove(kind: string, key: string) {
     this.transaction(() => {

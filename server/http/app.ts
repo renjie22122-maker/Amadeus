@@ -1,3 +1,4 @@
+import { conversationViewRoutes } from './conversation-view.js';
 import { startMaintenanceServices } from './maintenance-services.js';
 import { effectRoutes } from './effects.js';
 import { configureLocalRag } from '../services/local-rag.js';
@@ -13,7 +14,6 @@ import { matchModel } from '../../shared/model-metadata.js';
 import { automationInput } from '../services/team-automation.js';
 import type { Run } from '../../shared/types.js';
 import { Teams } from '../services/team-space.js';
-import { rootRun, TaskBoard } from '../services/task-board.js';
 import { inspectEffects } from '../services/recovery.js';
 import { execute as executeCommand } from '../services/process.js';
 import { inspectionRoutes } from './inspection.js';
@@ -115,7 +115,7 @@ export async function createApp(options: { directory: string; dist?: string; run
     reply.header('Set-Cookie', 'agentdemo=' + cookie + '; HttpOnly; SameSite=Strict; Path=/');
     return { csrf, version: '0.1.0', settings: config.public() };
   });
-  const state = () => ({
+  const state = (shell = false) => ({
     pendingInputs: store
       .list<any>('input')
       .filter((q) => q.status === 'pending')
@@ -132,80 +132,19 @@ export async function createApp(options: { directory: string; dist?: string; run
         s.sourceGroup ||
         (/anthropic/i.test(source) ? 'Anthropic' : /openai/i.test(source) ? 'OpenAI' : 'Other'),
     })),
-    memories: store.list('memory'),
-    memoryLearning: store.list('memory-learning').slice(-30),
-    documents: store.list('document'),
+    ...(shell
+      ? {}
+      : {
+          memories: store.list('memory'),
+          memoryLearning: store.list('memory-learning').slice(-30),
+          documents: store.list('document'),
+        }),
     settings: config.public(),
   });
-  app.get('/api/state', async () => state());
-  app.get<{ Params: { id: string }; Querystring: { runId?: string } }>(
-    '/api/conversations/:id',
-    async (req) => {
-      const c = store.get<Conversation>('conversation', req.params.id);
-      const history = store.runMetadata(c.id);
-      const latest = req.query.runId
-        ? history.find((r) => r.id === req.query.runId)
-        : history.at(-1);
-      assert(!req.query.runId || latest, 'RUN_SCOPE', 'Run does not belong to this conversation.');
-      const deliveries = new Map(
-        store
-          .list<any>('user-inbox')
-          .filter((m) => m.conversationId === c.id)
-          .map((m) => [Number(m.id), m.state]),
-      );
-      return {
-        conversation: c,
-        events: store
-          .events(c.id)
-          .map((e) =>
-            e.type === 'user.message' && deliveries.has(e.id)
-              ? { ...e, data: { ...e.data, delivery: deliveries.get(e.id) } }
-              : e,
-          ),
-        inputs: store.list<any>('input').filter((q) => q.conversationId === c.id),
-        attachments: store
-          .list<Attachment>('attachment')
-          .filter((a) => a.conversationId === c.id)
-          .map(({ path, text, ...a }) => a),
-        teamAutomation: latest ? store.maybe('team-automation', rootRun(store, latest!)) : null,
-        teamRecovery: latest
-          ? (new Teams(store).get(latest!)?.members || []).map((key) =>
-              runtime.teamAutomation.plan(store.runHeader(key)),
-            )
-          : [],
-        teamControlEvents: latest
-          ? store
-              .list<any>('team-control-event')
-              .filter((e) => e.root === rootRun(store, latest!))
-              .slice(-20)
-          : [],
-        teamSpace: latest ? new Teams(store).project(latest!) : null,
-        teamMembers: latest ? new TaskBoard(store).members(latest!) : [],
-        teamScheduling: latest
-          ? {
-              ...(store.maybe<any>('team-scheduling', rootRun(store, latest!)) || {}),
-              blocked:
-                store.maybe<any>('team-scheduler-diagnostics', rootRun(store, latest!))?.blocked ||
-                [],
-              loads: new TaskBoard(store).members(latest!).map((m) => ({
-                runId: m.runId,
-                load: new TaskBoard(store)
-                  .get(latest!)
-                  .tasks.filter(
-                    (t) => t.owner === m.runId && ['running', 'blocked'].includes(t.status),
-                  )
-                  .reduce((n, t) => n + (t.weight || 1), 0),
-              })),
-            }
-          : null,
-        taskBoard: latest ? new TaskBoard(store).get(latest!) : null,
-        unknownEffects: store.unknownEffects(c.id),
-        streams: [...runtime.streams.entries()]
-          .filter(([, v]) => v.conversationId === c.id)
-          .map(([runId, v]) => ({ runId, ...v })),
-      };
-    },
+  app.get<{ Querystring: { view?: string } }>('/api/state', async (req) =>
+    state(req.query.view === 'shell'),
   );
+  conversationViewRoutes(app, runtime);
   inspectionRoutes(app, runtime);
   app.post<{ Params: { id: string } }>('/api/conversations/:id/recovery/check', async (req) => {
     const c = store.get<Conversation>('conversation', req.params.id);
@@ -500,7 +439,9 @@ export async function createApp(options: { directory: string; dist?: string; run
       runtime.steer(req.params.id, data.text);
       return { queued: true };
     }
-    return runtime.start(req.params.id, data.text, data.maxSteps);
+    const started = runtime.start(req.params.id, data.text, data.maxSteps);
+    const { checkpoints: _checkpoints, ...receipt } = started;
+    return receipt;
   });
   app.post<{ Params: { id: string } }>('/api/runs/:id/stop', async (req) => {
     runtime.stop(req.params.id);

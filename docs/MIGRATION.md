@@ -37,3 +37,7 @@ Run pnpm check, pnpm test and pnpm build. Public sanitized tests are included. N
 ## Applying the 2026-10-12 boundary update
 
 No additional package or installer migration is required. Both launchers already fingerprint server/native sources and rebuild changed modules; their code is unchanged for this update. A running service must be stopped and relaunched to load the new backend. Existing backend selections and private records are preserved; missing sandbox prerequisites never trigger automatic host fallback.
+
+## Responsive conversation reads
+
+Restart to load the server changes and reload the browser. The existing Start/First-Start launchers fingerprint src/shared/server and rebuild changed code; no new dependency or user configuration is required. Store startup creates a conversation lookup index without rewriting or removing records. First launch on a large database can spend additional time building that index.

@@ -15,10 +15,17 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
   const profile = value.profiles.find((p: any) => p.id === selected);
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     setModels([]);
     if (!profile || !(profile.apiKey || profile.hasKey) || !profile.baseUrl) return;
     const timer = setTimeout(() => {
-      api('/models', { ...profile, model: profile.model || '__discovery__' })
+      api(
+        '/models',
+        { ...profile, model: profile.model || '__discovery__' },
+        undefined,
+        {},
+        controller.signal,
+      )
         .then((list) => {
           if (!cancelled) setModels(list);
         })
@@ -28,6 +35,7 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
     }, 400);
     return () => {
       cancelled = true;
+      controller.abort();
       clearTimeout(timer);
     };
   }, [selected, profile?.baseUrl, profile?.transport, profile?.apiKey, profile?.hasKey]);

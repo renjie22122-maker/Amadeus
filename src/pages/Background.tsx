@@ -18,9 +18,23 @@ export function BackgroundPage({ state, zh, notify, openConversation }: any) {
     [job, setJob] = useState('');
   const load = () => api('/background').then(setData);
   useEffect(() => {
-    void load().catch((e: any) => notify(e.message));
-    const t = setInterval(() => void load().catch(() => {}), 5000);
-    return () => clearInterval(t);
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const value = await api('/background', undefined, undefined, {}, controller.signal);
+        if (!controller.signal.aborted) setData(value);
+      } catch (e: any) {
+        if (!controller.signal.aborted) notify(e.message);
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(poll, 5000);
+      }
+    };
+    void poll();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
   }, []);
   const act = async (fn: () => Promise<any>) => {
     try {

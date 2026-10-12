@@ -1,3 +1,4 @@
+import { mergeConversationEvents } from './conversation-events';
 import { BackgroundPage } from './pages/Background';
 import { conversationMarkdown } from './conversation-copy';
 import { mediaTimeline } from './media-timeline';
@@ -101,11 +102,29 @@ export function App() {
     setToast(text);
     setTimeout(() => setToast(''), 6500);
   }, []);
-  const refresh = useCallback(async () => {
-    const value = await api('/state');
-    setState(value);
-    return value;
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const refreshPending = useRef(new Map<string, Promise<any>>());
+  const refresh = useCallback(() => {
+    const view = ['knowledge', 'memory', 'memories'].includes(pageRef.current) ? 'full' : 'shell';
+    let pending = refreshPending.current.get(view);
+    if (!pending) {
+      pending = api('/state?view=' + view)
+        .then((value) => {
+          setState((old) => ({ memories: [], documents: [], ...old, ...value }));
+          return value;
+        })
+        .finally(() => {
+          refreshPending.current.delete(view);
+        });
+      refreshPending.current.set(view, pending);
+    }
+    return pending;
   }, []);
+  useEffect(() => {
+    if (['knowledge', 'memory', 'memories'].includes(page))
+      void refresh().catch((e) => notify(e.message));
+  }, [page, refresh, notify]);
   const detailCache = useRef(new Map<string, ConversationDetail>());
   const patches = useRef(new Map<string, Record<string, unknown>>());
   const updateQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -116,7 +135,12 @@ export function App() {
     let request = loading.current.get(id);
     if (!request) {
       loadVersions.current.set(id, (loadVersions.current.get(id) || 0) + 1);
-      request = api('/conversations/' + id);
+      const cached = detailCache.current.get(id);
+      const after = cached?.events.at(-1)?.id || 0;
+      request = api('/conversations/' + id + '?after=' + after).then((value) => ({
+        ...value,
+        events: mergeConversationEvents(cached?.events || [], value.events, value.deliveries),
+      }));
       loading.current.set(id, request);
     }
     const version = loadVersions.current.get(id);
@@ -132,16 +156,14 @@ export function App() {
     detailCache.current.set(id, value);
     if (detailCache.current.size > 5)
       detailCache.current.delete(detailCache.current.keys().next().value!);
-    const receivedIds = new Set(value.events.map((e: any) => e.id));
     if (selectedRef.current === id) {
       setDetail((old: any) => ({
         ...value,
-        events: [
-          ...value.events,
-          ...(old?.conversation.id === id
-            ? old.events.filter((e: any) => !receivedIds.has(e.id))
-            : []),
-        ].sort((a: any, b: any) => a.id - b.id),
+        events: mergeConversationEvents(
+          old?.conversation.id === id ? old.events : [],
+          value.events,
+          value.deliveries,
+        ),
       }));
       setStreams((old) =>
         Object.fromEntries(
@@ -313,7 +335,7 @@ export function App() {
     const c = await api('/conversations', { projectId });
     setSelected(c.id);
     setPage('chat');
-    await refresh();
+    void refresh().catch((e) => notify(e.message));
     return c.id;
   }
   const conversation = detail?.conversation as Conversation | undefined;
@@ -404,7 +426,8 @@ export function App() {
       await updateQueue.current;
       await api('/conversations/' + key + '/message', { text });
       accepted = true;
-      await Promise.all([refresh(), load(key)]);
+      // Acknowledgement ends submission; timeline refresh is independent work.
+      void Promise.all([refresh(), load(key)]).catch((e) => notify(e.message));
     } catch (e: any) {
       if (!accepted) {
         if (selectedRef.current === key) setDraft((current) => current || originalDraft);

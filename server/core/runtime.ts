@@ -167,7 +167,7 @@ export class Runtime implements TeamPort {
     this.bus.setMaxListeners(200);
   }
   active(conversationId: string) {
-    return this.store.runs(conversationId).find((r) => !terminal(r.status));
+    return this.store.runMetadata(conversationId).find((r) => !terminal(r.status));
   }
   start(
     conversationId: string,
@@ -202,7 +202,7 @@ export class Runtime implements TeamPort {
       'REASONING_UNAVAILABLE',
       'Choose a supported reasoning level.',
     );
-    const previous = this.store.runs(conversationId).at(-1);
+    const previous = this.store.latestRun(conversationId);
     const now = Date.now(),
       run: Run = {
         id: options.runId || id(),
@@ -264,8 +264,8 @@ export class Runtime implements TeamPort {
   ) {
     return this.store.transaction(() => {
       const attachments = this.store
-        .list<Attachment>('attachment')
-        .filter((a) => a.conversationId === conversationId && !a.messageEventId);
+        .forConversation<Attachment>('attachment', conversationId)
+        .filter((a) => !a.messageEventId);
       const event = this.store.event(conversationId, runId, 'user.message', {
         text: content,
         steering,

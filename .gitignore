@@ -31,3 +31,5 @@ build/
 !scripts/prepare_retrieval_models.py
 
 !tests/model-preparation.test.py
+
+!/scripts/check-chat-ui.mjs
