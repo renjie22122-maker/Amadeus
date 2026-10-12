@@ -3,8 +3,21 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { AgentEvent, Conversation, PendingInput, Run } from '../../shared/types.js';
-import { assert } from '../core/errors.js';
+import { AppError, assert } from '../core/errors.js';
 import { checkTransition, terminal } from '../core/lifecycle.js';
+function parseStored(data: string, kind: string, key: string) {
+  try {
+    return JSON.parse(data);
+  } catch (error) {
+    if (error instanceof SyntaxError)
+      throw new AppError(
+        'RECORD_CORRUPT',
+        'Stored ' + kind + ' record cannot be decoded (id: ' + key + ').',
+        500,
+      );
+    throw error;
+  }
+}
 export const id = () => randomUUID();
 export class Store {
   readonly db: DatabaseSync;
@@ -100,19 +113,22 @@ export class Store {
     const row = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, key) as
       { data: string } | undefined;
     assert(row, 'NOT_FOUND', kind + ' not found', 404);
-    const value = JSON.parse(row.data);
+    const value = parseStored(row.data, kind, key);
     if (kind === 'run') {
       const payload = this.db.prepare('SELECT data FROM run_checkpoints WHERE id=?').get(key) as
         { data: string } | undefined;
-      value.checkpoints = payload ? JSON.parse(payload.data) : value.checkpoints || [];
+      value.checkpoints = payload
+        ? parseStored(payload.data, 'run-checkpoints', key)
+        : value.checkpoints || [];
     }
     return value as T;
   }
   maybe<T>(kind: string, key: string): T | undefined {
     try {
       return this.get<T>(kind, key);
-    } catch {
-      return undefined;
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'NOT_FOUND') return undefined;
+      throw error;
     }
   }
   list<T>(kind: string): T[] {
@@ -306,6 +322,14 @@ export class Store {
   }
   resolveEffect(key: string, note: string) {
     assert(note.trim(), 'NOTE_REQUIRED', 'Record what was inspected.');
-    this.endEffect(key, note, 'inspected');
+    const result = this.db
+      .prepare("UPDATE effects SET state='inspected',result=? WHERE id=? AND state='started'")
+      .run(note, key);
+    assert(
+      result.changes === 1,
+      'EFFECT_NOT_PENDING',
+      'Operation is no longer awaiting reconciliation.',
+      409,
+    );
   }
 }

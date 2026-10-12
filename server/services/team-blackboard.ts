@@ -1,3 +1,4 @@
+import { acceptanceStatus } from './task-acceptance.js';
 import { evidenceDiversity } from './evidence-diversity.js';
 import type { Run } from '../../shared/types.js';
 import type { Store } from '../storage/store.js';
@@ -25,6 +26,7 @@ export function teamBlackboard(store: Store, run: Run) {
       owner: t.owner,
       dependsOn: t.dependsOn,
       acceptance: (t.acceptance || '').slice(0, 800),
+      acceptanceState: acceptanceStatus(store, board.id, t),
       acceptanceTruncated: (t.acceptance || '').length > 800,
       provides: t.provides || [],
       requires: t.requires || [],

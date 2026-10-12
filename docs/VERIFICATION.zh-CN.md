@@ -2,7 +2,7 @@
 
 [English](VERIFICATION.md) | [简体中文](VERIFICATION.zh-CN.md) · [文档目录](README.zh-CN.md)
 
-当前说明核对日期：2026-10-06。
+当前说明核对日期：2026-10-12。
 
 ## 当前验证基线
 
@@ -48,3 +48,11 @@ node --import tsx --test tests/window-capture.test.ts
 API 用量缺失、价格未配置保持未知。缓存 tokens 属于输入子集，不能额外相加。[历史目录](history/README.zh-CN.md)按日期保留结果，不据此给能力打分。
 
 CI 新增当前双语文档配对与本地链接检查，构建后端产物并冒烟验证编译后的 HTTP／独立解析进程、图像编解码及 ONNX 模块加载。这不等于证明文档语义实时正确、干净装机 embedding 推理或沙箱正确性。
+
+## 明确区分验收层次
+
+任务 done 表示附有观察记录的执行完成；record_verification 将成功检查绑定到当前输入；record_task_acceptance 则单独保存有权限的审核者作出的 accepted／rejected／uncertain 语义判断、理由、反例尝试和证据 ID，明确标记为 reviewer-judgment-not-proof。
+
+对有实质验收条件的实现／交付契约设置 requireSemantic 后，必须有 accepted 判断才能交付；明确 rejected 即使在可选契约上也会阻止交付。条件变化或产物检查过期会使判断失效。requireIndependent 还会拒绝作者自己作语义审核、或只引用作者的检查。执行权限审批不会填成人工验收，后者保持 not-recorded。团队黑板与交付投影分别展示这些状态。这是受证据约束的审核，不是软件正确性的自动证明。
+
+2026-10-12 边界／回执／模块拆分更新的验证：共 425 项测试，423 项通过、2 项因环境条件跳过；TypeScript、生产构建及编译后 HTTP／文档／图片／ONNX 冒烟检查通过。未使用付费模型请求；前端大包警告仍存在。本机严格原生隔离拒绝执行、Docker 不可用的检查记录于安全文档，不能算隔离成功测试。

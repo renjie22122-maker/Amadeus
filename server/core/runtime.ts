@@ -1,8 +1,8 @@
+import { createRuntimeServices } from './runtime-services.js';
 import { setTimeout as recoveryDelay } from 'node:timers/promises';
 import { transientModelFailure, modelReconnectDelay } from './model-recovery.js';
-import { join } from 'node:path';
 import { toolHooks } from '../services/tool-hooks.js';
-import { inspectEffects } from '../services/recovery.js';
+import { prepareResume } from './resume-preparation.js';
 import {
   prefixObservation,
   comparePrefix,
@@ -16,7 +16,6 @@ import { BackgroundCommands } from '../services/background-commands.js';
 import { finalizeRun } from './finalization.js';
 import { TeamCoordinator } from './team-coordinator.js';
 import { MediaService } from '../services/media.js';
-import { AutoReview } from '../services/auto-review.js';
 import { normalizeImage } from '../services/images.js';
 import { TeamAutomation } from '../services/team-automation.js';
 import { Teams } from '../services/team-space.js';
@@ -41,7 +40,6 @@ import type {
 import type { ModelProvider, ModelRequest, ModelResult } from '../providers/protocol.js';
 import { providerFor } from '../providers/registry.js';
 import { Inputs } from '../services/approvals.js';
-import { Embeddings } from '../services/embedding.js';
 import { Knowledge } from '../services/knowledge.js';
 import { McpHub } from '../services/mcp.js';
 import { FileScope } from '../services/paths.js';
@@ -94,7 +92,6 @@ export class Runtime implements TeamPort {
         this.bus.emit('finished', key);
       },
     });
-    this.mcp = new McpHub(join(directory, 'browser-sessions'));
     this.teamCoordinator = new TeamCoordinator(store, {
       events: this.bus,
       filesForConversation: (c) => this.filesForConversation(c),
@@ -152,33 +149,15 @@ export class Runtime implements TeamPort {
       },
       stop: (key) => this.stop(key, false),
     });
-    this.background = new BackgroundCommands(store, (job) => {
-      store.put('runtime-inbox', {
-        id: job.id,
-        runId: job.runId,
-        state: 'pending',
-        content:
-          'Host background command notification: ' +
-          JSON.stringify({
-            id: job.id,
-            status: job.status,
-            code: job.result?.code,
-            error: job.error,
-          }) +
-          '. Inspect the result before dependent work. This is host status, not a new user instruction.',
-      });
-    });
-    this.media = new MediaService(store, config, directory);
-    const reviewer = new AutoReview(store, config, this.resolveProvider, (run) =>
-      this.filesForConversation(store.get<Conversation>('conversation', run.conversationId)),
+    const services = createRuntimeServices(store, config, directory, this.resolveProvider, (c) =>
+      this.filesForConversation(c),
     );
-    this.inputs = new Inputs(store, (r, p, s) => reviewer.review(r, p, s));
-    this.knowledge = new Knowledge(
-      store,
-      new Embeddings(() => config.get().embedding),
-      () => config.get().retrieval || {},
-    );
-    this.memories = new MemoryIndex(store, new Embeddings(() => config.get().embedding));
+    this.mcp = services.mcp;
+    this.background = services.background;
+    this.media = services.media;
+    this.inputs = services.inputs;
+    this.knowledge = services.knowledge;
+    this.memories = services.memories;
     this.environment = new RunEnvironment(store, config, directory, this.memories);
     store.onEvent = (e) => {
       this.bus.emit('event', e);
@@ -521,25 +500,10 @@ export class Runtime implements TeamPort {
     try {
       run = this.store.transition(key, 'running');
       const ctx = await this.context(run);
-      if (run.recoveryOnly) {
-        const inspection = await inspectEffects(this.store, ctx.files, run.conversationId);
-        run.recoveryOnly = inspection.unresolved.length > 0;
-        this.store.put('run', run);
-        this.store.event(run.conversationId, run.id, 'recovery.inspected', inspection);
-      }
+      await prepareResume(this.store, run, ctx.files);
       ctx.signal = signal;
       const profile = { ...this.config.profile(run.profileId), reasoning: run.reasoning };
       const system = await this.system(run, ctx, profile);
-      // Cancel unresolved calls in a checkpoint instead of replaying them.
-      for (const m of run.checkpoints.filter((m) => m.role === 'assistant' && m.calls?.length))
-        for (const call of m.calls || [])
-          if (!run.checkpoints.some((t) => t.role === 'tool' && t.callId === call.id))
-            run.checkpoints.push({
-              role: 'tool',
-              callId: call.id,
-              content:
-                'Interrupted before a durable result. Do not assume success or repeat an unknown effect.',
-            });
       const [stableSystem, ...facts] = runtimeMessages(system);
       if (run.checkpoints[0]?.role === 'system') run.checkpoints[0] = stableSystem;
       else run.checkpoints.unshift(stableSystem);

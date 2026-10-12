@@ -139,6 +139,12 @@ export class BackgroundCommands {
             cwd,
             timeoutSeconds: seconds,
           });
+          this.store.put('effect-reference', {
+            id: job.effectId,
+            runId: run.id,
+            protocol: 'command-job',
+            jobId: job.id,
+          });
           job.status = 'running';
           save();
         });
@@ -168,7 +174,10 @@ export class BackgroundCommands {
           : result.code === 0 && !result.timedOut
             ? 'completed'
             : 'failed';
-        this.store.endEffect(job.effectId, JSON.stringify(result).slice(0, 20000));
+        this.store.transaction(() => {
+          save();
+          this.store.endEffect(job.effectId, JSON.stringify(result).slice(0, 20000));
+        });
       } catch (error) {
         job.error = errorMessage(error);
         job.notStarted = error instanceof NotStartedError;

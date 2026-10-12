@@ -1,3 +1,4 @@
+import { acceptanceStatus } from './task-acceptance.js';
 import type { Run } from '../../shared/types.js';
 import type { Store } from '../storage/store.js';
 import { TaskBoard } from './task-board.js';
@@ -19,6 +20,9 @@ export function deliveryEvidence(store: Store, run: Run) {
   const unfinished = tasks.filter(
     (t) =>
       t.status !== 'done' ||
+      acceptanceStatus(store, board.id, t).semanticAssessment === 'rejected' ||
+      (t.requireSemantic === true &&
+        acceptanceStatus(store, board.id, t).semanticAssessment !== 'accepted') ||
       (t.requireIndependent === true &&
         (t.verification?.status !== 'checked' || t.verification.independent !== true)) ||
       t.verification?.status === 'stale' ||
@@ -67,6 +71,7 @@ export function deliveryEvidence(store: Store, run: Run) {
                   ? 'attempted'
                   : 'open',
       blocking: unfinished.some((u) => u.id === t.id),
+      acceptanceState: acceptanceStatus(store, board.id, t),
       next:
         t.status === 'blocked'
           ? 'Resolve prerequisite; blocked is not passed.'

@@ -2,7 +2,7 @@
 
 [English](ARCHITECTURE.md) | [简体中文](ARCHITECTURE.zh-CN.md) · [Documentation](README.md)
 
-Reviewed: 2026-10-06.
+Reviewed: 2026-10-12.
 
 ## Module boundaries
 
@@ -77,7 +77,6 @@ not fabricated probabilities. No new dependency or launcher change is required.
 
 The host also injects review designs into task snapshots when declared task text matches risk surfaces or declared artifacts are source files. This heuristic does not require a user review request or a tool invocation. It does not cover absent plans, undeclared changes or every risk; checklist execution remains model-driven, while recorded open challenges are host-gated.
 
-
 ### Unified delivery evidence and convergence signals
 
 The host projects task status, open challenges, applicable memory checks and unknown
@@ -110,7 +109,6 @@ No new dependency, database migration or first-start change is needed. Restart t
 service to load backend changes; starting a second launcher does not reload an
 already-running service.
 
-
 ### Closing the progress feedback loop
 
 After a tool batch settles, existing recorded checks are refreshed against current
@@ -134,7 +132,6 @@ grant results from these observations. Existing evidence-backed experience forma
 and next-task memory checks remain the learning boundary. No new dependencies or
 startup changes; backend restart is required to load this revision.
 
-
 ### Guarded recovery inspections
 
 A recovery proposal has a unique ID. The agent can discover `inspect_recovery_step`
@@ -156,7 +153,6 @@ does not resolve unknown effects, and cannot satisfy task completion evidence.
 The existing outcome assessment still distinguishes verified progress from a changed
 strategy. This is bounded diagnostic dispatch, not autonomous arbitrary recovery or
 a learned policy optimizer. No dependencies, migrations or launcher changes.
-
 
 ### World-changing recovery contracts
 
@@ -188,7 +184,6 @@ OS lock: external writes during approval/execution and undeclared dependencies r
 limitations. Command-only checks must be designed to test the stated expectation;
 the host does not infer test adequacy. No new dependency or launcher change is needed.
 
-
 Background recovery persists waiting-action / waiting-check and original job IDs.
 Use event-driven wait_background_command, then execute_recovery_action with the same
 contract ID: only the unstarted dependent check may launch, never the action again.
@@ -198,7 +193,6 @@ cancel a started job. Unknown jobs stop the chain and block delivery, as do pend
 recovery phases. The model resumes from background completion notifications; this is
 not an independent scheduler that runs verification while the model is offline.
 No startup script changes: existing source fingerprint rebuilding applies.
-
 
 ### Outcome-informed recovery selection
 
@@ -231,3 +225,11 @@ An implementation task can declare `requireIndependent: true`. Delivery and team
 The bounded team blackboard now includes acceptance text (800 characters with truncation notice), provided/required interfaces, missing task dependencies and independence status. Original contracts remain authoritative; this projection avoids requiring the lead to read every member's full plan. Interface declarations are not an automatic compatibility proof. No dependency, migration or launcher change is needed.
 
 Declared artifact tasks require a current checked verification before delivery even outside teams. Tasks without declared artifacts may still report unverified coverage as yellow; this is not a passing semantic claim.
+
+## Recovery and storage boundaries (2026-10-12)
+
+resume-preparation owns interrupted checkpoint repair without replay; recovery-tools and the HTTP effects module own their respective entry points. Effect recovery protocols inspect host-bound durable receipts, separately from exact file postimage checks. Media intent/reference is persisted transactionally before provider submission; background terminal state and effect settlement commit together. Runtime remains a composition/model-loop coordinator; the larger decomposition is incremental, not complete.
+
+Store.maybe returns undefined only for NOT_FOUND. Corrupt record JSON raises RECORD_CORRUPT without including record content; database faults propagate rather than becoming missing data. A storage failure during reconciliation is not silently treated as an unknown file.
+
+Service composition now lives in core/runtime-services and http/maintenance-services; MCP discovery/browser/desktop registration lives in tools/mcp-tools, with file transfers using FileScope handles. Built-in tools remain host-registered; agents discover enabled MCP services, while skills and generated scripts do not automatically become trusted tools with higher privileges.

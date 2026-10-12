@@ -61,6 +61,7 @@ export function installMedia(registry: ToolRegistry) {
             connectionId: a.serviceId,
             conversationId: c.conversation.id,
             run: c.run,
+            prepared: (id) => c.bindEffect?.('media-job', id),
             operationKey: c.run.id + ':' + c.callId,
             prompt: a.prompt,
             options: a.options,
@@ -89,17 +90,15 @@ export function installMedia(registry: ToolRegistry) {
       return {
         content: JSON.stringify({
           total: jobs.length,
-          jobs: jobs
-            .slice(a.offset, a.offset + a.limit)
-            .map((j) => ({
-              id: j.id,
-              kind: j.kind,
-              model: j.model,
-              status: j.status,
-              createdAt: j.createdAt,
-              outputs: j.outputs,
-              hasText: typeof j.text === 'string',
-            })),
+          jobs: jobs.slice(a.offset, a.offset + a.limit).map((j) => ({
+            id: j.id,
+            kind: j.kind,
+            model: j.model,
+            status: j.status,
+            createdAt: j.createdAt,
+            outputs: j.outputs,
+            hasText: typeof j.text === 'string',
+          })),
           nextOffset: a.offset + a.limit < jobs.length ? a.offset + a.limit : null,
           note: 'Same-conversation results only. Use media_status for text/error/details, inspect_media for binary metadata, export_media for workspace bytes, read_image for image pixels.',
         }),

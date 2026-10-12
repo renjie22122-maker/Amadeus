@@ -1,15 +1,6 @@
+import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import {
-  link,
-  unlink,
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  realpath,
-  rename,
-  writeFile,
-} from 'node:fs/promises';
+import { link, unlink, lstat, mkdir, readdir, open, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { assert } from '../core/errors.js';
 export const inside = (root: string, file: string) => {
@@ -72,9 +63,17 @@ export class FileScope {
     );
     const relative = path.relative(root, absolute).split(path.sep);
     assert(
-      !relative.some((p) => ['.git', '.agentdemo'].includes(p.toLowerCase())),
+      !relative.some((p) =>
+        ['.git', '.agentdemo'].includes(p.replace(/[ .]+$/g, '').toLowerCase()),
+      ),
       'PROTECTED_PATH',
       'Repository metadata and private runtime state are protected.',
+      403,
+    );
+    assert(
+      !relative.some((p) => p.includes(':')),
+      'PATH_STREAM',
+      'Alternate data streams are not project files.',
       403,
     );
     let current = root;
@@ -128,40 +127,113 @@ export class FileScope {
     }
     return absolute;
   }
+  private async pinned(name: string, flags: number, mode?: number) {
+    const p = await this.resolve(name, !!(flags & constants.O_CREAT));
+    const handle = await open(p, flags | (constants.O_NOFOLLOW || 0), mode);
+    try {
+      const held = await handle.stat();
+      const checked = await lstat(await this.resolve(name));
+      assert(
+        held.isFile() && held.nlink === 1 && held.dev === checked.dev && held.ino === checked.ino,
+        'PATH_CHANGED',
+        'File identity changed while opening; no content was written.',
+        409,
+      );
+      return handle;
+    } catch (error) {
+      await handle.close();
+      throw error;
+    }
+  }
   async read(name: string, maxBytes = 1_000_000) {
-    const p = await this.resolve(name);
-    const stat = await lstat(p);
-    assert(
-      stat.isFile() && stat.size <= maxBytes,
-      'FILE_SIZE',
-      'Read a regular file under ' + maxBytes + ' bytes.',
-    );
-    return readFile(p, 'utf8');
+    return (await this.readBytes(name, maxBytes)).toString('utf8');
+  }
+  async readBytes(name: string, maxBytes = 1_000_000) {
+    const handle = await this.pinned(name, constants.O_RDONLY);
+    try {
+      const stat = await handle.stat();
+      assert(
+        stat.size <= maxBytes,
+        'FILE_SIZE',
+        'Read a regular file under ' + maxBytes + ' bytes.',
+      );
+      const buffer = Buffer.alloc(maxBytes + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const result = await handle.read(buffer, length, buffer.length - length, length);
+        if (!result.bytesRead) break;
+        length += result.bytesRead;
+      }
+      assert(length <= maxBytes, 'FILE_SIZE', 'File grew beyond the read limit.');
+      await this.resolve(name);
+      return buffer.subarray(0, length);
+    } finally {
+      await handle.close();
+    }
   }
   async write(name: string, content: string) {
-    const p = await this.resolve(name, true);
-    await mkdir(path.dirname(p), { recursive: true });
-    await this.resolve(name, true);
-    const tmp = path.join(path.dirname(p), '.agentdemo-write-' + randomUUID());
-    await writeFile(tmp, content, { flag: 'wx' });
-    await this.resolve(name, true);
-    await rename(tmp, p);
-    return p;
+    return this.publish(name, Buffer.from(content), false);
   }
   async writeBytes(name: string, content: Buffer) {
+    return this.publish(name, content, true);
+  }
+  private async publish(name: string, content: Buffer, noClobber: boolean) {
     const p = await this.resolve(name, true);
     await mkdir(path.dirname(p), { recursive: true });
     await this.resolve(name, true);
+    const parent = await lstat(path.dirname(p));
     const tmp = path.join(path.dirname(p), '.agentdemo-write-' + randomUUID());
+    const rootIndex = this.roots.findIndex((root) => inside(root, tmp));
+    const tempName = '@' + rootIndex + '/' + path.relative(this.roots[rootIndex], tmp);
+    const handle = await this.pinned(
+      tempName,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+      0o600,
+    );
+    const identity = await handle.stat();
     try {
-      await writeFile(tmp, content, { flag: 'wx' });
+      await handle.writeFile(content);
+      await handle.sync();
+      await handle.close();
       await this.resolve(name, true);
-      // Atomic no-clobber publication; an existing destination is never replaced.
-      await link(tmp, p);
+      const parentNow = await lstat(path.dirname(p));
+      const tempNow = await lstat(await this.resolve(tempName));
+      assert(
+        parent.dev === parentNow.dev &&
+          parent.ino === parentNow.ino &&
+          identity.dev === tempNow.dev &&
+          identity.ino === tempNow.ino,
+        'PATH_CHANGED',
+        'Publication paths changed; operation was not published.',
+        409,
+      );
+      // Node has no portable directory-relative renameat/openat API.
+      // These checks narrow races; they do not confine hostile ancestor replacement.
+      if (noClobber) await link(tmp, p);
+      else await rename(tmp, p);
+      return p;
     } finally {
-      await unlink(tmp).catch(() => {});
+      await handle.close().catch(() => {});
+      // Avoid deleting a different entry after a concurrent path replacement.
+      try {
+        const checkedParent = await lstat(
+          await this.resolve(
+            '@' + rootIndex + '/' + path.relative(this.roots[rootIndex], path.dirname(tmp)),
+          ),
+        );
+        const remaining = await lstat(tmp);
+        if (
+          checkedParent.dev === parent.dev &&
+          checkedParent.ino === parent.ino &&
+          !remaining.isSymbolicLink() &&
+          remaining.dev === identity.dev &&
+          remaining.ino === identity.ino
+        )
+          await unlink(tmp);
+      } catch {
+        /* Moved or replaced temporary files remain for inspection. */
+      }
     }
-    return p;
   }
   async list(name = '.') {
     const p = await this.resolve(name);

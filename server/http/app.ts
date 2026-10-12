@@ -1,10 +1,9 @@
+import { startMaintenanceServices } from './maintenance-services.js';
+import { effectRoutes } from './effects.js';
 import { configureLocalRag } from '../services/local-rag.js';
 import { memoryRoutes } from './memory.js';
 import { SkillPackages } from '../services/skill-packages.js';
-import { ScheduledWorkService } from '../services/scheduled-work.js';
 import { inheritedMemory } from '../services/memory-policy.js';
-import { KnowledgeMaintenance } from '../services/knowledge-maintenance.js';
-import { Embeddings } from '../services/embedding.js';
 import { closeLocalEmbedding } from '../services/local-embedding.js';
 import { FileScope } from '../services/paths.js';
 import { deleteConversation } from '../services/conversation-delete.js';
@@ -35,7 +34,7 @@ import { extract } from '../services/documents.js';
 import { pickFolder } from '../services/folder-picker.js';
 import { validateRoots } from '../services/paths.js';
 import { Configuration, profileSchema } from '../services/settings.js';
-import { MemoryLearning, memoryTarget } from '../services/memory-learning.js';
+import { memoryTarget } from '../services/memory-learning.js';
 import { SkillClassification } from '../services/skill-classification.js';
 import { Skills } from '../services/skills.js';
 import { Store, id } from '../storage/store.js';
@@ -48,19 +47,8 @@ export async function createApp(options: { directory: string; dist?: string; run
   const runtime = options.runtime || new Runtime(store, config, directory),
     skills = new Skills(store);
   runtime.startTeamMaintenance();
-  const memoryLearning = new MemoryLearning(store, config);
-  memoryLearning.start();
-  const knowledgeEmbedding = new Embeddings(() => config.get().embedding);
-  const maintenance = new KnowledgeMaintenance(
-    store,
-    runtime.knowledge,
-    knowledgeEmbedding,
-    directory,
-    config,
-  );
-  maintenance.start();
-  const scheduledWork = new ScheduledWorkService(store, runtime);
-  scheduledWork.start();
+  const { memoryLearning, knowledgeEmbedding, maintenance, scheduledWork } =
+    startMaintenanceServices(store, config, runtime, directory);
   const app = Fastify({ logger: false, bodyLimit: 8 * 1024 * 1024 });
   const cookie = randomBytes(32).toString('hex'),
     csrf = randomBytes(32).toString('hex');
@@ -573,35 +561,7 @@ export async function createApp(options: { directory: string; dist?: string; run
     runtime.inputs.answer(req.params.id, data.answer, data.allow);
     return { ok: true };
   });
-  app.post<{ Params: { id: string } }>('/api/effects/:id/allow-retry', async (req) => {
-    const effect = store.db
-      .prepare("SELECT * FROM effects WHERE id=? AND state='started'")
-      .get(req.params.id) as any;
-    assert(effect, 'EFFECT_NOT_PENDING', 'Operation is no longer awaiting a decision.', 409);
-    const run = store.get<any>('run', effect.run_id);
-    assert(
-      !runtime.active(run.conversationId),
-      'RUN_ACTIVE',
-      'Wait for the active run to finish.',
-      409,
-    );
-    store.endEffect(
-      effect.id,
-      'User explicitly permits another attempt. Prior outcome remains unknown; no command was replayed by this action.',
-      'retry_authorized',
-    );
-    store.event(run.conversationId, run.id, 'effect.retry-authorized', {
-      effectId: effect.id,
-      tool: effect.tool,
-      args: JSON.parse(effect.args),
-    });
-    return { ok: true, executed: false };
-  });
-  app.post<{ Params: { id: string } }>('/api/effects/:id/resolve', async (req) => {
-    const { note } = z.object({ note: z.string().trim().min(5).max(4000) }).parse(req.body);
-    store.resolveEffect(req.params.id, note);
-    return { ok: true };
-  });
+  effectRoutes(app, store, runtime);
   app.post('/api/feedback', async (req) => {
     const data = z
       .object({

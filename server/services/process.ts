@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { dockerMetadataMasks } from './protected-metadata.js';
 import { executeNative } from './native-process.js';
 import { spawnProcess as spawn } from './spawn-process.js';
@@ -24,6 +25,22 @@ export function execute(
   if (signal.aborted) return Promise.reject(new AppError('CANCELLED', 'Cancelled'));
   if (settings.commandBackend === 'native-windows')
     return executeNative(command, cwd, signal, timeoutMs, settings);
+  if (!['approval-host', 'docker'].includes(settings.commandBackend))
+    return Promise.reject(
+      new NotStartedError('UNKNOWN_BACKEND', 'Unknown execution backend. No host fallback.'),
+    );
+  if (
+    settings.commandBackend === 'docker' &&
+    (!isAbsolute(cwd) ||
+      /[,\r\n]/.test(cwd) ||
+      !/^[1-9]\d*(?::\d+)?$/.test(settings.dockerUser || '1000:1000'))
+  )
+    return Promise.reject(
+      new NotStartedError(
+        'DOCKER_POLICY',
+        'Docker requires an absolute mount path without commas and a non-root numeric user.',
+      ),
+    );
   const docker = settings.commandBackend === 'docker',
     container = 'agentdemo-' + randomUUID();
   const executable = docker
@@ -88,6 +105,10 @@ export function execute(
       windowsVerbatimArguments: process.platform === 'win32' && !docker,
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let spawned = false;
+    child.once('spawn', () => {
+      spawned = true;
     });
     let stdout = '',
       stderr = '',
@@ -165,7 +186,11 @@ export function execute(
       if (settled) return;
       settled = true;
       cleanup();
-      reject(new NotStartedError('EXECUTION_UNAVAILABLE', e.message));
+      reject(
+        spawned
+          ? new AppError('EXECUTION_OUTCOME_UNKNOWN', e.message)
+          : new NotStartedError('EXECUTION_UNAVAILABLE', e.message),
+      );
     });
     child.on('close', (code) => {
       if (settled) return;

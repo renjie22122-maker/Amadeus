@@ -272,6 +272,10 @@ export class ToolExecutor {
           });
           return { content, outcome, eventId: event.id };
         },
+        bindEffect: (protocol, jobId) => {
+          if (!effectId) effectId = this.store.beginEffect(run.id, call.name, call.arguments);
+          this.store.put('effect-reference', { id: effectId, runId: run.id, protocol, jobId });
+        },
         beforeExecution: (expectation) => {
           if (!effectId) effectId = this.store.beginEffect(run.id, call.name, call.arguments);
           if (expectation)

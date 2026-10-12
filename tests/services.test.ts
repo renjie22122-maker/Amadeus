@@ -305,3 +305,33 @@ test(
     }
   },
 );
+
+test('an error after spawn is unknown, not permission to replay', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'agentdemo-postspawn-'));
+  const config = new Configuration(join(dir, 'settings.json'));
+  const fake = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    pid: undefined,
+    unref() {},
+    kill() {
+      return false;
+    },
+  });
+  const mocked = t.mock.method(childProcess, 'spawn', () => fake as any);
+  syncBuiltinESMExports();
+  try {
+    const pending = execute('fixture', dir, new AbortController().signal, 5000, {
+      ...config.get(),
+      commandBackend: 'approval-host',
+    });
+    fake.emit('spawn');
+    fake.emit('error', Object.assign(new Error('post-spawn failure'), { code: 'EPERM' }));
+    await assert.rejects(pending, (error: any) => error.code === 'EXECUTION_OUTCOME_UNKNOWN');
+  } finally {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+    fake.stdout.destroy();
+    fake.stderr.destroy();
+  }
+});

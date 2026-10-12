@@ -359,3 +359,32 @@ test('all generated media kinds expose export routes including historical receip
     f.store.close();
   }
 });
+
+test('media intent and recovery binding persist before provider submission', async () => {
+  const f = await fixture();
+  let effectId = '',
+    seen = false;
+  f.store.put('run', { id: 'r', conversationId: 'chat', status: 'running' });
+  const media = new MediaService(f.store, f.config, f.dir, async () => {
+    assert.ok(effectId);
+    const ref = f.store.get<any>('effect-reference', effectId);
+    assert.equal(f.store.get<any>('media-job', ref.jobId).status, 'submitting');
+    seen = true;
+    throw new Error('lost response');
+  });
+  await media.submit({
+    connectionId: 'service',
+    conversationId: 'chat',
+    operationKey: 'receipt',
+    prompt: 'image',
+    run: f.store.get<any>('run', 'r'),
+    prepared: (jobId) => {
+      effectId = f.store.beginEffect('r', 'generate_media', {});
+      f.store.put('effect-reference', { id: effectId, runId: 'r', protocol: 'media-job', jobId });
+    },
+  });
+  await media.close();
+  assert.equal(seen, true);
+  assert.equal(f.store.unknownEffects('chat').length, 1);
+  f.store.close();
+});

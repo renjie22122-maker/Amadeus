@@ -2,7 +2,7 @@
 
 [English](VERIFICATION.md) | [简体中文](VERIFICATION.zh-CN.md) · [Documentation](README.md)
 
-Reviewed: 2026-10-06.
+Reviewed: 2026-10-12.
 
 ## Current verification baseline
 
@@ -48,3 +48,11 @@ Tests include negative controls, crash windows, unknown effects, startup state c
 API usage omissions and unconfigured prices remain unknown. Cached tokens are a subset of input, not extra tokens. Historical reports are dated and kept in [history](history/README.md); no numeric capability rating is inferred.
 
 CI also checks current bilingual guide pairs and local link targets, builds backend assets and smoke-tests compiled HTTP/isolated parsing, image codec and ONNX module loading. These checks do not prove document semantic freshness, clean-machine embedding inference or sandbox correctness.
+
+## Explicit acceptance layers
+
+Task done records execution completion with attached observations. record_verification binds a successful check to current inputs. record_task_acceptance separately records an authorized reviewer's accepted/rejected/uncertain judgment, rationale, attempted counterexample and evidence IDs. Its kind explicitly remains reviewer-judgment-not-proof.
+
+Set requireSemantic on substantive implementation/delivery contracts to require accepted semantic assessment before delivery. Rejected assessments block delivery even on optional contracts. Changed criteria or stale artifact stamps invalidate the assessment. requireIndependent additionally rejects the author as semantic reviewer and author-only evidence. Permission approvals do not populate human acceptance; that field remains not-recorded. The blackboard and delivery projection expose these layers separately. This is evidence-bound review, not automatic proof of software correctness.
+
+Validation on 2026-10-12 for the boundary/receipt/decomposition update: 425 tests, 423 passed, 2 environment-dependent skips; TypeScript, production build and compiled HTTP/document/image/ONNX smoke checks passed. No paid model requests were used. Large frontend bundle warnings remain. The live strict-native refusal and unavailable Docker checks are recorded in the security guide and are not successful sandbox-containment tests.

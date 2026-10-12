@@ -193,6 +193,7 @@ export class MediaService {
     conversationId: string;
     run?: Run;
     operationKey: string;
+    prepared?: (jobId: string) => void;
     prompt: string;
     options?: Record<string, unknown>;
     references?: Record<string, string[]>;
@@ -246,7 +247,10 @@ export class MediaService {
       actualUsd: null,
       outputs: [],
     };
-    this.save(j);
+    this.store.transaction(() => {
+      this.save(j);
+      args.prepared?.(j.id);
+    });
     const task = (async () => {
       this.busy.add(j.id);
       try {

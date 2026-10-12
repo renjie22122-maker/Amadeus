@@ -15,6 +15,7 @@ export const taskInput = z.object({
   dependsOn: z.array(z.string()).max(50).default([]),
   acceptance: z.string().min(1).max(2000),
   requireIndependent: z.boolean().optional(),
+  requireSemantic: z.boolean().optional(),
   execution: z.enum(['read-only', 'isolated']).optional(),
   weight: z.number().int().min(1).max(8).optional(),
   priority: z.number().int().min(0).max(10).optional(),
@@ -43,6 +44,7 @@ export interface BoardTask {
   dependsOn: string[];
   acceptance: string;
   requireIndependent?: boolean;
+  requireSemantic?: boolean;
   status: 'pending' | 'running' | 'done' | 'blocked';
   owner: string | null;
   evidence: number[];
@@ -251,6 +253,7 @@ export class TaskBoard {
               'handoff_task',
               'inspect_team',
               'record_verification',
+              'record_task_acceptance',
               'configure_team_scheduler',
               'await_team_task',
               'await_team_message',

@@ -2,7 +2,7 @@
 
 [English](MIGRATION.md) | [简体中文](MIGRATION.zh-CN.md) · [Documentation](README.md)
 
-Reviewed: 2026-10-06.
+Reviewed: 2026-10-12.
 
 ## Amadeus rename and startup
 
@@ -33,3 +33,7 @@ Review changes returns diffs/conflicts and a version. Merge needs explicit appro
 ## Upgrade checks
 
 Run pnpm check, pnpm test and pnpm build. Public sanitized tests are included. Native desktop/browser integrations need explicit host opt-in. Historical migration measurements are archived in [history](history/README.md); they are not current configuration requirements.
+
+## Applying the 2026-10-12 boundary update
+
+No additional package or installer migration is required. Both launchers already fingerprint server/native sources and rebuild changed modules; their code is unchanged for this update. A running service must be stopped and relaunched to load the new backend. Existing backend selections and private records are preserved; missing sandbox prerequisites never trigger automatic host fallback.

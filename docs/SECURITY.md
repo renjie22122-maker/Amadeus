@@ -2,7 +2,7 @@
 
 [English](SECURITY.md) | [简体中文](SECURITY.zh-CN.md) · [Documentation](README.md)
 
-Reviewed: 2026-10-05; code baseline: `d663030`.
+Reviewed: 2026-10-12.
 
 ## Local service and data
 
@@ -33,3 +33,12 @@ Approval waits have no expiry. Effects begin only when an approved mutation is a
 Automatic review may inspect bounded source evidence only under its authorized same-profile path; separate reviewers do not automatically receive it. Failure means human review, never allow. See [automatic approval](AUTO-REVIEW.md).
 
 Regression tests establish exercised contracts, not a security certification or correctness proof.
+
+## 2026-10-12 boundary audit
+
+- Scoped file reads use a checked file handle and bounded allocation. Publication uses an exclusive temporary handle, flushes content, rechecks parent/file identity and cleans only the matching temporary entry. Concurrent no-clobber publication and an injected junction-swap boundary have regression coverage.
+- **Residual P0:** portable Node path-based publication and cleanup are not handle-relative filesystem confinement. A hostile process able to rename ancestors can still race the final operation. These tests do not establish bypass-proof protection; use OS isolation and do not run hostile workspace mutators concurrently with host file tools.
+- Unknown backend values, root Docker users and ambiguous Docker mount paths are rejected before launch. Strict native receipts require network-preflight confirmation. A process error after the spawn event is an unknown outcome, never a proven pre-start failure.
+- Live check on this workstation: Docker was unavailable; strict AppContainer returned SANDBOX_PREFLIGHT_FAILED (network denial not confirmed) before the requested echo command. No host fallback occurred. Docker containment and successful native isolation were **not** integration-certified.
+- Recovery references bind an effect to its original run, conversation and durable command/media job. A media receipt can establish submission, not successful generation or acceptance. Unknown external non-idempotent tools without a protocol still require inspection; no generic retry is safe.
+- User effect resolution is an audited attestation, not a host-verified success. Reconciliation cannot overwrite an already settled effect.
