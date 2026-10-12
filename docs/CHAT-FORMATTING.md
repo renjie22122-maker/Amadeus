@@ -78,3 +78,11 @@ Supported schemas (all allow title and caption):
 - Table: {"type":"table","columns":["Variant","Result"],"rows":[["A","Passed"],["B","Pending"]]}.
 
 Use Mermaid for actual relationship edges, sequence/state/entity diagrams; standard Markdown tables and sandboxed HTML/SVG remain supported. Chart JSON is validated and labels are escaped. Limits: 100 data points/table rows, 20 columns, 50 flow steps, 100,000 source characters; invalid or unfinished input shows an explanation with source access. This is a presentation format, not measured evidence: models must not fabricate scores or probabilities to fill a chart.
+
+## Local media in conversations (2026-10-12)
+
+Ask the Agent to show an existing image, video or audio file from an authorized project folder. The new `import_media({path})` tool reads through FileScope, saves a copy and embeds it at the current point in conversation history; it does not put it into the user's unsent draft. Repeated imports of the same bytes/name in the same run reuse the reference. No provider call is made by importing.
+
+File selection and drag-and-drop also accept supported media. Images render inline; audio and video have native controls, seeking and a download link. Playback is not muted by default and never autoplays. Supported container detection includes PNG/JPEG/GIF/WebP, MP3/WAV/FLAC/Ogg, MP4/M4A and WebM. Browser codec support varies; failed previews keep the download link. Upload/import remains limited to 25 MB per file. An invalid file does not discard other successfully uploaded files.
+
+Both paths return/use `attachment:<id>`: `inspect_media` checks metadata, `read_image({mediaRef})` supplies actual image pixels to a vision-capable model, `export_media` saves bytes without overwriting workspace files, and `generate_media.references` can reuse the attachment subject to the configured provider and normal approval. References are conversation-scoped and new attachments are hash-checked. Audio/video playback does not mean the model has heard or seen its contents: transcription and frame extraction are separate, authorized processing steps. Audio/video are not imported into the knowledge base as pretend text transcripts.

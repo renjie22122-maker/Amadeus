@@ -130,3 +130,8 @@ Document-scoped follow-up search, narrow passage reranking, automatic conservati
 - Extract model-session accounting and knowledge-tool registration from coordinators; preserve policy gates. / 拆分模型请求记账与知识工具注册，保留统一策略门控。
 - Add declarative bar/line/flow/table previews with source switch, theme adaptation and bounded validated data; retain Mermaid and Markdown. / 新增条形、折线、流程卡片与表格预览，支持源码切换、主题适配与数据校验，保留 Mermaid 和 Markdown。
 - Defer restored-conversation loading until local authentication bootstrap completes. / 恢复对话等待本地身份初始化完成，避免启动误报。
+
+## 2026-10-12 — Local media / 本地媒体
+
+- Added scoped `import_media` to embed workspace media in the current conversation; attachment handles support inspection, image reading, export and generation references.
+- 本地音视频不再误走文档解析；补齐内嵌播放器、范围读取和批量上传失败隔离。

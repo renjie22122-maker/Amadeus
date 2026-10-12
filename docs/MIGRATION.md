@@ -45,3 +45,7 @@ Restart to load the server changes and reload the browser. The existing Start/Fi
 ## Vector tolerance and chart presentation
 
 No dependency, configuration, startup command or database schema migration is required. Existing Start/First-Start launchers fingerprint changed server/shared/src files and rebuild them. Restart the service and reload the browser to activate the update; existing chart-format messages can render immediately. Damaged vector payloads are skipped during reads, not deleted; an already authorized normal index job repairs malformed vectors. Index repair still obeys the selected embedding destination and data authorization.
+
+### Local media import
+
+No new dependencies, model downloads or settings are required. Existing Start/First-Start source fingerprints include these changes and rebuild as needed. Restart the running service and refresh the browser to activate the new tool and UI. Existing attachments remain compatible.

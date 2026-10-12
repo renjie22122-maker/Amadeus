@@ -3935,3 +3935,31 @@ input.team-switch:checked::after {
   color: var(--muted);
   font-size: 0.82rem;
 }
+
+.local-media-attachment {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.local-media-attachment video {
+  width: 420px;
+  max-width: 100%;
+  max-height: 360px;
+  background: #111;
+  border-radius: 10px;
+}
+.local-media-attachment audio {
+  width: 320px;
+  max-width: 100%;
+}
+.local-media-attachment img {
+  max-width: 100%;
+  max-height: 280px;
+  border-radius: 8px;
+}
+.draft-attachment .local-media-attachment {
+  max-width: 240px;
+}

@@ -35,3 +35,5 @@ build/
 !/scripts/check-chat-ui.mjs
 
 !/scripts/check-chart-ui.mjs
+
+!/scripts/check-local-media-ui.mjs

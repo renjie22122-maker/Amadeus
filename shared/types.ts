@@ -238,6 +238,7 @@ export interface PendingInput {
   createdAt: number;
 }
 export interface Attachment {
+  sha256?: string;
   messageEventId?: number;
   id: string;
   conversationId: string;

@@ -1,3 +1,4 @@
+import { AttachmentPreview } from './components/AttachmentPreview';
 import { mergeConversationEvents } from './conversation-events';
 import { BackgroundPage } from './pages/Background';
 import { conversationMarkdown } from './conversation-copy';
@@ -449,13 +450,18 @@ export function App() {
   async function addFiles(files: FileList | File[]) {
     const pendingFiles = Array.from(files);
     const key = selected || (await newChat());
+    const failures: string[] = [];
     for (const file of pendingFiles) {
       const form = new FormData();
       form.append('file', file);
-      await api('/upload?conversationId=' + key, form);
+      try {
+        await api('/upload?conversationId=' + key, form);
+      } catch (error) {
+        failures.push(file.name + ': ' + (error instanceof Error ? error.message : String(error)));
+      }
     }
     await load(key);
-    notify(t('attachments') + ' ✓');
+    notify(failures.length ? failures.join('\n') : t('attachments') + ' ✓');
   }
   async function copyConversation(id: string) {
     if (copying) return;
@@ -654,6 +660,13 @@ export function App() {
           if (timing)
             nodes.push(<Elapsed key={'elapsed-' + e.id} run={timing} zh={language === 'zh'} />);
         }
+      } else if (e.type === 'media.attached' && e.data.attachment) {
+        flush();
+        nodes.push(
+          <div key={e.id} className="message-attachments">
+            <AttachmentPreview attachment={e.data.attachment} />
+          </div>,
+        );
       } else if (e.type === 'media.updated') {
         const job = mediaAt.get(e.id);
         if (job) {

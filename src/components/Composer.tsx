@@ -1,3 +1,4 @@
+import { AttachmentPreview } from './AttachmentPreview';
 import { useState, useRef, useEffect } from 'react';
 import { DraftPreview } from './DraftPreview';
 import { shouldAttachPaste, hasMarkdown, insertPaste } from '../composer-paste';
@@ -7,7 +8,7 @@ import { VoiceInput } from './VoiceInput';
 import { TeamAutomationControls } from './TeamAutomationControls';
 import { DelegationControl } from './DelegationControl';
 import { ReasoningSlider } from './ReasoningSlider';
-import { ArrowDown, ArrowUp, LoaderCircle, Paperclip, Plus, Square, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, LoaderCircle, Plus, Square, X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import type { Conversation, Project, PublicProfile } from '../../shared/types';
 import { api } from '../api';
@@ -151,14 +152,7 @@ export function Composer({
                 .filter((a) => !a.messageEventId)
                 .map((a: any) => (
                   <span className="draft-attachment" key={a.id}>
-                    <a href={'/api/attachments/' + a.id} target="_blank" rel="noopener noreferrer">
-                      {['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(a.mime) ? (
-                        <img src={'/api/attachments/' + a.id + '?preview=1'} alt={a.name} />
-                      ) : (
-                        <Paperclip size={12} />
-                      )}
-                      {a.name}
-                    </a>
+                    <AttachmentPreview attachment={a} />
                     <button
                       type="button"
                       disabled={sending || pasting}

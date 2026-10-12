@@ -53,3 +53,11 @@ web_search 使用单独配置的 DeepSeek Messages 搜索通道，默认 https:/
 媒体适配器覆盖 OpenAI 兼容、fal.ai、Replicate、Gemini、ElevenLabs、Deepgram、AssemblyAI、Meshy、Tripo 和 MiniMax。MiniMax 直连端点为 https://api.minimax.io，语音需 voice_setting.voice_id；账号授权和具体模型选项以实际连接为准，不把适配器列表当实测模型列表。图片工具支持 PNG/JPEG/WebP/GIF，按字节识别后规范化到最多 640,000 像素／1 MiB，动画只取首帧。SVG/PDF/视频需先转成图片。媒体读取／导出另有 150 MB 输出边界；这不等于生成服务的尺寸上限。
 
 技能包签名清单按路径排序，项为 {path,bytes,sha256}，路径使用正斜杠；排除隐藏／构建目录和签名文件。对该清单 JSON 的 SHA-256 原始 32 字节做 Ed25519 签名，signature 以 base64 保存。发布者公钥必须由用户信任，不自签即自信任。
+
+## 本地媒体嵌入对话（2026-10-12）
+
+可以让 Agent 展示授权项目目录中已有的图片、视频或音频。新增 `import_media({path})` 通过 FileScope 读取文件、保存副本，并嵌入当前这轮对话；不会回到用户待发送附件区。同一运行中相同名称和内容重复导入复用引用，导入本身不调用外部服务。
+
+选择文件与拖拽上传也支持媒体。图片直接显示，音视频提供播放器、拖动进度和下载入口；默认不静音、不自动播放。支持识别 PNG/JPEG/GIF/WebP、MP3/WAV/FLAC/Ogg、MP4/M4A、WebM；具体编码能否播放取决于浏览器，失败时保留下载入口。每个文件仍限制为 25 MB。批量上传中单个文件失败不丢弃其他已成功附件。
+
+两种入口统一使用 `attachment:<id>`：`inspect_media` 检查元数据，`read_image({mediaRef})` 向视觉模型传入图片像素，`export_media` 不覆盖地导出到项目，后续生成可通过 `generate_media.references` 引用，仍受服务商能力和正常审批约束。引用限定在本对话，新附件校验内容哈希。音视频能播放不代表模型已理解内容，转写与抽帧仍需单独的授权处理；不会把媒体说明当作转写文本导入知识库。

@@ -56,6 +56,9 @@ export function findTools(specs: ToolSpec[], query: string, offset: number, limi
     终端: 'command bash',
     图片: 'image',
     视频: 'video media',
+    音频: 'audio media',
+    音乐: 'audio music media',
+    展示: 'import media',
     团队: 'team agent',
   };
   const expanded =
@@ -93,6 +96,7 @@ const toolFamilies = [
     'generate_media',
     'media_status',
     'list_media',
+    'import_media',
     'inspect_media',
     'export_media',
     'cancel_media',

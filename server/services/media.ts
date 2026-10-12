@@ -1,3 +1,4 @@
+import { attachmentMediaType, mediaAttachmentText } from './attachment-media.js';
 import { inspectMedia } from './media-inspection.js';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
@@ -96,7 +97,66 @@ export class MediaService {
       })),
     };
   }
+  async importLocal(bytes: Buffer, name: string, conversationId: string, runId: string) {
+    const mime = attachmentMediaType(bytes);
+    assert(
+      mime && bytes.length <= 25 * 1024 * 1024,
+      'MEDIA_TYPE',
+      'Import a supported image, audio or video under 25 MB.',
+    );
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const key = createHash('sha256')
+      .update(JSON.stringify([conversationId, runId, name, sha256]))
+      .digest('hex');
+    const reference = 'attachment:' + key;
+    if (this.store.maybe<Attachment>('attachment', key))
+      return { reference, name, mime, bytes: bytes.length };
+    const folder = join(this.directory, 'attachments', key);
+    await mkdir(folder, { recursive: true });
+    const path = join(folder, 'media');
+    await writeFile(path, bytes);
+    const a: Attachment = {
+      id: key,
+      conversationId,
+      name,
+      mime,
+      size: bytes.length,
+      path,
+      text: mediaAttachmentText(key, mime),
+      sha256,
+      createdAt: Date.now(),
+      messageEventId: -1,
+    };
+    this.store.transaction(() => {
+      if (this.store.maybe<Attachment>('attachment', key)) return;
+      const event = this.store.event(conversationId, runId, 'media.attached', {
+        attachment: { id: key, name, mime },
+      });
+      this.store.put('attachment', { ...a, messageEventId: event.id });
+    });
+    return { reference, name, mime, bytes: bytes.length };
+  }
   async output(reference: string, conversationId: string) {
+    if (reference.startsWith('attachment:')) {
+      const a = this.store.get<Attachment>('attachment', reference.slice(11));
+      assert(
+        a.conversationId === conversationId,
+        'MEDIA_SCOPE',
+        'Attachment belongs to another conversation.',
+        403,
+      );
+      const bytes = await readFile(a.path);
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      assert(
+        bytes.length <= 25 * 1024 * 1024 &&
+          bytes.length === a.size &&
+          (!a.sha256 || a.sha256 === sha256),
+        'MEDIA_INTEGRITY',
+        'Attachment changed or exceeds the size limit.',
+      );
+      assert(/^(image|audio|video)\//.test(a.mime), 'MEDIA_TYPE', 'Use a media attachment.');
+      return { bytes, mime: a.mime, name: a.name, sha256, inspection: inspectMedia(bytes, a.mime) };
+    }
     const match = /^media:([a-zA-Z0-9-]+):([0-9]+)$/.exec(reference);
     assert(match, 'MEDIA_REFERENCE', 'Use the media:jobId:outputId reference from media_status.');
     const job = this.get(match[1], conversationId);
@@ -157,20 +217,14 @@ export class MediaService {
       const values = [];
       for (const key of ids) {
         let bytes: Buffer, mime: string;
-        if (key.startsWith('media:')) {
+        if (key.startsWith('media:') || key.startsWith('attachment:')) {
           const output = await this.output(key, conversationId);
           bytes = output.bytes;
           mime = output.mime;
         } else {
-          const a = this.store.get<Attachment>('attachment', key);
-          assert(
-            a.conversationId === conversationId,
-            'MEDIA_SCOPE',
-            'References must belong to this conversation.',
-            403,
-          );
-          bytes = await readFile(a.path);
-          mime = a.mime;
+          const output = await this.output('attachment:' + key, conversationId);
+          bytes = output.bytes;
+          mime = output.mime;
         }
         assert(
           /^(image|audio|video)\//.test(mime),

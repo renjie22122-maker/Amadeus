@@ -66,3 +66,7 @@ Chat-performance regressions also check metadata-only active lookups with intent
 Validation for this update: 428 tests, 426 passed, 2 skipped; TypeScript, production build, compiled-service smoke and the isolated Edge slow-refresh regression passed. Skipped native desktop tests are not containment evidence.
 
 Vector/chart update validation: 434 tests, 432 passed, 2 skipped. Added malformed-vector, repair, cancellation, database-error, scope and concurrent-trace cases. scripts/check-chart-ui.mjs uses a temporary fake-provider service to exercise all four charts, code switching, mobile width and restored-chat bootstrap; scripts/check-chat-ui.mjs still checks slow-refresh send acknowledgement. Both passed with installed Edge (BROWSER_CHANNEL=msedge). These checks do not certify all renderer formats or OS isolation.
+
+### Local media regression (2026-10-12)
+
+Full suite: 437 tests, 435 passed, 2 desktop integration tests skipped. Type checking and production build passed. Edge browser check decodes a one-second WAV and verifies user attachments and Agent-imported workspace media coexist in history, with native controls, no draft leakage and no horizontal overflow at 390 px. Container/range, integrity and cross-conversation tests pass; this does not certify every browser video codec.

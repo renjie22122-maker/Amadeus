@@ -1,7 +1,24 @@
+import { basename } from 'node:path';
 import { z } from 'zod';
 import { assert } from '../core/errors.js';
 import type { ToolRegistry } from './registry.js';
 export function installMedia(registry: ToolRegistry) {
+  registry.add({
+    name: 'import_media',
+    effect: 'read',
+    description:
+      'Read an existing image, audio or video from the authorized workspace and embed a saved copy at this point in the conversation. Returns attachment:id for inspect_media, read_image, export_media and generation references. No external upload, playback is not transcription or visual understanding. Maximum 25 MB.',
+    schema: z.object({ path: z.string().min(1).max(2048) }),
+    run: async (a, c) => {
+      const bytes = await c.files.readBytes(a.path, 25 * 1024 * 1024);
+      c.signal.throwIfAborted();
+      return {
+        content: JSON.stringify(
+          await c.media.importLocal(bytes, basename(a.path), c.conversation.id, c.run.id),
+        ),
+      };
+    },
+  });
   registry.add({
     name: 'media_services',
     description:
@@ -13,7 +30,7 @@ export function installMedia(registry: ToolRegistry) {
   registry.add({
     name: 'generate_media',
     description:
-      'Submit a paid image/video/music/speech/3D generation task using a configured service. Approval covers the exact prompt/options. Returns a durable job ID; use media_status, never resubmit because waiting is slow. URLs and data URIs in options are sent to the provider. references maps provider input fields to attachment IDs or media:jobId:outputId handles from media_status (image/audio/video up to 25 MB). Use the actual provider field names and supported formats; data URI support varies. read_image accepts mediaRef for visual QA; export_media saves outputs to the workspace. No arbitrary local paths are read.',
+      'Submit a paid image/video/music/speech/3D generation task using a configured service. Approval covers the exact prompt/options. Returns a durable job ID; use media_status, never resubmit because waiting is slow. URLs and data URIs in options are sent to the provider. references maps provider input fields to attachment IDs, attachment:id or media:jobId:outputId handles from media_status (image/audio/video up to 25 MB). Use the actual provider field names and supported formats; data URI support varies. read_image accepts mediaRef for visual QA; export_media saves outputs to the workspace. No arbitrary local paths are read.',
     effect: 'coordinate',
     schema: z.object({
       serviceId: z.string(),
@@ -119,7 +136,7 @@ export function installMedia(registry: ToolRegistry) {
     name: 'inspect_media',
     effect: 'read',
     description:
-      'Inspect a completed same-conversation media reference: byte integrity, MIME and MP4 audio/video track declarations. Does not prove audible content or codec compatibility; unsupported containers report unknown. For visual QA use read_image(mediaRef).',
+      'Inspect a same-conversation attachment:id or completed media:jobId:outputId reference: byte integrity, MIME and MP4 audio/video track declarations. Does not prove audible content or codec compatibility; unsupported containers report unknown. For visual QA use read_image(mediaRef).',
     schema: z.object({ reference: z.string() }),
     run: async (a, c) => {
       const output = await c.media.output(a.reference, c.conversation.id);
@@ -139,7 +156,7 @@ export function installMedia(registry: ToolRegistry) {
     name: 'export_media',
     effect: 'write',
     description:
-      'Copy a completed image/video/audio/3D output in this conversation into an authorized workspace path, preserving exact bytes. Never overwrites existing files. Returns hash and audio-track inspection; no model generation or conversion.',
+      'Copy a local attachment:id or completed image/video/audio/3D output in this conversation into an authorized workspace path, preserving exact bytes. Never overwrites existing files. Returns hash and audio-track inspection; no model generation or conversion.',
     schema: z.object({ reference: z.string(), path: z.string().min(1) }),
     run: async (a, c) => {
       const output = await c.media.output(a.reference, c.conversation.id);

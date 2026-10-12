@@ -1,3 +1,5 @@
+import { attachmentMediaType, mediaAttachmentText } from '../services/attachment-media.js';
+import { mediaRange } from '../services/media-inspection.js';
 import { conversationViewRoutes } from './conversation-view.js';
 import { startMaintenanceServices } from './maintenance-services.js';
 import { effectRoutes } from './effects.js';
@@ -20,7 +22,7 @@ import { inspectionRoutes } from './inspection.js';
 import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
 import Fastify from 'fastify';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
@@ -782,6 +784,10 @@ export async function createApp(options: { directory: string; dist?: string; run
   app.post<{ Querystring: { conversationId?: string; scope?: string } }>(
     '/api/upload',
     async (req) => {
+      if (req.query.scope) checkScope(req.query.scope);
+      const conversation = req.query.scope
+        ? undefined
+        : store.get<Conversation>('conversation', req.query.conversationId || '');
       const file = await req.file();
       assert(file, 'FILE_REQUIRED', 'Choose a file.');
       const bytes = await file.toBuffer();
@@ -792,17 +798,30 @@ export async function createApp(options: { directory: string; dist?: string; run
       await mkdir(folder, { recursive: true });
       const path = join(folder, name);
       await writeFile(path, bytes, { flag: 'wx' });
-      const text = await extract(path);
+      const mediaMime = attachmentMediaType(bytes);
+      let text: string;
+      try {
+        text =
+          !req.query.scope && mediaMime ? mediaAttachmentText(key, mediaMime) : await extract(path);
+      } catch (error) {
+        await rm(folder, { recursive: true, force: true });
+        throw error;
+      }
       if (req.query.scope) {
         checkScope(req.query.scope);
         return runtime.knowledge.import(req.query.scope, name, text);
       }
-      const c = store.get<Conversation>('conversation', req.query.conversationId || '');
+      const c = conversation!;
       const attachment: Attachment = {
         id: key,
         conversationId: c.id,
         name,
-        mime: file.mimetype,
+        mime:
+          mediaMime ||
+          (/^(image|audio|video)\//.test(file.mimetype)
+            ? 'application/octet-stream'
+            : file.mimetype),
+        sha256: createHash('sha256').update(bytes).digest('hex'),
         size: bytes.length,
         path,
         text,
@@ -813,10 +832,33 @@ export async function createApp(options: { directory: string; dist?: string; run
       return { id: key, name, size: bytes.length };
     },
   );
-  app.get<{ Params: { id: string }; Querystring: { preview?: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { preview?: string; inline?: string } }>(
     '/api/attachments/:id',
     async (req, reply) => {
       const a = store.get<Attachment>('attachment', req.params.id);
+      if (req.query.inline === '1') {
+        const bytes = await readFile(a.path);
+        const mime = attachmentMediaType(bytes);
+        assert(mime, 'MEDIA_TYPE', 'This attachment cannot be played inline.');
+        reply
+          .type(mime)
+          .header('X-Content-Type-Options', 'nosniff')
+          .header('Content-Security-Policy', "default-src 'none'; sandbox")
+          .header('Accept-Ranges', 'bytes');
+        const range = mediaRange(req.headers.range, bytes.length);
+        if (range === false)
+          return reply
+            .code(416)
+            .header('Content-Range', 'bytes */' + bytes.length)
+            .send();
+        if (range)
+          return reply
+            .code(206)
+            .header('Content-Range', 'bytes ' + range.start + '-' + range.end + '/' + bytes.length)
+            .header('Content-Length', range.end - range.start + 1)
+            .send(bytes.subarray(range.start, range.end + 1));
+        return reply.header('Content-Length', bytes.length).send(bytes);
+      }
       if (req.query.preview === '1') {
         const image = await normalizeImage(await readFile(a.path));
         reply

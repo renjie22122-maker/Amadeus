@@ -399,7 +399,7 @@ export function tools() {
     name: 'read_image',
     effect: 'read',
     description:
-      'Inspect actual pixels of a workspace PNG/JPEG/WebP/GIF or public image URL, including local files without an extension. Provide exactly one path, url or mediaRef (media:jobId:outputId from a generated output in this conversation). Images are decoded, resized to at most 640k pixels and 1 MB, and attached to the next model request. Requires an image-capable current model. Animated files show the first frame. Use this instead of reading binary data or installing an image library.',
+      'Inspect actual pixels of a workspace PNG/JPEG/WebP/GIF or public image URL, including local files without an extension. Provide exactly one path, url or mediaRef (attachment:id or media:jobId:outputId from this conversation). Images are decoded, resized to at most 640k pixels and 1 MB, and attached to the next model request. Requires an image-capable current model. Animated files show the first frame. Use this instead of reading binary data or installing an image library.',
     schema: z.object({
       path: z.string().min(1).max(2048).optional(),
       url: z.url().optional(),

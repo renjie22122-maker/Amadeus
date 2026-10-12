@@ -1,3 +1,4 @@
+import { AttachmentPreview } from './AttachmentPreview';
 import { approvalPresentation } from '../../shared/approval-presentation';
 import {
   AlertCircle,
@@ -69,29 +70,7 @@ export function Message({
         {user && event.data.attachments?.length > 0 && (
           <div className="message-attachments">
             {event.data.attachments.map((a: { id: string; name: string; mime: string }) => (
-              <a
-                key={a.id}
-                href={
-                  '/api/attachments/' +
-                  a.id +
-                  (['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(a.mime)
-                    ? '?preview=1'
-                    : '')
-                }
-                target="_blank"
-                rel="noopener noreferrer"
-                className="message-attachment"
-              >
-                {['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(a.mime) ? (
-                  <img
-                    src={'/api/attachments/' + a.id + '?preview=1'}
-                    alt={a.name}
-                    loading="lazy"
-                  />
-                ) : (
-                  <span>📎 {a.name}</span>
-                )}
-              </a>
+              <AttachmentPreview key={a.id} attachment={a} />
             ))}
           </div>
         )}
