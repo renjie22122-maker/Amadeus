@@ -8,6 +8,9 @@
 
 ## 当前指南
 
+- [评测设计](BENCHMARKS.zh-CN.md)
+- [评测下载清单](BENCHMARK-DOWNLOADS.zh-CN.md)
+
 - [本地检索与 GPU](LOCAL-RAG.zh-CN.md)
 - [架构](ARCHITECTURE.zh-CN.md)
 - [功能指南](FEATURES.zh-CN.md)

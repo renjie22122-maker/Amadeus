@@ -16,7 +16,8 @@
     "format:check": "prettier --check .",
     "test": "node --import tsx --test tests/*.test.ts",
     "build:server": "node scripts/build-server.mjs",
-    "check:docs": "node scripts/check-docs.mjs"
+    "check:docs": "node scripts/check-docs.mjs",
+    "eval:preflight": "node evals/benchmark/preflight.mjs"
   },
   "dependencies": {
     "@fastify/multipart": "^9.2.0",
@@ -61,5 +62,5 @@
     "type": "git",
     "url": "git+https://github.com/renjie22122-maker/Amadeus.git"
   },
-  "license": "UNLICENSED"
+  "license": "MIT"
 }

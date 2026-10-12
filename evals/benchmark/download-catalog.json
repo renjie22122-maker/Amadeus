@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "note": "Full candidate collection, not proof of runnable environments. Each source locks at first resolution. Keep gold/graders outside solver access.",
+  "git": [
+    {
+      "id": "swebench",
+      "url": "https://github.com/SWE-bench/SWE-bench.git"
+    },
+    {
+      "id": "terminal-bench",
+      "url": "https://github.com/laude-institute/terminal-bench.git"
+    },
+    {
+      "id": "harbor",
+      "url": "https://github.com/laude-institute/harbor.git"
+    },
+    {
+      "id": "bfcl",
+      "url": "https://github.com/ShishirPatil/gorilla.git"
+    },
+    {
+      "id": "tau2",
+      "url": "https://github.com/sierra-research/tau2-bench.git"
+    },
+    {
+      "id": "webarena",
+      "url": "https://github.com/web-arena-x/webarena.git"
+    },
+    {
+      "id": "browsergym",
+      "url": "https://github.com/ServiceNow/BrowserGym.git"
+    },
+    {
+      "id": "agentlab",
+      "url": "https://github.com/ServiceNow/AgentLab.git"
+    },
+    {
+      "id": "longmemeval",
+      "url": "https://github.com/xiaowu0162/LongMemEval.git"
+    },
+    {
+      "id": "osworld",
+      "url": "https://github.com/xlang-ai/OSWorld.git"
+    },
+    {
+      "id": "agentbench-v02",
+      "url": "https://github.com/THUDM/AgentBench.git",
+      "ref": "v0.2"
+    }
+  ],
+  "datasets": [
+    {
+      "id": "swe-verified",
+      "repo": "princeton-nlp/SWE-bench_Verified"
+    },
+    {
+      "id": "swe-lite",
+      "repo": "princeton-nlp/SWE-bench_Lite"
+    },
+    {
+      "id": "longmemeval",
+      "repo": "xiaowu0162/longmemeval"
+    },
+    {
+      "id": "gaia",
+      "repo": "gaia-benchmark/GAIA",
+      "gated": true
+    }
+  ],
+  "drive": [
+    {
+      "id": "webarena-shopping",
+      "driveId": "1gxXalk9O0p9eu1YkIJcmZta1nvvyAJpA",
+      "file": "shopping_final_0712.tar"
+    },
+    {
+      "id": "webarena-admin",
+      "driveId": "1See0ZhJRw0WTTL9y8hFlgaduwPZ_nGfd",
+      "file": "shopping_admin_final_0719.tar"
+    },
+    {
+      "id": "webarena-forum",
+      "driveId": "17Qpp1iu_mPqzgO_73Z9BnFjHrzmX9DGf",
+      "file": "postmill-populated-exposed-withimg.tar"
+    },
+    {
+      "id": "webarena-gitlab",
+      "driveId": "19W8qM0DPyRvWCLyQe0qtnCWAHGruolMR",
+      "file": "gitlab-populated-final-port8023.tar"
+    },
+    {
+      "id": "webarena-wiki",
+      "driveId": "1Um4QLxi_bGv5bP6kt83Ke0lNjuV9Tm0P",
+      "file": "wikipedia_en_all_maxi_2022-05.zim"
+    },
+    {
+      "id": "osworld-cache",
+      "driveId": "1XlEy49otYDyBlA3O9NbR0BpPfr2TXgaD",
+      "file": "osworld_cache.zip"
+    }
+  ],
+  "environmentSteps": [
+    {
+      "id": "swe-images",
+      "status": "requires_preparation",
+      "source": "https://www.swebench.com/SWE-bench/guides/evaluation/",
+      "deliver": "All desired task images, image digests, oracle reports; use all Verified IDs for a full pack."
+    },
+    {
+      "id": "terminal-environments",
+      "status": "requires_preparation",
+      "source": "https://www.tbench.ai/news/announcement-2-0",
+      "deliver": "Frozen 2.0 registry/task snapshot, all task images, verifier/oracle checks, Harbor dependency environment."
+    },
+    {
+      "id": "webarena-map",
+      "status": "requires_preparation",
+      "source": "https://github.com/web-arena-x/webarena/blob/main/environment_docker/README.md",
+      "deliver": "Map frontend + tile/geocoder/router backend images and data volumes using the pinned setup YAML; save reset state."
+    },
+    {
+      "id": "osworld-vm",
+      "status": "requires_preparation",
+      "source": "https://github.com/xlang-ai/OSWorld",
+      "deliver": "Provider-specific official Ubuntu VM and initial snapshots, plus task cache; Docker engine availability alone does not prove KVM."
+    },
+    {
+      "id": "python-browser-system",
+      "status": "requires_preparation",
+      "source": "https://github.com/web-arena-x/webarena",
+      "deliver": "Separate per-track environments/wheelhouses, apt dependencies, matching Playwright browser cache; dedicated WSL export recommended."
+    },
+    {
+      "id": "agentbench-v02-environments",
+      "status": "requires_preparation",
+      "source": "https://github.com/THUDM/AgentBench/tree/v0.2",
+      "deliver": "DB, KG and game/puzzle environments plus all data referenced by the pinned docs; export images and volume snapshots."
+    }
+  ]
+}

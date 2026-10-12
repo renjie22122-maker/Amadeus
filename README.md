@@ -89,7 +89,7 @@ For failures, include OS, Node version, backend, reproduction and sanitized erro
 
 The standard build emits backend JavaScript plus native/worker assets in build/ and browser assets in dist/. pnpm start and the Windows supervisor run the compiled backend; tsx is retained for development and tests. Keep build/, dist/, package metadata and installed dependencies together; the CI artifact is not a standalone installer.
 
-This repository currently grants no open-source license (package metadata: UNLICENSED). The maintainer has deliberately deferred selecting a license. Version 0.1.0 is a development package identifier, not a promise that dated changelog entries are numbered releases.
+This repository is licensed under the [MIT License](LICENSE). Third-party dependencies, models and datasets retain their own licenses. Version 0.1.0 is a development package identifier, not a promise that dated changelog entries are numbered releases.
 
 ## Local retrieval
 

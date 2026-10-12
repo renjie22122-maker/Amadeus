@@ -8,6 +8,9 @@ This is the maintained English/Chinese documentation set, reviewed on 2026-10-05
 
 ## Current guides
 
+- [Benchmark plan](BENCHMARKS.md)
+- [Benchmark downloads](BENCHMARK-DOWNLOADS.md)
+
 - [Local retrieval and GPU](LOCAL-RAG.md)
 - [Architecture](ARCHITECTURE.md)
 - [Feature guide](FEATURES.md)

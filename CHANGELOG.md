@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-12 — Benchmark preparation and MIT license
+
+Added a bilingual multi-track evaluation design, full source/data download inventory with hash verification, and a no-model-cost Docker preflight. Public benchmark adapters and live scores are not yet implemented. Existing synthetic grading controls and container smoke passed. Adopted MIT; normal launchers do not install benchmark environments.
+
 ## 2026-10-12 — Execution boundaries, recovery receipts and acceptance layers
 
 Checked file handles and concurrent publication regressions; fail-closed backend/receipt validation; command/media recovery references; separate semantic acceptance records; missing/corrupt/database errors distinguished. Extracted resume preparation, recovery tools and HTTP effects. Hostile ancestor races remain a limitation; local Docker unavailable and strict native network preflight failed, not isolation-certified. No new startup dependencies.
