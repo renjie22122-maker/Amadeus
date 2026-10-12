@@ -1,3 +1,4 @@
+import { previewHeight } from '../preview-height';
 import { chartDocument } from '../chart-spec';
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Eye, Code2, RotateCcw, Copy, Check, ShieldCheck, ArrowDownToLine, X } from 'lucide-react';
@@ -131,6 +132,8 @@ export function CodePreview({
   }, [isDiagram, ready, version]);
   useEffect(() => {
     setContentHeight(440);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let pending: number;
     const receive = (event: MessageEvent) => {
       if (
         event.source !== frame.current?.contentWindow ||
@@ -140,11 +143,20 @@ export function CodePreview({
       )
         return;
       const height = event.data.height;
-      if (typeof height === 'number' && Number.isFinite(height) && height > 0)
-        setContentHeight(Math.max(160, Math.min(2400, Math.ceil(height))));
+      if (typeof height !== 'number' || !Number.isFinite(height) || height <= 0) return;
+      pending = height;
+      // Coalesce layout bursts without starving continuously changing content.
+      if (timer === undefined)
+        timer = setTimeout(() => {
+          timer = undefined;
+          setContentHeight((previous) => previewHeight(previous, pending));
+        }, 100);
     };
     window.addEventListener('message', receive);
-    return () => window.removeEventListener('message', receive);
+    return () => {
+      window.removeEventListener('message', receive);
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, [token]);
   const chosen = results.filter(
     (item) => selectedIds.includes(item.id) && !item.added && item.text.trim(),

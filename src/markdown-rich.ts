@@ -73,6 +73,7 @@ export function previewDocument(source: string, resultToken?: string, layoutToke
     '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' +
     policy +
     '">' +
+    (layoutToken ? '<style>html{scrollbar-gutter:stable}</style>' : '') +
     bridge +
     source +
     layout
