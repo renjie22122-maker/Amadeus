@@ -49,3 +49,5 @@ No dependency, configuration, startup command or database schema migration is re
 ### Local media import
 
 No new dependencies, model downloads or settings are required. Existing Start/First-Start source fingerprints include these changes and rebuild as needed. Restart the running service and refresh the browser to activate the new tool and UI. Existing attachments remain compatible.
+
+Large-media streaming needs no new dependencies or settings; existing Start/First-Start launchers remain sufficient. Restart the service to activate.

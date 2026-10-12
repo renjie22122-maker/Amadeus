@@ -135,3 +135,8 @@ Document-scoped follow-up search, narrow passage reranking, automatic conservati
 
 - Added scoped `import_media` to embed workspace media in the current conversation; attachment handles support inspection, image reading, export and generation references.
 - 本地音视频不再误走文档解析；补齐内嵌播放器、范围读取和批量上传失败隔离。
+
+### Large local media / 大型本地媒体
+
+- Removed the fixed local-media upload/import size cap; streaming import, playback ranges, integrity inspection and no-clobber export bound memory. Failed/cancelled transfers do not publish partial files.
+- 保留独立的视觉解码、API参考输入限制；本地保存与播放不受该限制。

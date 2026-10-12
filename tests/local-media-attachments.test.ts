@@ -61,6 +61,44 @@ test('local media upload, range playback, scope and integrity are preserved', as
       importedRecord.messageEventId > 0,
       'imported media must be displayed in history, not queued as an unsent draft',
     );
+    const large = Buffer.alloc(32 * 1024 * 1024);
+    wav.copy(large);
+    const largeUpload = await upload(large, 'large.wav', 'audio/wav');
+    assert.equal(largeUpload.statusCode, 200, largeUpload.body);
+    const largeId = largeUpload.json().id;
+    const tail = await app.inject({
+      url: '/api/attachments/' + largeId + '?inline=1',
+      headers: { ...headers, range: 'bytes=-16' },
+    });
+    assert.equal(tail.statusCode, 206);
+    assert.equal(tail.rawPayload.length, 16);
+    const { FileScope } = await import('../server/services/paths.js');
+    const work = await mkdtemp(join(tmpdir(), 'amadeus-large-export-'));
+    try {
+      const scope = new FileScope([work]);
+      const stream = runtime.media.streamOutput('attachment:' + largeId, cid);
+      await scope.writeChunks('large.wav', stream.chunks);
+      assert.equal(stream.metadata.bytes, large.length);
+      const local = await runtime.media.importLocal(
+        scope.readChunks('large.wav'),
+        'copy.wav',
+        cid,
+        'large-run',
+      );
+      assert.equal(local.bytes, large.length);
+      await assert.rejects(runtime.media.output(local.reference, cid), {
+        code: 'MEDIA_PROCESSING_SIZE',
+      });
+      const record = store.get<any>('attachment', local.reference.slice(11));
+      await writeFile(record.path, Buffer.from('ID3changed'));
+      await assert.rejects(
+        scope.writeChunks('bad.wav', runtime.media.streamOutput(local.reference, cid).chunks),
+        { code: 'MEDIA_INTEGRITY' },
+      );
+      await assert.rejects(scope.readBytes('bad.wav'), { code: 'ENOENT' });
+    } finally {
+      await rm(work, { recursive: true, force: true });
+    }
     const id = uploaded.json().id,
       a = store.get<any>('attachment', id);
     assert.equal(a.mime, 'audio/wav');
@@ -124,9 +162,11 @@ test('import_media reads through FileScope and rejects files outside the authori
       conversation: { id: 'chat' },
       run: { id: 'run' },
       media: {
-        importLocal: async (bytes: Buffer, name: string) => {
+        importLocal: async (chunks: AsyncIterable<Buffer>, name: string) => {
+          let size = 0;
+          for await (const chunk of chunks) size += chunk.length;
           calls++;
-          return { bytes: bytes.length, name };
+          return { bytes: size, name };
         },
       },
     };
@@ -136,6 +176,33 @@ test('import_media reads through FileScope and rejects files outside the authori
     );
     await assert.rejects(tool.run({ path: '../secret.mp3' }, ctx), { code: 'OUTSIDE_PROJECT' });
     assert.equal(calls, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('stream copy cleans interrupted files and never removes a pre-existing destination', async () => {
+  const { saveMediaStream } = await import('../server/services/media-stream.js');
+  const { readFile, access } = await import('node:fs/promises');
+  const directory = await mkdtemp(join(tmpdir(), 'amadeus-stream-failure-'));
+  const target = join(directory, 'media');
+  try {
+    async function* failing() {
+      yield Buffer.from('ID3');
+      throw new Error('source interrupted');
+    }
+    await assert.rejects(saveMediaStream(failing(), target), /source interrupted/);
+    await assert.rejects(access(target), { code: 'ENOENT' });
+    await writeFile(target, 'preserved');
+    await assert.rejects(saveMediaStream([Buffer.from('new')], target), { code: 'EEXIST' });
+    assert.equal(await readFile(target, 'utf8'), 'preserved');
+    const cancel = new AbortController();
+    cancel.abort();
+    const aborted = join(directory, 'cancelled');
+    await assert.rejects(saveMediaStream([Buffer.from('ID3')], aborted, cancel.signal), {
+      name: 'AbortError',
+    });
+    await assert.rejects(access(aborted), { code: 'ENOENT' });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -1,3 +1,5 @@
+import { saveMediaStream, mediaHeader } from '../services/media-stream.js';
+import { createReadStream } from 'node:fs';
 import { attachmentMediaType, mediaAttachmentText } from '../services/attachment-media.js';
 import { mediaRange } from '../services/media-inspection.js';
 import { conversationViewRoutes } from './conversation-view.js';
@@ -22,9 +24,9 @@ import { inspectionRoutes } from './inspection.js';
 import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
 import Fastify from 'fastify';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, readFile, mkdtemp, rm } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { z } from 'zod';
 import type { Attachment, Conversation, Project, Skill } from '../../shared/types.js';
@@ -788,19 +790,30 @@ export async function createApp(options: { directory: string; dist?: string; run
       const conversation = req.query.scope
         ? undefined
         : store.get<Conversation>('conversation', req.query.conversationId || '');
-      const file = await req.file();
+      const file = await req.file({ limits: { fileSize: Number.MAX_SAFE_INTEGER } });
       assert(file, 'FILE_REQUIRED', 'Choose a file.');
-      const bytes = await file.toBuffer();
-      assert(!file.file.truncated, 'FILE_TOO_LARGE', 'Maximum file size is 25 MB.');
+
       const key = id(),
         name = basename(file.filename).replace(/[<>:"|?*]/g, '_'),
         folder = join(directory, 'attachments', key);
       await mkdir(folder, { recursive: true });
       const path = join(folder, name);
-      await writeFile(path, bytes, { flag: 'wx' });
-      const mediaMime = attachmentMediaType(bytes);
+      let saved;
+      try {
+        saved = await saveMediaStream(file.file, path);
+        assert(!file.file.truncated, 'FILE_TOO_LARGE', 'Upload was truncated.');
+      } catch (error) {
+        await rm(folder, { recursive: true, force: true });
+        throw error;
+      }
+      const mediaMime = attachmentMediaType(saved.head);
       let text: string;
       try {
+        assert(
+          (!req.query.scope && mediaMime) || saved.size <= 25 * 1024 * 1024,
+          'DOCUMENT_SIZE',
+          'Non-media document upload exceeds 25 MB; use folder knowledge import for large documents.',
+        );
         text =
           !req.query.scope && mediaMime ? mediaAttachmentText(key, mediaMime) : await extract(path);
       } catch (error) {
@@ -821,15 +834,15 @@ export async function createApp(options: { directory: string; dist?: string; run
           (/^(image|audio|video)\//.test(file.mimetype)
             ? 'application/octet-stream'
             : file.mimetype),
-        sha256: createHash('sha256').update(bytes).digest('hex'),
-        size: bytes.length,
+        sha256: saved.sha256,
+        size: saved.size,
         path,
         text,
         createdAt: Date.now(),
       };
       store.put('attachment', attachment);
-      store.event(c.id, null, 'attachment.added', { id: key, name, size: bytes.length });
-      return { id: key, name, size: bytes.length };
+      store.event(c.id, null, 'attachment.added', { id: key, name, size: saved.size });
+      return { id: key, name, size: saved.size };
     },
   );
   app.get<{ Params: { id: string }; Querystring: { preview?: string; inline?: string } }>(
@@ -837,29 +850,34 @@ export async function createApp(options: { directory: string; dist?: string; run
     async (req, reply) => {
       const a = store.get<Attachment>('attachment', req.params.id);
       if (req.query.inline === '1') {
-        const bytes = await readFile(a.path);
-        const mime = attachmentMediaType(bytes);
+        const { head, size } = await mediaHeader(a.path);
+        const mime = attachmentMediaType(head);
         assert(mime, 'MEDIA_TYPE', 'This attachment cannot be played inline.');
         reply
           .type(mime)
           .header('X-Content-Type-Options', 'nosniff')
           .header('Content-Security-Policy', "default-src 'none'; sandbox")
           .header('Accept-Ranges', 'bytes');
-        const range = mediaRange(req.headers.range, bytes.length);
+        const range = mediaRange(req.headers.range, size);
         if (range === false)
           return reply
             .code(416)
-            .header('Content-Range', 'bytes */' + bytes.length)
+            .header('Content-Range', 'bytes */' + size)
             .send();
         if (range)
           return reply
             .code(206)
-            .header('Content-Range', 'bytes ' + range.start + '-' + range.end + '/' + bytes.length)
+            .header('Content-Range', 'bytes ' + range.start + '-' + range.end + '/' + size)
             .header('Content-Length', range.end - range.start + 1)
-            .send(bytes.subarray(range.start, range.end + 1));
-        return reply.header('Content-Length', bytes.length).send(bytes);
+            .send(createReadStream(a.path, { start: range.start, end: range.end }));
+        return reply.header('Content-Length', size).send(createReadStream(a.path));
       }
       if (req.query.preview === '1') {
+        assert(
+          (await mediaHeader(a.path)).size <= 25 * 1024 * 1024,
+          'IMAGE_PREVIEW_SIZE',
+          'Image preview input exceeds decoder budget; download the original.',
+        );
         const image = await normalizeImage(await readFile(a.path));
         reply
           .header(
@@ -875,7 +893,7 @@ export async function createApp(options: { directory: string; dist?: string; run
           'Content-Disposition',
           "attachment; filename*=UTF-8''" + encodeURIComponent(a.name),
         );
-      return readFile(a.path);
+      return createReadStream(a.path);
     },
   );
   app.delete<{ Params: { id: string } }>('/api/attachments/:id', async (req) => {

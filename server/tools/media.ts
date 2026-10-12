@@ -7,14 +7,14 @@ export function installMedia(registry: ToolRegistry) {
     name: 'import_media',
     effect: 'read',
     description:
-      'Read an existing image, audio or video from the authorized workspace and embed a saved copy at this point in the conversation. Returns attachment:id for inspect_media, read_image, export_media and generation references. No external upload, playback is not transcription or visual understanding. Maximum 25 MB.',
+      'Read an existing image, audio or video from the authorized workspace and embed a saved copy at this point in the conversation. Returns attachment:id for inspect_media, read_image, export_media and generation references. No external upload, playback is not transcription or visual understanding. No fixed import file-size cap; reads and saves incrementally.',
     schema: z.object({ path: z.string().min(1).max(2048) }),
     run: async (a, c) => {
-      const bytes = await c.files.readBytes(a.path, 25 * 1024 * 1024);
+      const bytes = c.files.readChunks(a.path, c.signal);
       c.signal.throwIfAborted();
       return {
         content: JSON.stringify(
-          await c.media.importLocal(bytes, basename(a.path), c.conversation.id, c.run.id),
+          await c.media.importLocal(bytes, basename(a.path), c.conversation.id, c.run.id, c.signal),
         ),
       };
     },
@@ -139,17 +139,11 @@ export function installMedia(registry: ToolRegistry) {
       'Inspect a same-conversation attachment:id or completed media:jobId:outputId reference: byte integrity, MIME and MP4 audio/video track declarations. Does not prove audible content or codec compatibility; unsupported containers report unknown. For visual QA use read_image(mediaRef).',
     schema: z.object({ reference: z.string() }),
     run: async (a, c) => {
-      const output = await c.media.output(a.reference, c.conversation.id);
-      return {
-        content: JSON.stringify({
-          reference: a.reference,
-          mime: output.mime,
-          name: output.name,
-          bytes: output.bytes.length,
-          sha256: output.sha256,
-          inspection: output.inspection,
-        }),
-      };
+      const output = c.media.streamOutput(a.reference, c.conversation.id, c.signal);
+      for await (const _chunk of output.chunks) {
+        c.signal.throwIfAborted();
+      }
+      return { content: JSON.stringify(output.metadata) };
     },
   });
   registry.add({
@@ -159,19 +153,10 @@ export function installMedia(registry: ToolRegistry) {
       'Copy a local attachment:id or completed image/video/audio/3D output in this conversation into an authorized workspace path, preserving exact bytes. Never overwrites existing files. Returns hash and audio-track inspection; no model generation or conversion.',
     schema: z.object({ reference: z.string(), path: z.string().min(1) }),
     run: async (a, c) => {
-      const output = await c.media.output(a.reference, c.conversation.id);
+      const output = c.media.streamOutput(a.reference, c.conversation.id, c.signal);
       c.signal.throwIfAborted();
-      const path = await c.files.writeBytes(a.path, output.bytes);
-      return {
-        content: JSON.stringify({
-          path,
-          reference: a.reference,
-          mime: output.mime,
-          bytes: output.bytes.length,
-          sha256: output.sha256,
-          inspection: output.inspection,
-        }),
-      };
+      const path = await c.files.writeChunks(a.path, output.chunks);
+      return { content: JSON.stringify({ path, ...output.metadata }) };
     },
   });
   registry.add({

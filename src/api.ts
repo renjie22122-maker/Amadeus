@@ -7,10 +7,13 @@ export async function api<T = any>(
   signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch('/api' + path, {
-    signal: AbortSignal.any([
-      AbortSignal.timeout(body === undefined ? 20000 : 120000),
-      ...(signal ? [signal] : []),
-    ]),
+    signal:
+      body instanceof FormData && path.startsWith('/upload?')
+        ? signal
+        : AbortSignal.any([
+            AbortSignal.timeout(body === undefined ? 20000 : 120000),
+            ...(signal ? [signal] : []),
+          ]),
     method: method || (body === undefined ? 'GET' : 'POST'),
     headers:
       body === undefined || body instanceof FormData

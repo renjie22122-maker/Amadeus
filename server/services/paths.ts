@@ -145,6 +145,33 @@ export class FileScope {
       throw error;
     }
   }
+  async *readChunks(name: string, signal?: AbortSignal): AsyncGenerator<Buffer> {
+    const handle = await this.pinned(name, constants.O_RDONLY);
+    try {
+      const before = await handle.stat();
+      let position = 0;
+      while (true) {
+        signal?.throwIfAborted();
+        const buffer = Buffer.alloc(256 * 1024);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+        if (!bytesRead) break;
+        position += bytesRead;
+        yield buffer.subarray(0, bytesRead);
+      }
+      const after = await handle.stat();
+      await this.resolve(name);
+      assert(
+        position === before.size &&
+          after.size === before.size &&
+          after.mtimeMs === before.mtimeMs &&
+          after.ctimeMs === before.ctimeMs,
+        'FILE_CHANGED',
+        'Source changed during media import. Retry once the file is stable.',
+      );
+    } finally {
+      await handle.close();
+    }
+  }
   async read(name: string, maxBytes = 1_000_000) {
     return (await this.readBytes(name, maxBytes)).toString('utf8');
   }
@@ -177,7 +204,14 @@ export class FileScope {
   async writeBytes(name: string, content: Buffer) {
     return this.publish(name, content, true);
   }
-  private async publish(name: string, content: Buffer, noClobber: boolean) {
+  async writeChunks(name: string, chunks: AsyncIterable<Uint8Array>) {
+    return this.publish(name, chunks, true);
+  }
+  private async publish(
+    name: string,
+    content: Buffer | AsyncIterable<Uint8Array>,
+    noClobber: boolean,
+  ) {
     const p = await this.resolve(name, true);
     await mkdir(path.dirname(p), { recursive: true });
     await this.resolve(name, true);

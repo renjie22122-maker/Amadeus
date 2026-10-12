@@ -70,3 +70,7 @@ Vector/chart update validation: 434 tests, 432 passed, 2 skipped. Added malforme
 ### Local media regression (2026-10-12)
 
 Full suite: 437 tests, 435 passed, 2 desktop integration tests skipped. Type checking and production build passed. Edge browser check decodes a one-second WAV and verifies user attachments and Agent-imported workspace media coexist in history, with native controls, no draft leakage and no horizontal overflow at 390 px. Container/range, integrity and cross-conversation tests pass; this does not certify every browser video codec.
+
+### Streaming large media
+
+438 tests: 436 passed, 2 desktop tests skipped. A 32 MiB fixture verifies upload, suffix-range playback, scoped disk import and exact export beyond the previous cap. Damaged exports never publish; interrupted/cancelled copies clean up and pre-existing destinations survive. Type checking and Edge playback checks pass.

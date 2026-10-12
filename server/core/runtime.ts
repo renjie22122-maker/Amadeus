@@ -22,7 +22,7 @@ import { ToolExecutor } from './tool-executor.js';
 import { CognitiveController } from './cognitive-controller.js';
 import { MemoryIndex } from '../services/memory-index.js';
 import { EventEmitter } from 'node:events';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import type {
   Attachment,
   Conversation,
@@ -480,6 +480,13 @@ export class Runtime implements TeamPort {
             if (profile.vision) {
               last.images = [];
               for (const a of attachments.filter((a) => a.mime.startsWith('image/'))) {
+                if ((await stat(a.path)).size > 25 * 1024 * 1024) {
+                  last.content +=
+                    '\n[Image ' +
+                    a.id +
+                    ' is stored, but exceeds the vision decoder input budget. Original remains downloadable/exportable; resize using authorized tools before visual analysis.]';
+                  continue;
+                }
                 const image = await normalizeImage(await readFile(a.path));
                 last.images.push(image.url);
               }

@@ -1,6 +1,8 @@
+import { createReadStream } from 'node:fs';
+import { saveMediaStream } from './media-stream.js';
 import { attachmentMediaType, mediaAttachmentText } from './attachment-media.js';
 import { inspectMedia } from './media-inspection.js';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { MediaJob, MediaKind } from '../../shared/media.js';
@@ -97,44 +99,123 @@ export class MediaService {
       })),
     };
   }
-  async importLocal(bytes: Buffer, name: string, conversationId: string, runId: string) {
-    const mime = attachmentMediaType(bytes);
-    assert(
-      mime && bytes.length <= 25 * 1024 * 1024,
-      'MEDIA_TYPE',
-      'Import a supported image, audio or video under 25 MB.',
-    );
-    const sha256 = createHash('sha256').update(bytes).digest('hex');
-    const key = createHash('sha256')
-      .update(JSON.stringify([conversationId, runId, name, sha256]))
-      .digest('hex');
-    const reference = 'attachment:' + key;
-    if (this.store.maybe<Attachment>('attachment', key))
-      return { reference, name, mime, bytes: bytes.length };
-    const folder = join(this.directory, 'attachments', key);
+  async importLocal(
+    source: Buffer | AsyncIterable<Uint8Array>,
+    name: string,
+    conversationId: string,
+    runId: string,
+    signal?: AbortSignal,
+  ) {
+    const key = id(),
+      folder = join(this.directory, 'attachments', key);
     await mkdir(folder, { recursive: true });
     const path = join(folder, 'media');
-    await writeFile(path, bytes);
-    const a: Attachment = {
-      id: key,
-      conversationId,
-      name,
-      mime,
-      size: bytes.length,
-      path,
-      text: mediaAttachmentText(key, mime),
-      sha256,
-      createdAt: Date.now(),
-      messageEventId: -1,
-    };
-    this.store.transaction(() => {
-      if (this.store.maybe<Attachment>('attachment', key)) return;
-      const event = this.store.event(conversationId, runId, 'media.attached', {
-        attachment: { id: key, name, mime },
+    try {
+      const saved = await saveMediaStream(
+        Buffer.isBuffer(source) ? [source] : source,
+        path,
+        signal,
+      );
+      const mime = attachmentMediaType(saved.head);
+      assert(mime, 'MEDIA_TYPE', 'Import a supported image, audio or video.');
+      const prior = this.store
+        .forConversation<Attachment>('attachment', conversationId)
+        .find(
+          (a) =>
+            a.sha256 === saved.sha256 &&
+            a.name === name &&
+            a.text.includes('Imported by run: ' + runId),
+        );
+      if (prior) {
+        await rm(folder, { recursive: true, force: true });
+        return { reference: 'attachment:' + prior.id, name, mime, bytes: saved.size };
+      }
+      signal?.throwIfAborted();
+      const a: Attachment = {
+        id: key,
+        conversationId,
+        name,
+        mime,
+        size: saved.size,
+        path,
+        text: mediaAttachmentText(key, mime) + ' Imported by run: ' + runId,
+        sha256: saved.sha256,
+        createdAt: Date.now(),
+        messageEventId: -1,
+      };
+      this.store.transaction(() => {
+        const event = this.store.event(conversationId, runId, 'media.attached', {
+          attachment: { id: key, name, mime },
+        });
+        this.store.put('attachment', { ...a, messageEventId: event.id });
       });
-      this.store.put('attachment', { ...a, messageEventId: event.id });
-    });
-    return { reference, name, mime, bytes: bytes.length };
+      return { reference: 'attachment:' + key, name, mime, bytes: saved.size };
+    } catch (error) {
+      await rm(folder, { recursive: true, force: true });
+      throw error;
+    }
+  }
+  streamOutput(reference: string, conversationId: string, signal?: AbortSignal) {
+    let file: {
+      path: string;
+      mime: string;
+      name: string;
+      sha256?: string;
+      size?: number;
+      conversationId: string;
+    };
+    if (reference.startsWith('attachment:'))
+      file = this.store.get<Attachment>('attachment', reference.slice(11));
+    else {
+      const match = /^media:([a-zA-Z0-9-]+):([0-9]+)$/.exec(reference);
+      assert(match, 'MEDIA_REFERENCE', 'Use attachment:id or media:jobId:outputId.');
+      const job = this.get(match[1], conversationId);
+      assert(
+        job.status === 'completed' && job.outputs.some((o) => o.id === match[2]),
+        'MEDIA_STATE',
+        'Output is not complete.',
+      );
+      file = this.store.get('media-file', match[1] + ':' + match[2]);
+    }
+    assert(
+      file.conversationId === conversationId,
+      'MEDIA_SCOPE',
+      'Media belongs to another conversation.',
+      403,
+    );
+    const metadata = {
+      reference,
+      mime: file.mime,
+      name: file.name,
+      bytes: 0,
+      sha256: '',
+      inspection: { audio: 'unknown', method: 'bounded-header-only' } as ReturnType<
+        typeof inspectMedia
+      >,
+    };
+    async function* chunks() {
+      const hash = createHash('sha256');
+      let head = Buffer.alloc(0);
+      for await (const chunk of createReadStream(file.path, {
+        highWaterMark: 256 * 1024,
+        signal,
+      })) {
+        metadata.bytes += chunk.length;
+        hash.update(chunk);
+        if (head.length < 1024 * 1024)
+          head = Buffer.concat([head, chunk.subarray(0, 1024 * 1024 - head.length)]);
+        yield chunk as Buffer;
+      }
+      metadata.sha256 = hash.digest('hex');
+      assert(
+        (file.size === undefined || metadata.bytes === file.size) &&
+          (!file.sha256 || metadata.sha256 === file.sha256),
+        'MEDIA_INTEGRITY',
+        'Saved media changed.',
+      );
+      if (metadata.bytes === head.length) metadata.inspection = inspectMedia(head, file.mime);
+    }
+    return { metadata, chunks: chunks() };
   }
   async output(reference: string, conversationId: string) {
     if (reference.startsWith('attachment:')) {
@@ -144,6 +225,11 @@ export class MediaService {
         'MEDIA_SCOPE',
         'Attachment belongs to another conversation.',
         403,
+      );
+      assert(
+        (await stat(a.path)).size <= 25 * 1024 * 1024,
+        'MEDIA_PROCESSING_SIZE',
+        'This full-buffer processing route accepts up to 25 MB. The original remains available for playback/download; use the workspace source for chunked processing.',
       );
       const bytes = await readFile(a.path);
       const sha256 = createHash('sha256').update(bytes).digest('hex');
