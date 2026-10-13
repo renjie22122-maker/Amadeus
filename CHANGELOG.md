@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## Evidence and native evaluation
+
+Preserve spreadsheet styles and image detail; add explicit format contracts and repeat-observation hints. Separate three native GAIA arms from controlled shared-tool experiments, apply source exclusions and preserve raw grading. Optional Setup-Evaluation prepares dependencies without starting paid runs.
+
 ## 2026-10-13 — Audited computation, media understanding and output contracts
 
 Added Docker-only Python analysis, timestamped frame/audio extraction, scoped paginated document/OCR reading, approved durable audio transcription, capability diagnostics and non-executing tool-plan validation. Final response contracts validate shape with two bounded repairs; raw answers remain recorded. Thin/error web pages expose browser handoff guidance without authority escalation. Optional Setup-Analysis builds Python + FFmpeg; First Start only describes it. Existing frozen evaluations are not modified; no benchmark improvement is claimed.

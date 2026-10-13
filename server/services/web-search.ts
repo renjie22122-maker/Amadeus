@@ -1,3 +1,4 @@
+import { filterSearch, type SourcePolicy } from './source-policy.js';
 import type { Settings, Profile, Usage } from '../../shared/types.js';
 import { assert } from '../core/errors.js';
 export function searchProfile(settings: Settings): Profile | undefined {
@@ -62,6 +63,7 @@ export async function searchWeb(
   settings: Settings,
   signal: AbortSignal,
   account: (usage: Usage, profile: Profile) => void,
+  sourcePolicy?: SourcePolicy,
 ) {
   assert(settings.web?.enabled !== false, 'WEB_DISABLED', 'Web tools are disabled in Settings.');
   const profile = searchProfile(settings);
@@ -142,8 +144,11 @@ export async function searchWeb(
         cached: u.cache_read_input_tokens || 0,
         measured: true,
       };
+    const filtered = filterSearch(parseSearch(payload, sourcePolicy ? 10000 : limit), sourcePolicy);
     return {
-      ...parseSearch(payload, limit),
+      ...filtered,
+      sources: filtered.sources.slice(0, limit),
+      truncated: filtered.truncated || filtered.sources.length > limit,
       provider: 'deepseek-messages',
       model,
       usage,

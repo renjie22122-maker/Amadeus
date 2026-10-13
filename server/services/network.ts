@@ -1,3 +1,4 @@
+import { checkSource, checkSourceText, sourceAllowed, type SourcePolicy } from './source-policy.js';
 import { lookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
@@ -28,7 +29,9 @@ export async function fetchPublic(
   signal: AbortSignal,
   redirects = 0,
   deadline = AbortSignal.any([signal, AbortSignal.timeout(30000)]),
-  binaryImage: boolean | 'media' = false,
+  binaryImage: boolean | 'media' | 'document' = false,
+  sourcePolicy?: SourcePolicy,
+  rawBody = false,
 ): Promise<{
   url: string;
   text: string;
@@ -37,10 +40,12 @@ export async function fetchPublic(
   contentType: string;
   links: { url: string; text: string }[];
   imageBytes?: Buffer;
+  rawText?: string;
 }> {
   signal = deadline;
   signal.throwIfAborted();
   assert(redirects < 5, 'REDIRECT_LIMIT', 'Too many redirects');
+  checkSource(input, sourcePolicy);
   const url = new URL(input);
   assert(
     ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password,
@@ -105,11 +110,13 @@ export async function fetchPublic(
         const contentType = String(response.headers['content-type'] || 'text/plain');
         if (
           !(binaryImage
-            ? binaryImage === 'media'
-              ? /^(image\/(png|jpeg|webp|gif)|audio\/|video\/|model\/|application\/(octet-stream|zip)|text\/plain)/i.test(
-                  contentType,
-                )
-              : /^image\/(png|jpeg|webp|gif)(;|$)/i.test(contentType)
+            ? binaryImage === 'document'
+              ? /^application\/pdf(;|$)/i.test(contentType)
+              : binaryImage === 'media'
+                ? /^(image\/(png|jpeg|webp|gif)|audio\/|video\/|model\/|application\/(octet-stream|zip)|text\/plain)/i.test(
+                    contentType,
+                  )
+                : /^image\/(png|jpeg|webp|gif)(;|$)/i.test(contentType)
             : /text\/|json|xml|javascript/i.test(contentType))
         ) {
           response.destroy();
@@ -169,7 +176,10 @@ export async function fetchPublic(
       redirects + 1,
       deadline,
       binaryImage,
+      sourcePolicy,
+      rawBody,
     );
+  checkSourceText(result.text, sourcePolicy);
   const html = /html/i.test(result.contentType),
     links: { url: string; text: string }[] = [];
   if (html)
@@ -182,6 +192,7 @@ export async function fetchPublic(
           ['http:', 'https:'].includes(target.protocol) &&
           !target.username &&
           !target.password &&
+          sourceAllowed(target.href, sourcePolicy) &&
           !links.some((l) => l.url === target.href)
         )
           links.push({
@@ -207,6 +218,7 @@ export async function fetchPublic(
     : result.text;
   return {
     url: url.href,
+    ...(rawBody ? { rawText: result.text } : {}),
     status: result.status,
     contentType: result.contentType,
     text: text.slice(0, 120000),
@@ -216,13 +228,18 @@ export async function fetchPublic(
   };
 }
 
-export async function fetchPublicImage(url: string, signal: AbortSignal) {
+export async function fetchPublicImage(
+  url: string,
+  signal: AbortSignal,
+  sourcePolicy?: SourcePolicy,
+) {
   const result = await fetchPublic(
     url,
     signal,
     0,
     AbortSignal.any([signal, AbortSignal.timeout(30000)]),
     true,
+    sourcePolicy,
   );
   assert(
     result.status >= 200 && result.status < 300,

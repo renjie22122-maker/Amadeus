@@ -1,4 +1,3 @@
-import { lstat, readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { assert } from '../core/errors.js';
 import type { FileScope } from './paths.js';
@@ -10,7 +9,38 @@ export function imageFormat(data: Buffer) {
     return 'webp';
   return undefined;
 }
-export async function normalizeImage(data: Buffer) {
+export interface ImageCrop {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+export async function cropImage(data: Buffer, crop: ImageCrop) {
+  assert(
+    data.length <= 25 * 1024 * 1024 && imageFormat(data),
+    'IMAGE_SIZE',
+    'Use a supported image under 25 MB.',
+  );
+  assert(
+    Object.values(crop).every(Number.isInteger) &&
+      crop.left >= 0 &&
+      crop.top >= 0 &&
+      crop.width > 0 &&
+      crop.height > 0,
+    'IMAGE_CROP',
+    'Crop must use valid original pixel coordinates.',
+  );
+  const source = sharp(data, { limitInputPixels: 40_000_000, animated: false, failOn: 'error' });
+  const meta = await source.metadata();
+  assert(
+    crop.left + crop.width <= (meta.width || 0) && crop.top + crop.height <= (meta.height || 0),
+    'IMAGE_CROP',
+    'Crop exceeds original image bounds.',
+  );
+  return source.extract(crop).png().toBuffer();
+}
+export async function normalizeImage(data: Buffer, crop?: ImageCrop) {
+  if (crop) data = await cropImage(data, crop);
   assert(data.length <= 25 * 1024 * 1024, 'IMAGE_SIZE', 'Image input exceeds 25 MB.');
   const format = imageFormat(data);
   assert(
@@ -53,6 +83,7 @@ export async function normalizeImage(data: Buffer) {
     url: 'data:' + mime + ';base64,' + normalized.data.toString('base64'),
     metadata: {
       format,
+      ...(crop ? { crop, coordinateSpace: 'original-unrotated-pixels' } : {}),
       width: normalized.info.width,
       height: normalized.info.height,
       originalWidth: width,
@@ -63,13 +94,6 @@ export async function normalizeImage(data: Buffer) {
     },
   };
 }
-export async function readScopedImage(files: FileScope, path: string) {
-  const resolved = await files.resolve(path),
-    stat = await lstat(resolved);
-  assert(
-    stat.isFile() && stat.size <= 25 * 1024 * 1024,
-    'IMAGE_SIZE',
-    'Use a regular image file no larger than 25 MB.',
-  );
-  return normalizeImage(await readFile(resolved));
+export async function readScopedImage(files: FileScope, path: string, crop?: ImageCrop) {
+  return normalizeImage(await files.readBytes(path, 25 * 1024 * 1024), crop);
 }

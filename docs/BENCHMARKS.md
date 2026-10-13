@@ -6,7 +6,7 @@
 
 Evaluate **model × runtime × task × environment**, not feature counts or subjective architecture scores. The [requested article](https://blog.csdn.net/u013010473/article/details/157695931) is a useful multidimensional overview; use official implementations for current versions and grading.
 
-Delivered here: evaluation design, no-model-cost Docker preflight, download/transfer instructions and MIT licensing. The existing synthetic coding pilot runs today. **Amadeus adapters for the public benchmarks below are not implemented by this change.** Environment preparation, official grading and solving through Amadeus are distinct milestones.
+Adapters cover eleven BFCL Python/live single-turn categories, LongMemEval S/oracle full-context QA, and GAIA validation. Environment readiness, attempted counts and grades are separate milestones.
 
 ## Tracks
 
@@ -73,7 +73,7 @@ node --import tsx evals/coding/run.ts --preflight
 
 Engine-only by default; --container requires locally installed alpine:3.22 or --image= with an Alpine-compatible image. Never implicitly downloads or calls a model. Reports stay under ignored .diagnostics/benchmark. Existing synthetic grader preflight passed 10 tasks/21 controls; this is not public coding benchmark performance.
 
-Normal and first-start launchers deliberately do not install huge benchmark dependencies or run evaluations. See [download and transfer instructions](BENCHMARK-DOWNLOADS.md). Public adapters, live batches and a statistical report generator remain to be implemented after environment preparation; another agent's scores must never be attributed to Amadeus.
+Normal and first-start launchers deliberately do not install huge benchmark dependencies or run evaluations. See [download and transfer instructions](BENCHMARK-DOWNLOADS.md). Implemented adapters and reporting scripts do not imply completed results; use actual attempt receipts.
 
 ## Dimension coverage audit
 
@@ -90,3 +90,17 @@ The seven primary tracks do not directly cover databases, graphs, game planning 
 This is one suite: seven core tracks, two coverage supplements and internal diagnostics, not an unweighted average. Keep planned/environment_ready/adapter_ready/executed distinct.
 
 Internal diagnostics also cover same-budget single/Team coordination, conflicting and duplicate-source evidence; Memory formation/retrieval/update/decay and bilingual no-answer RAG; image/audio/video import-generation-reference-export integrity and audio tracks; background waiting, user steering, delayed approval, offline/restart/unknown-effects; injection from untrusted documents/web/tool results. Test safety false accepts and false rejects together. Media aesthetic quality requires separate blind review; it is not a correctness assertion.
+
+## Native versus controlled evaluation
+
+GAIA primary protocol `native-evidence-v1` reports three separate arms: Amadeus production tools, smolagents 1.26.0 ToolCallingAgent, and CodeAgent. smolagents retains native search, page conversion and Python execution, with configured Python file/image tools. Its solver runs inside offline Docker; host transport gates external reads and model calls. These are configured integrations, not identical tool implementations or unrestricted default products.
+
+Auxiliary `shared-evidence-v2` gives Amadeus and ToolCallingAgent seven common tools plus bounded output-format repair. Report it separately. BFCL remains first-decision tool calling; LongMemEval S/oracle remains supplied-history QA, not persistent Memory/RAG. CodeAgent is only added to GAIA.
+
+Keep model, inputs, budgets and source restrictions comparable. Withhold generated search synthesis/snippets; reject known answer repositories and traces before access, at every redirect, and through recognizable content markers. Unknown mirrors and training contamination remain possible. Older runs containing answer traces are contaminated diagnostics, not clean comparative scores; preserve receipts.
+
+New-protocol GAIA grades the raw final answer without stripping labels. Product format contracts ask the model to fix shape, precision and ordering; they never substitute references. Native baselines retain their own output behavior. Record infrastructure failures and incomplete work explicitly.
+
+Run `Setup-Evaluation.cmd` to prepare optional Python/FFmpeg/smolagents dependencies; normal and first-start launchers do not download evaluation images or start paid tests. Freeze image SHA256, package versions, dataset hashes and adapter commit. The runner fails before paid GAIA calls when environment preflight fails. Credentials and answer references stay outside solver containers.
+
+General tools now preserve XLSX coordinates, stored styles, formulas and merges, support original-pixel image crops, and flag repeated web observations. Stored styles do not render conditional formatting. Browser interaction and transcription require separate configuration; this profile does not claim those capabilities.

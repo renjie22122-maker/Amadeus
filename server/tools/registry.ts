@@ -1,3 +1,5 @@
+import type { SourcePolicy } from '../services/source-policy.js';
+import { researchProgress, type ResearchProgress } from '../services/research-progress.js';
 import { installResponseContract } from '../core/response-contract.js';
 import { installDocumentTools } from './document-tools.js';
 import { installWorkChains, pythonSource } from './work-chains.js';
@@ -75,6 +77,7 @@ export interface TeamPort {
   message(parent: Run, key: string, message: string): void;
 }
 export interface ToolContext {
+  sourcePolicy?: SourcePolicy;
   disabledHookIds?: string[];
   hookBudget?: { remaining: number };
   invokeHook?: (hookId: string, command: string, timeoutSeconds: number) => Promise<void>;
@@ -419,11 +422,19 @@ export function tools() {
     name: 'read_image',
     effect: 'read',
     description:
-      'Inspect actual pixels of a workspace PNG/JPEG/WebP/GIF or public image URL, including local files without an extension. Provide exactly one path, url or mediaRef (attachment:id or media:jobId:outputId from this conversation). Images are decoded, resized to at most 640k pixels and 1 MB, and attached to the next model request. Requires an image-capable current model. Animated files show the first frame. Use this instead of reading binary data or installing an image library.',
+      'Inspect actual pixels of a workspace PNG/JPEG/WebP/GIF or public image URL, including local files without an extension. Provide exactly one path, url or mediaRef (attachment:id or media:jobId:outputId from this conversation). Images are decoded, resized to at most 640k pixels and 1 MB, and attached to the next model request. Requires an image-capable current model. Animated files show the first frame. Optional crop uses original unrotated pixel coordinates before resizing, for local detail verification. Use this instead of reading binary data or installing an image library.',
     schema: z.object({
       path: z.string().min(1).max(2048).optional(),
       url: z.url().optional(),
       mediaRef: z.string().optional(),
+      crop: z
+        .object({
+          left: z.number().int().min(0),
+          top: z.number().int().min(0),
+          width: z.number().int().positive(),
+          height: z.number().int().positive(),
+        })
+        .optional(),
     }),
     run: async (a, c) => {
       assert(
@@ -456,10 +467,10 @@ export function tools() {
         );
       }
       const image = a.mediaRef
-        ? await normalizeImage(mediaOutput!.bytes)
+        ? await normalizeImage(mediaOutput!.bytes, a.crop)
         : a.url
-          ? await normalizeImage(await fetchPublicImage(a.url, c.signal))
-          : await readScopedImage(c.files, a.path);
+          ? await normalizeImage(await fetchPublicImage(a.url, c.signal, c.sourcePolicy), a.crop)
+          : await readScopedImage(c.files, a.path, a.crop);
       return {
         content: JSON.stringify({
           path: a.path,
@@ -834,10 +845,23 @@ export function tools() {
     }),
     run: async (a, c) => {
       const perform = () =>
-        searchWeb(a.query, a.limit, c.config.get(), c.signal, (usage, profile) =>
-          c.accountWeb?.(usage, profile),
+        searchWeb(
+          a.query,
+          a.limit,
+          c.config.get(),
+          c.signal,
+          (usage, profile) => c.accountWeb?.(usage, profile),
+          c.sourcePolicy,
         );
-      return text(await (c.auxiliary ? c.auxiliary(perform) : perform()));
+      const result = (await (c.auxiliary ? c.auxiliary(perform) : perform())) as Awaited<
+        ReturnType<typeof searchWeb>
+      >;
+      const progress = researchProgress(
+        c.store.maybe<ResearchProgress>('research-progress', c.run.id),
+        result.sources,
+      );
+      c.store.put('research-progress', { id: c.run.id, ...progress });
+      return text({ ...result, researchProgress: progress });
     },
   });
   registry.add({
@@ -847,11 +871,24 @@ export function tools() {
     effect: 'network',
     schema: z.object({ url: z.url() }),
     run: async (a, c) => {
-      const page = await fetchPublic(a.url, c.signal);
+      const page = await fetchPublic(
+        a.url,
+        c.signal,
+        0,
+        AbortSignal.any([c.signal, AbortSignal.timeout(30000)]),
+        false,
+        c.sourcePolicy,
+      );
+      const progress = researchProgress(
+        c.store.maybe<ResearchProgress>('research-progress', c.run.id),
+        { url: page.url, text: page.text, status: page.status },
+      );
+      c.store.put('research-progress', { id: c.run.id, ...progress });
       const needsInteraction =
         page.status >= 400 || (page.contentType.includes('html') && page.text.trim().length < 200);
       return text({
         ...recordWebEvidence(c.store, c.run, page),
+        researchProgress: progress,
         ...(needsInteraction
           ? {
               handoff: {

@@ -22,7 +22,29 @@ export async function extract(path: string, options: { ocr?: boolean } = {}): Pr
     const text: string[] = [];
     book.eachSheet((sheet) => {
       text.push('# ' + sheet.name);
-      sheet.eachRow((row) => text.push(JSON.stringify(row.values)));
+      text.push(
+        'Coordinates and stored styles follow; colors may be theme/index based. Formulas are not executed. Conditional formatting is not rendered.',
+      );
+      let count = 0;
+      sheet.eachRow({ includeEmpty: true }, (row) => {
+        row.eachCell({ includeEmpty: true }, (cell) => {
+          if (cell.value == null && !Object.keys(cell.style || {}).length && !cell.isMerged) return;
+          if (++count > 100000)
+            throw Error(
+              'Spreadsheet exceeds 100000 inspected cells; select a smaller workbook/range.',
+            );
+          text.push(
+            JSON.stringify({
+              address: cell.address,
+              value: cell.value,
+              numberFormat: cell.numFmt,
+              fill: cell.fill,
+              fontColor: cell.font?.color,
+              ...(cell.isMerged ? { mergedWith: cell.master.address } : {}),
+            }),
+          );
+        });
+      });
     });
     return text.join('\n');
   }
