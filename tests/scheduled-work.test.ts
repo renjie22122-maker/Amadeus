@@ -1,0 +1,204 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import Fastify from 'fastify';
+import { Store } from '../server/storage/store.js';
+import { ScheduledWorkService, scheduleFields } from '../server/services/scheduled-work.js';
+import { scheduledWorkRoutes } from '../server/http/scheduled-work.js';
+import { installScheduledTools } from '../server/tools/scheduled-tools.js';
+function fixture(t: any) {
+  const dir = mkdtempSync(join(tmpdir(), 'scheduled-work-'));
+  const store = new Store(join(dir, 'db'));
+  t.after(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  store.put('project', { id: 'p' });
+  store.put('conversation', {
+    id: 'c',
+    title: 'source',
+    projectId: 'p',
+    profileId: 'm',
+    permission: 'read-only',
+    execution: { backend: 'docker', network: 'deny' },
+    parentId: null,
+    skillIds: ['s'],
+    memory: true,
+  });
+  const calls: any[] = [];
+  const runtime: any = {
+    config: { profile: () => ({ id: 'm', baseUrl: 'https://example.test' }) },
+    active: () => false,
+    start: (chat: string, prompt: string, _n: number, options: any) => {
+      calls.push({ chat, prompt, ...options });
+      store.put('run', { id: options.runId, conversationId: chat, status: 'running' });
+    },
+  };
+  const scheduler = new ScheduledWorkService(store, runtime);
+  const save = (extra: any = {}) =>
+    store.put('scheduled-work', {
+      id: 's',
+      conversationId: 'c',
+      name: 'Check',
+      prompt: 'inspect',
+      enabled: true,
+      dueAt: 0,
+      status: 'waiting',
+      ...extra,
+    });
+  return { store, runtime, scheduler, calls, save };
+}
+test('new chat inherits scope/security but not conversation history; restart does not duplicate', (t) => {
+  const f = fixture(t);
+  f.save({ destination: 'new-chat', intervalMs: 60000 });
+  f.scheduler.tick(1);
+  assert.equal(f.calls.length, 1);
+  assert.notEqual(f.calls[0].chat, 'c');
+  const c = f.store.get<any>('conversation', f.calls[0].chat);
+  assert.equal(c.permission, 'read-only');
+  assert.equal(c.projectId, 'p');
+  assert.deepEqual(c.execution, { backend: 'docker', network: 'deny' });
+  assert.equal(c.parentId, null);
+  assert.equal(c.forkEvent, null);
+  new ScheduledWorkService(f.store, f.runtime).tick(2);
+  assert.equal(f.calls.length, 1);
+  f.store.put('run', { id: f.calls[0].runId, status: 'completed' });
+  f.scheduler.tick(180001);
+  assert.equal(f.store.get<any>('scheduled-work', 's').dueAt, 240000);
+  f.scheduler.tick(239999);
+  assert.equal(f.calls.length, 1);
+  f.scheduler.tick(240000);
+  assert.equal(f.calls.length, 2);
+  assert.notEqual(f.calls[1].chat, c.id);
+});
+test('paused dispatched run settles once and cannot schedule more work', (t) => {
+  const f = fixture(t);
+  f.save({ intervalMs: 60000 });
+  f.scheduler.tick(1);
+  f.store.put('scheduled-work', { ...f.store.get<any>('scheduled-work', 's'), enabled: false });
+  f.store.put('run', { id: f.calls[0].runId, status: 'completed' });
+  f.scheduler.tick(2);
+  f.scheduler.tick(999999);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.store.get<any>('scheduled-work', 's').status, 'paused');
+  assert.equal(f.store.list('schedule-result').length, 1);
+});
+test('meaningful notifications suppress unchanged, completion stops repeat, missing report not silent', (t) => {
+  const f = fixture(t);
+  f.save({ intervalMs: 60000, notifications: 'meaningful' });
+  f.scheduler.tick(1);
+  const finish = (outcome?: string) => {
+    const runId = f.calls.at(-1).runId;
+    if (outcome) f.store.put('schedule-report', { id: runId, outcome, summary: 'observed' });
+    f.store.put('run', { id: runId, status: 'completed' });
+  };
+  finish('unchanged');
+  f.scheduler.tick(2);
+  assert.equal(f.store.list<any>('schedule-result')[0].unread, false);
+  f.scheduler.tick(60000);
+  finish();
+  f.scheduler.tick(60001);
+  assert.equal(f.store.list<any>('schedule-result').filter((r) => r.unread).length, 1);
+  f.scheduler.tick(120000);
+  finish('complete');
+  f.scheduler.tick(120001);
+  f.scheduler.tick(999999);
+  assert.equal(f.calls.length, 3);
+  assert.equal(f.store.get<any>('scheduled-work', 's').enabled, false);
+});
+test('failure notifies once, survives restart, and does not replay', (t) => {
+  const f = fixture(t);
+  f.save({ intervalMs: 60000, notifications: 'failures' });
+  f.scheduler.tick(1);
+  f.store.put('run', { id: f.calls[0].runId, status: 'interrupted' });
+  f.scheduler.tick(2);
+  new ScheduledWorkService(f.store, f.runtime).tick(999999);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.store.list('schedule-result').length, 1);
+  assert.equal(f.store.list<any>('schedule-result')[0].unread, true);
+});
+test('archived source, removed project and changed provider are blocked', (t) => {
+  const f = fixture(t);
+  f.save({ target: 'different' });
+  f.scheduler.tick(1);
+  assert.equal(f.calls.length, 0);
+  f.save();
+  f.store.put('project', { id: 'p', removedAt: 1 });
+  f.scheduler.tick(2);
+  assert.equal(f.calls.length, 0);
+  f.store.put('project', { id: 'p' });
+  f.store.put('conversation', { ...f.store.get<any>('conversation', 'c'), archived: true });
+  f.save();
+  f.scheduler.tick(3);
+  assert.equal(f.calls.length, 0);
+});
+test('result reporting cannot alter another schedule', async (t) => {
+  const f = fixture(t);
+  f.save();
+  f.scheduler.tick(1);
+  const tools: any[] = [];
+  installScheduledTools({ add: (v: any) => tools.push(v) } as any);
+  const report = tools.find((x) => x.name === 'report_scheduled_result');
+  const c: any = { store: f.store, run: { id: 'other' }, conversation: { id: 'c' } };
+  await assert.rejects(() => report.run({ outcome: 'complete', summary: 'done' }, c));
+  assert.equal(f.store.list('schedule-report').length, 0);
+  c.run.id = f.calls[0].runId;
+  await report.run({ outcome: 'complete', summary: 'done' }, c);
+  assert.equal(f.store.list('schedule-report').length, 1);
+});
+test('HTTP edit preserves omitted fields; running edit denied, pause accepted; history can be acknowledged', async (t) => {
+  const f = fixture(t);
+  const app = Fastify();
+  scheduledWorkRoutes(app, f.store, f.runtime.config);
+  t.after(() => app.close());
+  let res = await app.inject({
+    method: 'POST',
+    url: '/api/scheduled-work',
+    payload: {
+      conversationId: 'c',
+      prompt: 'check',
+      dueAt: 0,
+      intervalMs: 60000,
+      notifications: 'failures',
+    },
+  });
+  assert.equal(res.statusCode, 200);
+  const s = res.json();
+  res = await app.inject({
+    method: 'PATCH',
+    url: '/api/scheduled-work/' + s.id,
+    payload: { name: 'Renamed', intervalMs: null },
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().notifications, 'failures');
+  assert.equal(res.json().intervalMs, null);
+  f.scheduler.tick(1);
+  res = await app.inject({
+    method: 'PATCH',
+    url: '/api/scheduled-work/' + s.id,
+    payload: { prompt: 'change' },
+  });
+  assert.notEqual(res.statusCode, 200);
+  res = await app.inject({
+    method: 'PATCH',
+    url: '/api/scheduled-work/' + s.id,
+    payload: { enabled: false },
+  });
+  assert.equal(res.statusCode, 200);
+  f.store.put('run', { id: f.calls[0].runId, status: 'completed' });
+  f.scheduler.tick(2);
+  const results = (await app.inject({ method: 'GET', url: '/api/schedule-results' })).json();
+  assert.equal(results.length, 1);
+  res = await app.inject({
+    method: 'PATCH',
+    url: '/api/schedule-results/' + encodeURIComponent(results[0].id),
+    payload: {},
+  });
+  assert.equal(res.json().unread, false);
+});
+test('interval validation rejects zero, fraction and excessive values', () => {
+  for (const intervalMs of [0, 1, 60000.5, Infinity, 367 * 86400000])
+    assert.equal(scheduleFields.safeParse({ prompt: 'x', dueAt: 0, intervalMs }).success, false);
+});

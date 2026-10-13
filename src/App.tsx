@@ -1,3 +1,4 @@
+import { useScheduleNotifications } from './useScheduleNotifications';
 import { AttachmentPreview } from './components/AttachmentPreview';
 import { mergeConversationEvents } from './conversation-events';
 import { BackgroundPage } from './pages/Background';
@@ -103,6 +104,7 @@ export function App() {
     setToast(text);
     setTimeout(() => setToast(''), 6500);
   }, []);
+  useScheduleNotifications(notify, language === 'zh');
   const pageRef = useRef(page);
   pageRef.current = page;
   const refreshPending = useRef(new Map<string, Promise<any>>());

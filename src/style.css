@@ -4014,3 +4014,130 @@ input.team-switch:checked::after {
 .project-group[open] > summary > .project-chevron {
   transform: rotate(90deg);
 }
+
+/* Scheduled work: readable cards, shared controls, responsive editor. */
+.schedule-heading,
+.schedule-card header,
+.schedule-inline,
+.schedule-actions,
+.schedule-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.schedule-heading,
+.schedule-card header {
+  justify-content: space-between;
+}
+.schedule-heading h2,
+.schedule-card h3 {
+  margin: 0;
+}
+.schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 14px;
+}
+.schedule-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.schedule-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 8em;
+  overflow: auto;
+  margin: 0;
+}
+.schedule-card dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px 12px;
+  font-size: 13px;
+}
+.schedule-card dt {
+  color: var(--muted);
+}
+.schedule-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.schedule-badge {
+  border: 1px solid currentColor;
+  border-radius: 20px;
+  padding: 3px 9px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+.schedule-badge.attention {
+  color: #ce8e30;
+}
+.schedule-editor {
+  display: grid;
+  gap: 16px;
+  margin: 16px 0;
+}
+.schedule-editor label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.schedule-editor input,
+.schedule-editor select,
+.schedule-editor textarea {
+  max-width: 100%;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.schedule-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 14px;
+}
+.schedule-inline {
+  flex-wrap: nowrap;
+}
+.schedule-inline input {
+  width: 90px;
+}
+.schedule-destinations {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 12px;
+  border: 0;
+  padding: 0;
+}
+.schedule-destinations label {
+  padding: 14px;
+  border: 1px solid #8885;
+  border-radius: 12px;
+  grid-template-columns: 20px 1fr;
+  cursor: pointer;
+}
+.schedule-destinations label.selected {
+  border-color: #8b7cf8;
+  background: #8b7cf80c;
+}
+.schedule-destinations small {
+  grid-column: 2;
+  opacity: 0.7;
+}
+.schedule-destinations input {
+  width: auto;
+}
+.schedule-history {
+  max-height: 300px;
+  overflow: auto;
+}
+.schedule-result {
+  padding: 8px 0;
+  justify-content: space-between;
+}
+.schedule-result p {
+  width: 100%;
+  overflow-wrap: anywhere;
+}

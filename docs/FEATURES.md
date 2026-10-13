@@ -37,3 +37,13 @@ Generated outputs have same-conversation handles. list_media finds old jobs; ins
 ## Automation boundaries
 
 Memory defaults, document maintenance, schedules and team recovery are opt-in and scope-bound. Schedules require the service to run. Scope expansion, new external destinations, credentials and uncertain destructive outcomes remain user-controlled. Automatic approval does not bypass isolation. See [security](SECURITY.md).
+
+## Scheduled task cards
+
+Open **Background work → Scheduled tasks** to create or edit a named task, select its source conversation, first local execution time, fixed repeat interval (minutes/hours/24-hour days/7-day weeks), optional command-completion trigger, and notification policy. Tasks appear as cards with pause/enable, duplicate, remove, and linked run history. Running tasks cannot be edited; pausing prevents future dispatch but lets the current run finish. A failed/interrupted run must be inspected; duplicating creates a new explicit task rather than replaying that run.
+
+Choose **Continue in this chat** or **New chat for each run**. New chats inherit the source project/model/permissions/settings, not its message history; write self-contained instructions. Archived sources, removed projects, changed model destinations and unresolved effects block dispatch. A persisted run/destination pair prevents duplicate dispatch after restart. Missed intervals coalesce into one run and retain the original interval alignment. Intervals are elapsed time, not daylight-saving-aware calendar rules.
+
+Notifications are durable **in-app** records, with a toast while the UI is open. Choose all outcomes, changes/completion/errors, failures only, or silent history. `report_scheduled_result` lets the executing scheduled run report unchanged/update/complete. Meaningful-only notifications suppress a successful unchanged report; complete stops future repeats after successful execution. These are model reports, not independently proven change detection. Missing reports and failures remain visible. Read/unread is retained; history links to the actual execution conversation.
+
+The service/computer must remain running. There is no cloud wake-up or OS push notification. Scheduled model work consumes provider quota and uses normal approvals. Existing schedules are compatible; no new dependency, download, or first-start option is required. Rebuild/restart the server and refresh the UI to enable this update; do not interrupt active work without approval.

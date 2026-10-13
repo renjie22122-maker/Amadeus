@@ -1,3 +1,4 @@
+import { scheduledWorkRoutes } from './scheduled-work.js';
 import { saveMediaStream, mediaHeader } from '../services/media-stream.js';
 import { createReadStream } from 'node:fs';
 import { attachmentMediaType, mediaAttachmentText } from '../services/attachment-media.js';
@@ -224,57 +225,7 @@ export async function createApp(options: { directory: string; dist?: string; run
     }
     return { runId, conversationId: c.id };
   });
-  app.post('/api/scheduled-work', async (req) => {
-    const d = z
-      .object({
-        conversationId: z.string(),
-        prompt: z.string().trim().min(1).max(10000),
-        dueAt: z.number().int().nonnegative(),
-        intervalMs: z.number().int().min(60000).optional(),
-        jobId: z.string().optional(),
-      })
-      .parse(req.body);
-    const c = store.get<Conversation>('conversation', d.conversationId),
-      p = config.profile(c.profileId);
-    if (d.jobId)
-      assert(
-        store.get<any>('command-job', d.jobId).conversationId === c.id,
-        'SCOPE',
-        'Choose a job in this conversation.',
-      );
-    return store.put('scheduled-work', {
-      ...d,
-      id: id(),
-      enabled: true,
-      status: 'waiting',
-      target: JSON.stringify([p.id, p.baseUrl, c.projectId]),
-    });
-  });
-  app.patch<{ Params: { id: string } }>('/api/scheduled-work/:id', async (req) => {
-    const d = z.object({ enabled: z.boolean() }).parse(req.body),
-      old = store.get<any>('scheduled-work', req.params.id);
-    const c = store.get<Conversation>('conversation', old.conversationId),
-      p = config.profile(c.profileId);
-    if (d.enabled && old.runId) {
-      const run = store.maybe<Run>('run', old.runId);
-      assert(
-        !run || !terminal(run.status) || run.status === 'completed',
-        'REVIEW_RUN',
-        'Inspect the failed/interrupted run and create a fresh schedule; it will not be replayed.',
-      );
-    }
-    return store.put('scheduled-work', {
-      ...old,
-      ...d,
-      error: undefined,
-      status: d.enabled ? 'waiting' : 'paused',
-      target: JSON.stringify([p.id, p.baseUrl, c.projectId]),
-    });
-  });
-  app.delete<{ Params: { id: string } }>('/api/scheduled-work/:id', async (req) => {
-    store.remove('scheduled-work', req.params.id);
-    return { ok: true };
-  });
+  scheduledWorkRoutes(app, store, config);
   app.post('/api/conversations', async (req) => {
     const data = z
       .object({
