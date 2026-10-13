@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-13 — Audited computation, media understanding and output contracts
+
+Added Docker-only Python analysis, timestamped frame/audio extraction, scoped paginated document/OCR reading, approved durable audio transcription, capability diagnostics and non-executing tool-plan validation. Final response contracts validate shape with two bounded repairs; raw answers remain recorded. Thin/error web pages expose browser handoff guidance without authority escalation. Optional Setup-Analysis builds Python + FFmpeg; First Start only describes it. Existing frozen evaluations are not modified; no benchmark improvement is claimed.
+
 ## 2026-10-13 — General model-delivery recovery
 
 Tool guidance now treats the attached schemas as authoritative and only recommends discovery when its tool is present. Empty deliveries are rejected before completion, retain measured usage and share the bounded protocol-repair allowance. Output truncation permits two smaller-step repairs, with a minimal-action instruction on the last attempt. Output/reasoning settings, permissions and previously executed operations remain unchanged; partial tool calls never execute. Persistent failures remain interrupted and recoverable. No new dependencies or launcher changes; restart the service to load the code. Benchmark samples are diagnostics, not evidence of a general score improvement.

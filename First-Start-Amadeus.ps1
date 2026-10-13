@@ -30,6 +30,7 @@ try {
     Write-Host '[3/3] Setup complete: backend and frontend rebuilt. Existing conversations are preserved.'
     if ($LocalRag -or $OfflineBundle) { & (Join-Path $taskRoot 'Setup-Local-RAG.ps1') -Python $Python -OfflineBundle $OfflineBundle -Gpu:$Gpu }
     Write-Host 'Optional local knowledge graph and reranker: run Setup-Local-RAG.cmd, or First Start with -LocalRag -Python <path>.'
+    Write-Host 'Optional isolated Python / video / audio analysis: start Docker Desktop, then run Setup-Analysis.cmd. This is not required for ordinary chat.'
     if ($SetupOnly) { Write-Host 'SetupOnly: no service was started. Run Start-Amadeus.cmd to load this build.' }
 } finally { Pop-Location }
 if (-not $SetupOnly) { & (Join-Path $taskRoot 'Start-Amadeus.ps1') -NoBrowser:$NoBrowser }

@@ -240,7 +240,9 @@ export class ToolExecutor {
             id: call.id + ':step:' + index,
             name,
             arguments:
-              name === 'run_command' && !args.background && call.name !== 'execute_recovery_action'
+              name === 'run_command' &&
+              !args.background &&
+              !['execute_recovery_action', 'run_python'].includes(call.name)
                 ? { ...args, yieldAfterSeconds: 0 }
                 : args,
           };

@@ -1,3 +1,4 @@
+import { approvalSnapshot } from './approval-snapshot.js';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import { assert } from '../core/errors.js';
@@ -15,6 +16,90 @@ export function installMedia(registry: ToolRegistry) {
       return {
         content: JSON.stringify(
           await c.media.importLocal(bytes, basename(a.path), c.conversation.id, c.run.id, c.signal),
+        ),
+      };
+    },
+  });
+  registry.add({
+    name: 'transcribe_media',
+    effect: 'coordinate',
+    description:
+      'Transcribe a same-conversation audio attachment or generated audio reference using an enabled speech-to-text service. Uploads bytes only after approval, then returns a durable media job for media_status. Does not infer a transcript from metadata. Requests over 25 MB must be split with authorized computation first; never silently truncates or retries a submission.',
+    schema: z.object({
+      reference: z.string().min(1),
+      serviceId: z.string().optional(),
+      reason: z.string().min(1),
+    }),
+    run: async (a, c) => {
+      assert(
+        c.conversation.permission !== 'read-only' && !c.run.recoveryOnly,
+        'MEDIA_READONLY',
+        'Transcription upload is unavailable in read-only recovery.',
+      );
+      const revalidate = approvalSnapshot(c);
+      const serviceId = a.serviceId || c.config.get().media?.transcriptionId;
+      assert(serviceId, 'STT_NOT_CONFIGURED', 'Select an enabled speech-to-text service.');
+      const service = c.media.connection(serviceId);
+      assert(
+        service.kind === 'transcription',
+        'STT_SERVICE',
+        'Selected service is not speech-to-text.',
+      );
+      const output = c.media.streamOutput(a.reference, c.conversation.id, c.signal);
+      assert(
+        output.metadata.mime.startsWith('audio/') || output.metadata.mime === 'video/webm',
+        'AUDIO_TYPE',
+        'Export video and extract its audio first.',
+      );
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const chunk of output.chunks) {
+        size += chunk.length;
+        assert(
+          size <= 25 * 1024 * 1024,
+          'AUDIO_SIZE',
+          'Split audio into segments of at most 25 MB before transcription.',
+        );
+        chunks.push(chunk);
+      }
+      assert(size > 0, 'AUDIO_SIZE', 'Audio is empty.');
+      const limit = c.config.get().media?.autoApproveMaxUsd;
+      await c.inputs.request(
+        c.run,
+        'approval',
+        {
+          command: 'Transcribe audio with ' + service.name,
+          reason: a.reason,
+          backend: 'media-service',
+          cwd: new URL(service.baseUrl).origin,
+          request: {
+            model: service.model,
+            reference: a.reference,
+            bytes: size,
+            sha256: output.metadata.sha256,
+          },
+          estimatedUsd: service.estimatedUsd,
+          forceHuman: limit == null || service.estimatedUsd == null || service.estimatedUsd > limit,
+        },
+        c.signal,
+      );
+      revalidate();
+      return {
+        content: JSON.stringify(
+          await c.media.submit({
+            connectionId: serviceId,
+            conversationId: c.conversation.id,
+            run: c.run,
+            prepared: (id) => c.bindEffect?.('media-job', id),
+            operationKey: c.run.id + ':' + c.callId,
+            prompt: '',
+            audio: {
+              bytes: Buffer.concat(chunks),
+              mime: output.metadata.mime,
+              name: output.metadata.name,
+            },
+            expectedConnection: JSON.stringify(service),
+          }),
         ),
       };
     },

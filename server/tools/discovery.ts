@@ -1,5 +1,8 @@
 import type { ToolSpec } from '../../shared/types.js';
 export const coreTools = new Set([
+  'inspect_work_capabilities',
+  'inspect_tool_plan',
+  'set_response_contract',
   'glob',
   'grep',
   'search_tools',
@@ -56,7 +59,11 @@ export function findTools(specs: ToolSpec[], query: string, offset: number, limi
     终端: 'command bash',
     图片: 'image',
     视频: 'video media',
-    音频: 'audio media',
+    音频: 'audio media transcribe',
+    计算: 'python transform',
+    表格: 'document python',
+    转录: 'transcribe',
+    抽帧: 'extract media frames',
     音乐: 'audio music media',
     展示: 'import media',
     团队: 'team agent',
@@ -92,6 +99,15 @@ export function findTools(specs: ToolSpec[], query: string, offset: number, limi
 // Discover a workflow's adjacent tools together; availability is still filtered by specs().
 const toolFamilies = [
   [
+    'run_python',
+    'extract_media_audio',
+    'extract_media_frames',
+    'read_image',
+    'background_commands',
+    'wait_background_command',
+  ],
+  ['read_document', 'read_attachment'],
+  [
     'media_services',
     'generate_media',
     'media_status',
@@ -99,6 +115,9 @@ const toolFamilies = [
     'import_media',
     'inspect_media',
     'export_media',
+    'transcribe_media',
+    'extract_media_audio',
+    'extract_media_frames',
     'cancel_media',
   ],
 ];

@@ -8,6 +8,7 @@ import { runtimeMessages } from './context-reuse.js';
 import { RunPump } from './run-pump.js';
 import { RunEnvironment } from './run-environment.js';
 import { BackgroundCommands } from '../services/background-commands.js';
+import { checkResponse, type ResponseContract } from './response-contract.js';
 import { finalizeRun } from './finalization.js';
 import { TeamCoordinator } from './team-coordinator.js';
 import { MediaService } from '../services/media.js';
@@ -423,7 +424,8 @@ export class Runtime implements TeamPort {
         protocolRepairs = 0,
         lengthRepairs = 0,
         networkRepairs = 0,
-        deliveryRepairs = 0;
+        deliveryRepairs = 0,
+        formatRepairs = 0;
       const cognitive = new CognitiveController(this.store);
       while (!signal.aborted) {
         await this.dispatchTeam(run);
@@ -445,6 +447,8 @@ export class Runtime implements TeamPort {
         const messages = pending;
         this.steering.set(key, []);
         if (messages.length) {
+          this.store.remove('response-contract', run.id);
+          formatRepairs = 0;
           cognitive.reset(run);
           run.checkpoints.push({
             role: 'system',
@@ -644,6 +648,39 @@ export class Runtime implements TeamPort {
         lengthRepairs = 0;
         networkRepairs = 0;
         if (signal.aborted) throw abortError();
+        if (!result.message.calls?.length) {
+          const contract = this.store.maybe<ResponseContract>('response-contract', run.id);
+          const issues = contract ? checkResponse(result.message.content, contract) : [];
+          if (issues.length) {
+            this.streams.delete(key);
+            this.store.event(run.conversationId, key, 'assistant.message', {
+              messageId,
+              text: result.message.content,
+              final: false,
+              incomplete: true,
+            });
+            this.store.event(run.conversationId, key, 'delivery.format-rejected', {
+              issues,
+              attempt: formatRepairs + 1,
+            });
+            assert(
+              formatRepairs++ < 2,
+              'OUTPUT_FORMAT',
+              'Final answer does not satisfy its declared output contract: ' + issues.join(' '),
+            );
+            run.checkpoints.push(result.message, {
+              role: 'user',
+              contextKind: 'runtime-advice',
+              content:
+                'Host output-format check: ' +
+                issues.join(' ') +
+                ' Preserve the answer meaning and evidence. Correct only the final representation; do not repeat completed tools. Contract: ' +
+                JSON.stringify(contract),
+            });
+            this.store.put('run', run);
+            continue;
+          }
+        }
         run.checkpoints.push(result.message);
         this.store.put('run', run);
         this.streams.delete(key);

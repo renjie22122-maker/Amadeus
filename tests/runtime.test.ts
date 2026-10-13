@@ -2118,3 +2118,38 @@ test('unrecoverable output length remains bounded', async () => {
     f.store.close();
   }
 });
+
+test('strict final format repairs representation without rerunning the completed tool', async () => {
+  let n = 0;
+  const f = await setup({
+    complete: async () => {
+      n++;
+      if (n === 1)
+        return result('', [
+          {
+            id: 'contract',
+            name: 'set_response_contract',
+            arguments: { format: 'number', userRequirement: 'Return just the number' },
+          },
+        ]);
+      return result(n === 2 ? '<answer>42</answer>' : '42');
+    },
+  });
+  try {
+    const run = f.runtime.start('chat', 'Return just the number 42.');
+    await until(() => f.store.get<any>('run', run.id).status === 'completed', 10000);
+    assert.equal(n, 3);
+    const events = f.store.events('chat');
+    assert.equal(events.filter((e) => e.type === 'tool.started').length, 1);
+    assert.equal(events.filter((e) => e.type === 'delivery.format-rejected').length, 1);
+    assert(
+      events.some(
+        (e) =>
+          e.type === 'assistant.message' && (e.data as any).text === '42' && (e.data as any).final,
+      ),
+    );
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});

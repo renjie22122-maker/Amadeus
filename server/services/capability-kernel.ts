@@ -26,6 +26,11 @@ export function capabilityDecision(ctx: ToolContext, name: string, effect: ToolS
       name === 'bash' && process.platform === 'win32' && settings.commandBackend !== 'docker',
       'bash-backend',
     ],
+    [
+      ['run_python', 'extract_media_frames', 'extract_media_audio'].includes(name) &&
+        settings.commandBackend !== 'docker',
+      'isolated-compute-required',
+    ],
     [effect === 'execute' && ctx.run.executionBlock?.signature === signature, 'execution-blocked'],
     [effect === 'network' && ctx.config.get().web?.enabled === false, 'network-disabled'],
     [
