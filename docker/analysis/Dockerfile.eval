@@ -1,6 +1,12 @@
 ARG ANALYSIS_IMAGE=amadeus-analysis:local
 FROM ${ANALYSIS_IMAGE}
 USER root
-RUN pip install --no-cache-dir "smolagents==1.26.0" "ddgs>=9,<10" "markdownify>=1,<2" "pypdf>=5,<7" "openpyxl>=3.1,<4"
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_TIMEOUT=120
+ARG PIP_RETRIES=10
+# Cache verified downloads across failed builds; keep HTTPS and package hash checks.
+RUN --mount=type=cache,id=amadeus-eval-pip,target=/root/.cache/pip,sharing=locked \
+    python3 -m pip install --index-url "$PIP_INDEX_URL" --timeout "$PIP_TIMEOUT" --retries "$PIP_RETRIES" \
+    "smolagents==1.26.0" "ddgs>=9,<10" "markdownify>=1,<2" "pypdf>=5,<7" "openpyxl>=3.1,<4"
 USER 1000:1000
 WORKDIR /workspace

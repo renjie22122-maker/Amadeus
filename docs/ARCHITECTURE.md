@@ -247,3 +247,9 @@ Message submission returns run metadata without model checkpoints.
 ## Model session and knowledge tool modules
 
 core/model-session.ts owns provider completion observation, context/prefix accounting and usage ledger updates. Runtime delegates to it while retaining model-loop and lifecycle coordination. tools/knowledge-tools.ts installs knowledge search, bounded investigation, trace inspection and evidence assessment; ToolRegistry still owns invocation policy, approvals, effects and schema enforcement. This is incremental decomposition, not a claim that the composition roots are fully decomposed. Persisted vector validation lives in services/vector-record.ts and is reused by knowledge and memory caches.
+
+### Provider transport diagnostics and embedded workspaces
+
+Provider connection and body-stream failures carry typed `MODEL_NETWORK` / `MODEL_TLS` errors. Reconnect events retain the phase and an allowlisted transport code, never raw error messages, request URLs or credentials. Runtime keeps its bounded model-only reconnect policy; TLS/authentication/configuration errors, caller cancellation and ordinary programming errors are not classified as transient network failures. A received response is not silently replayed by the transport layer; incomplete tool calls never execute.
+
+Embedded runners use `prepareExecutionLayout` to create sibling `runtime-state` and `workspace` directories and validate the same FileScope boundary used by production tools. A workspace nested inside private storage is a configuration error, not a reason to disable private-storage protection. Attachment preflight resolves copied files before paid model requests.

@@ -1,3 +1,5 @@
+import ExcelJS from 'exceljs';
+import { createHash, randomInt } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -131,10 +133,18 @@ test(
 
 const nativeImage = process.env.AMADEUS_TEST_NATIVE_IMAGE;
 test(
-  'three native GAIA arms retain distinct tools and execute synthetic calculations',
+  'three native GAIA arms read a real randomized XLSX with distinct tools',
   { skip: !python || !nativeImage, timeout: 180000 },
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'amadeus-native-'));
+    const cellValue = randomInt(1000, 9999);
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet('Data').getCell('A1').value = cellValue;
+    const attachment = join(root, 'input.xlsx');
+    await workbook.xlsx.writeFile(attachment);
+    const sha256 = createHash('sha256')
+      .update(await readFile(attachment))
+      .digest('hex');
     let arm = '';
     let calls = 0;
     const catalogs: Record<string, string[]> = {};
@@ -155,15 +165,25 @@ test(
       });
       let delta: any;
       if (arm === 'smolagents-code')
-        delta = { content: '<code>\nvalue = 2 + 2\nfinal_answer(str(value))\n</code>' };
+        delta = {
+          content:
+            '<code>\nfrom openpyxl import load_workbook\nw = load_workbook("/workspace/input.xlsx", data_only=True)\nfinal_answer(str(w.active["A1"].value))\n</code>',
+        };
       else if (calls === 0)
         delta = tool(
-          arm === 'amadeus' ? 'run_python' : 'python_interpreter',
-          arm === 'amadeus'
-            ? { code: 'print(2+2)', reason: 'Synthetic offline integration check' }
-            : { code: 'print(2+2)' },
+          arm === 'amadeus' ? 'read_document' : 'read_task_file',
+          arm === 'amadeus' ? { path: 'input.xlsx' } : { name: 'input.xlsx' },
         );
-      else delta = arm === 'amadeus' ? { content: '4' } : tool('final_answer', { answer: '4' });
+      else {
+        assert(
+          JSON.stringify(body.messages).includes(String(cellValue)),
+          'Real attachment cell must reach the next model request',
+        );
+        delta =
+          arm === 'amadeus'
+            ? { content: String(cellValue) }
+            : tool('final_answer', { answer: String(cellValue) });
+      }
       calls++;
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.end(
@@ -211,7 +231,8 @@ test(
             python,
             analysisImage: nativeImage,
             protocol: 'native-evidence-v1',
-            prompt: 'Calculate 2+2 using Python. Return only the value.',
+            prompt: 'Read input.xlsx cell A1. Return only its value.',
+            attachments: [{ name: 'input.xlsx', path: attachment, sha256 }],
             maxSteps: 6,
             completeCatalog: true,
           }),
@@ -231,7 +252,7 @@ test(
         assert.equal(code, 0, logs);
         const result = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'));
         assert.equal(result.error, undefined, JSON.stringify(result));
-        assert.equal(result.answer, '4');
+        assert.equal(result.answer, String(cellValue));
         assert(!result.auxiliary.some((a: any) => a.kind === 'format-rejection'));
       }
       assert(catalogs.amadeus.includes('run_python'));

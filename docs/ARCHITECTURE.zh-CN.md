@@ -202,3 +202,9 @@ Store.maybe 仅在 NOT_FOUND 时返回 undefined。记录 JSON 损坏抛出 RECO
 ## 模型请求与知识工具模块
 
 core/model-session.ts 负责模型请求观测、上下文与前缀统计、用量台账；Runtime 委托这些工作，仍保留模型主循环及生命周期协调。tools/knowledge-tools.ts 注册知识检索、有界调查、轨迹读取和证据评估；ToolRegistry 继续统一执行策略、审批、副作用与参数校验。属于增量拆分，不代表协调器已全部拆完。services/vector-record.ts 提供知识及记忆缓存共用的持久化向量校验。
+
+### Provider 传输诊断与嵌入式工作区
+
+模型连接和响应流故障使用 `MODEL_NETWORK` / `MODEL_TLS` 类型；重连事件记录阶段和白名单内的底层错误码，不记录可能含密钥的原始错误消息、请求 URL 或凭据。Runtime 保留有限次数的模型请求重连；证书／认证／配置错误、用户取消和普通程序错误不归为临时网络故障。传输层不会悄悄重放已接收的响应，不完整工具调用不会执行。
+
+嵌入式运行器使用 `prepareExecutionLayout` 创建并列的 `runtime-state` 与 `workspace`，按生产工具同样的 FileScope 边界校验。工作区落入私有存储属于配置错误，不能通过取消私有存储保护来修复。附件复制后、付费模型请求前先验证可读路径。

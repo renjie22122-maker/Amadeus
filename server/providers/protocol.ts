@@ -1,3 +1,4 @@
+import { normalizeProviderFailure } from './failure.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { ModelMessage, Profile, ToolCall, ToolSpec, Usage } from '../../shared/types.js';
 import { AppError, assert } from '../core/errors.js';
@@ -115,7 +116,7 @@ export async function request(
           'Model connection timed out before a response was received.',
           504,
         );
-      throw error;
+      throw normalizeProviderFailure(error, 'connect');
     }
     if (response.ok) return response;
     if ([429, 500, 502, 503, 504].includes(response.status) && attempt < 2) {
@@ -221,7 +222,7 @@ export async function* sse(response: Response, idleTimeoutMs = 60000): AsyncGene
         'Model stream timed out; partial tool calls were not executed.',
         504,
       );
-    throw error;
+    throw normalizeProviderFailure(error, 'stream');
   } finally {
     void reader.cancel().catch(() => {});
     reader.releaseLock();

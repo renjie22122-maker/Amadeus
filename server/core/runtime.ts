@@ -1,3 +1,4 @@
+import { providerFailureDiagnostic } from '../providers/failure.js';
 import { completeModel, accountModelUsage } from './model-session.js';
 import { createRuntimeServices } from './runtime-services.js';
 import { setTimeout as recoveryDelay } from 'node:timers/promises';
@@ -570,6 +571,7 @@ export class Runtime implements TeamPort {
               });
             this.streams.delete(key);
             this.store.event(run.conversationId, key, 'model.reconnecting', {
+              failure: providerFailureDiagnostic(error),
               attempt,
               maxAttempts: 5,
               delayMs,

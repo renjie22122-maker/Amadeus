@@ -1,3 +1,4 @@
+import { providerFailureDiagnostic } from '../../server/providers/failure.js';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -41,6 +42,7 @@ async function complete(messages: ModelMessage[], tools: any[], signal: AbortSig
   } catch (e: any) {
     captured = {
       error: e.code || e.name || 'provider_error',
+      failure: providerFailureDiagnostic(e),
       usage: e.usage,
       finishReason: e.finishReason,
       elapsedMs: Date.now() - started,

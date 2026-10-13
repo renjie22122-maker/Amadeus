@@ -1,6 +1,7 @@
+import { prepareExecutionLayout } from '../../server/services/execution-layout.js';
+import { providerFailureDiagnostic } from '../../server/providers/failure.js';
 import { extractIsolated } from '../../server/services/document-parser.js';
 import { sourceAllowed, checkSourceText } from '../../server/services/source-policy.js';
-import { FileScope } from '../../server/services/paths.js';
 import { execute } from '../../server/services/process.js';
 import { pythonCommand } from '../../server/tools/work-chains.js';
 import {
@@ -61,7 +62,14 @@ await mkdir(dir, { recursive: true });
 const started = Date.now(),
   controller = new AbortController();
 const maxSteps = Number(job.maxSteps) || (job.kind === 'swe' ? 30 : 8);
-const timer = setTimeout(() => controller.abort(), job.kind === 'swe' ? 1200000 : 600000);
+let deadlineExpired = false;
+const timer = setTimeout(
+  () => {
+    deadlineExpired = true;
+    controller.abort();
+  },
+  job.kind === 'swe' ? 1200000 : 600000,
+);
 const requests: any[] = [],
   tools: any[] = [],
   auxiliary: any[] = [];
@@ -76,7 +84,7 @@ let contract: ResponseContract = {
   userRequirement: 'Return only the requested value on one line.',
 };
 let progress: ResearchProgress | undefined;
-const workspace = join(dir, 'workspace');
+const { workspace, state: runtimeState, files } = await prepareExecutionLayout(dir);
 if (prepared) {
   if (!job.analysisImage) throw Error('ANALYSIS_IMAGE_REQUIRED');
   await mkdir(workspace, { recursive: true });
@@ -86,9 +94,10 @@ if (prepared) {
     if (createHash('sha256').update(data).digest('hex') !== a.sha256)
       throw Error('ATTACHMENT_CHANGED');
     await writeFile(join(workspace, a.name), data, { flag: 'wx' });
+    await files.resolve(a.name); // Exercise the same private-storage boundary before model calls.
   }
 }
-const files = new FileScope([workspace]);
+
 const allowed = new Set(
   native
     ? [
@@ -173,6 +182,8 @@ async function providerModel(messages: any[], schema: any[], signal: AbortSignal
     return r;
   } catch (e: any) {
     record.error = e.code || e.name;
+    record.failure = providerFailureDiagnostic(e);
+    record.elapsedMs = Date.now() - at;
     record.usage = e.usage;
     throw e;
   }
@@ -633,8 +644,8 @@ try {
   } else {
     const config = new Configuration(join(dir, 'config.json'), { persistSecrets: false });
     config.save(settings);
-    const store = new Store(join(dir, 'runtime.sqlite'));
-    const runtime = new Runtime(store, config, dir, () => ({
+    const store = new Store(join(runtimeState, 'runtime.sqlite'));
+    const runtime = new Runtime(store, config, runtimeState, () => ({
       complete: async (req) =>
         model(
           req.messages,
@@ -746,7 +757,9 @@ try {
     JSON.stringify(
       {
         answer,
-        error,
+        error: deadlineExpired ? 'EVAL_DEADLINE' : error,
+        providerFailure: error ? requests.at(-1)?.failure : undefined,
+        deadlineExpired,
         protocol: job.protocol || 'legacy',
         analysisImage: job.analysisImage,
         sourcePolicy: prepared ? evaluationSources.id : null,
