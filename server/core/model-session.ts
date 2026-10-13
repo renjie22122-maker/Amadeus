@@ -18,6 +18,13 @@ export async function completeModel(
 ) {
   try {
     const result = await resolveProvider(input.profile).complete(input);
+    // Validate delivery before treating an otherwise successful transport as a result.
+    // Keep measured usage on rejection so a repair does not hide the first call's cost.
+    if (!result.message.content.trim() && !result.message.calls?.length)
+      throw Object.assign(
+        new AppError('EMPTY_RESPONSE', 'Model returned neither an answer nor tool calls.', 502),
+        { usage: result.usage },
+      );
     if (input.messages[0]?.content !== COMPACT && result.usage.measured) {
       run.contextSample = sampleContext(
         input.messages,

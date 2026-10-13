@@ -579,7 +579,7 @@ export class Runtime implements TeamPort {
             error instanceof AppError &&
             error.code === 'MODEL_INCOMPLETE' &&
             (error as AppError & { finishReason?: string }).finishReason === 'length' &&
-            lengthRepairs++ < 1
+            lengthRepairs++ < 2
           ) {
             const partial = this.streams.get(key);
             if (partial?.text)
@@ -592,15 +592,19 @@ export class Runtime implements TeamPort {
             this.streams.delete(key);
             this.store.event(run.conversationId, key, 'model.protocol-repair', {
               code: 'OUTPUT_LIMIT',
-              attempt: 1,
+              attempt: lengthRepairs,
+              maxAttempts: 2,
               toolsExecuted: false,
               outputLimit: profile.maxOutputTokens,
               message:
-                'Output was truncated. Retrying once with a smaller response; completed operations will not be replayed.',
+                'Output was truncated. Retrying with a smaller response (at most two repairs); completed operations will not be replayed.',
             });
             run.checkpoints.push({
               role: 'user',
               content:
+                (lengthRepairs === 2
+                  ? 'This is the last output-length repair for this step. Reduce the next response to the smallest useful complete action; avoid repeating analysis or bundling changes. '
+                  : '') +
                 'Runtime feedback: your last response hit the output token limit before completion. None of its tool calls executed. Produce one smaller complete next step or a concise complete answer, with less deliberation. Split large tool arguments across steps. Do not repeat any earlier completed operations. The configured output allowance and reasoning level are unchanged.',
             });
             continue;
@@ -608,7 +612,9 @@ export class Runtime implements TeamPort {
           if (
             !signal.aborted &&
             error instanceof AppError &&
-            ['INVALID_ARGUMENTS', 'DUPLICATE_CALL'].includes(error.code) &&
+            ['INVALID_ARGUMENTS', 'DUPLICATE_CALL', 'EMPTY_RESPONSE', 'EMPTY_ANSWER'].includes(
+              error.code,
+            ) &&
             protocolRepairs++ < 2
           ) {
             const partial = this.streams.get(key);
@@ -628,7 +634,7 @@ export class Runtime implements TeamPort {
             run.checkpoints.push({
               role: 'user',
               content:
-                'Runtime protocol feedback: the previous response was rejected before any of its tools executed. Return valid JSON objects for tool arguments and unique call IDs. Correct that response using one small tool call with a complete JSON object; do not replay earlier completed operations.',
+                'Runtime protocol feedback: the previous response was empty or invalid and none of its tools executed. Deliver a nonempty answer if no tool is needed. Otherwise use only the attached tool schemas, valid JSON objects and unique call IDs; emit one small complete tool call. Do not replay earlier completed operations.',
             });
             continue;
           }

@@ -969,7 +969,7 @@ test('output truncation retries once, records both costs and preserves completed
     f.store.close();
   }
 });
-test('length failures stop after one correction; disconnect recovery is bounded to five retries', async () => {
+test('length failures stop after two corrections; disconnect recovery is bounded to five retries', async () => {
   for (const finishReason of ['length', '']) {
     let n = 0;
     const f = await setup({
@@ -981,7 +981,7 @@ test('length failures stop after one correction; disconnect recovery is bounded 
     try {
       const run = f.runtime.start('chat', 'Hello');
       await until(() => f.store.get<any>('run', run.id).status === 'interrupted', 75000);
-      assert.equal(n, finishReason === 'length' ? 2 : 6);
+      assert.equal(n, finishReason === 'length' ? 3 : 6);
       assert.equal(
         f.store.events('chat').filter((e) => e.type === 'model.reconnecting').length,
         finishReason === 'length' ? 0 : 5,
@@ -2022,3 +2022,99 @@ test(
     }
   },
 );
+
+test('empty deliveries recover with measured usage and no invented tool requirement', async () => {
+  let calls = 0;
+  const f = await setup({
+    complete: async (req) => {
+      if (++calls === 1) return result('   ');
+      assert.match(req.messages.at(-1)!.content, /nonempty answer if no tool is needed/);
+      return result('Recovered answer');
+    },
+  });
+  try {
+    const r = f.runtime.start('chat', 'Hello');
+    await until(() => f.store.get<any>('run', r.id).status === 'completed');
+    const run = f.store.get<any>('run', r.id);
+    assert.equal(calls, 2);
+    assert.equal(run.inputTokens, 20);
+    assert.equal(run.outputTokens, 4);
+    assert.equal(run.modelCalls, 2);
+    assert.equal(f.store.events('chat').filter((e) => e.type === 'tool.started').length, 0);
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});
+
+test('persistent empty delivery is interrupted after bounded repair, never completed', async () => {
+  let calls = 0;
+  const f = await setup({
+    complete: async () => {
+      calls++;
+      return result('');
+    },
+  });
+  try {
+    const r = f.runtime.start('chat', 'Hello');
+    await until(() => f.store.get<any>('run', r.id).status === 'interrupted');
+    assert.equal(calls, 3);
+    assert.equal(f.store.get<any>('run', r.id).termination.code, 'EMPTY_RESPONSE');
+    assert.equal(f.store.get<any>('run', r.id).inputTokens, 30);
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});
+
+test('length repairs retain output settings and never replay completed operations', async () => {
+  let calls = 0;
+  let allowance: number | undefined;
+  const f = await setup({
+    complete: async (req) => {
+      calls++;
+      allowance ??= req.profile.maxOutputTokens;
+      assert.equal(req.profile.maxOutputTokens, allowance);
+      if (calls === 1)
+        return result('', [{ id: 'once', name: 'list_files', arguments: { path: '.' } }]);
+      if (calls <= 3) {
+        req.onText('incomplete');
+        throw Object.assign(new AppError('MODEL_INCOMPLETE', 'limit'), { finishReason: 'length' });
+      }
+      return result('Done');
+    },
+  });
+  try {
+    const r = f.runtime.start('chat', 'Inspect');
+    await until(() => f.store.get<any>('run', r.id).status === 'completed');
+    assert.equal(calls, 4);
+    const events = f.store.events('chat');
+    assert.equal(events.filter((e) => e.type === 'tool.started').length, 1);
+    assert.deepEqual(
+      events.filter((e) => e.type === 'model.protocol-repair').map((e) => e.data.attempt),
+      [1, 2],
+    );
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});
+
+test('unrecoverable output length remains bounded', async () => {
+  let calls = 0;
+  const f = await setup({
+    complete: async () => {
+      calls++;
+      throw Object.assign(new AppError('MODEL_INCOMPLETE', 'limit'), { finishReason: 'length' });
+    },
+  });
+  try {
+    const r = f.runtime.start('chat', 'Hello');
+    await until(() => f.store.get<any>('run', r.id).status === 'interrupted');
+    assert.equal(calls, 3);
+    assert.equal(f.store.events('chat').filter((e) => e.type === 'tool.started').length, 0);
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});
