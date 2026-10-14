@@ -237,6 +237,28 @@ function TeamRound({
           </p>
           {detail.teamSpace?.selection?.reason && <p>{detail.teamSpace.selection.reason}</p>}
         </div>
+        {!!detail.teamSpace?.groups?.length && (
+          <div className="team-chat-members" aria-label={zh ? '议题分组' : 'Topic groups'}>
+            {detail.teamSpace.groups.map((group) => (
+              <details key={group.id}>
+                <summary>
+                  {group.title} · {group.members.length} {zh ? '位成员' : 'members'}
+                </summary>
+                <p>{group.purpose}</p>
+                <p>
+                  {group.members
+                    .map((id) => name(state.runs.find((r) => r.id === id)?.conversationId || id))
+                    .join(' · ')}
+                </p>
+                <small>
+                  {zh
+                    ? '共享团队预算与权限；通讯按指定成员投递'
+                    : 'Shared team budget and permissions; messages go to addressed members'}
+                </small>
+              </details>
+            ))}
+          </div>
+        )}
         <TeamRelations
           runs={related}
           state={state}

@@ -211,15 +211,56 @@ export function installPlanning(registry: ToolRegistry) {
     }),
   });
   registry.add({
+    name: 'update_team_roster',
+    effect: 'coordinate',
+    atomic: true,
+    description:
+      'Coordinator changes existing enrollment without resetting messages, roles or tasks. Set autoEnroll=true to allow subsequent spawn/continue; optionally add active peers in this tree. Existing members are retained. Inspect revision first. No permissions or resource limits change.',
+    schema: z.object({
+      revision: z.number().int().min(1),
+      autoEnroll: z.boolean(),
+      addMembers: z.array(z.string()).max(32).default([]),
+    }),
+    run: (a, c) => ({
+      content: JSON.stringify(
+        new Teams(c.store).updateRoster(c.run, a.revision, a.autoEnroll, a.addMembers),
+      ),
+    }),
+  });
+  registry.add({
+    name: 'configure_team_group',
+    effect: 'coordinate',
+    atomic: true,
+    description:
+      'Create/update a named topic workgroup within the current team, e.g. separate investigations. Groups may overlap; they share the coordinator, permission boundaries and message budgets, not independent team roots. Assign enrolled run IDs, purpose and roles in purpose; use team_discuss(groupId) for directed discussion. No agents are spawned by this tool.',
+    schema: z.object({
+      revision: z.number().int().min(1),
+      id: z.string().min(1).max(80),
+      title: z.string().min(1).max(160),
+      purpose: z.string().min(1).max(2000),
+      members: z.array(z.string()).min(1).max(32),
+    }),
+    run: (a, c) => ({
+      content: JSON.stringify(
+        new Teams(c.store).configureGroup(c.run, a.revision, {
+          id: a.id,
+          title: a.title,
+          purpose: a.purpose,
+          members: a.members,
+        }),
+      ),
+    }),
+  });
+  registry.add({
     name: 'configure_team',
     effect: 'coordinate',
     atomic: true,
     description:
-      'Create a peer team. In auto mode choose host for artifact/dependency scheduling or creative for evidence challenge/discussion; explain the task-based choice with reason. Explicit user modes and off remain binding. Use autoEnroll=true with just your current run ID to create the team BEFORE spawning; new children and continuations then join automatically. Otherwise enroll existing active members including yourself. Host completion is computed, never voted into truth. Discussion limit is explicit per member.',
+      'Create a peer team. In auto mode choose host for artifact/dependency scheduling or creative for evidence challenge/discussion; explain the task-based choice with reason. Explicit user modes and off remain binding. Auto-enrollment defaults to true. Use autoEnroll=true with just your current run ID to create the team BEFORE spawning; new children and continuations then join automatically. Otherwise enroll existing active members including yourself. Host completion is computed, never voted into truth. Discussion limit is explicit per member.',
     schema: z.object({
       mode: z.enum(['host', 'creative']),
       members: z.array(z.string()).min(1).max(32),
-      autoEnroll: z.boolean().default(false),
+      autoEnroll: z.boolean().default(true),
       reason: z.string().min(1).max(1000).optional(),
       maxMessages: z.number().int().min(1).max(1000).default(12),
     }),
@@ -263,9 +304,10 @@ export function installPlanning(registry: ToolRegistry) {
     schema: z.object({
       text: z.string().min(1).max(4000),
       recipients: z.array(z.string()).max(32).default([]),
+      groupId: z.string().max(80).optional(),
     }),
     run: (a, c) => {
-      const message = new Teams(c.store).post(c.run, a.text, a.recipients);
+      const message = new Teams(c.store).post(c.run, a.text, a.recipients, a.groupId);
       const notified: string[] = [];
       for (const key of message.recipients) {
         try {

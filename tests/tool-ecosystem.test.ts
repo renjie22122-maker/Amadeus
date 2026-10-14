@@ -1353,3 +1353,90 @@ test('entity proposals reuse unique confirmed names without silently adding alia
   assert.equal(novel.confirmed, false);
   assert.deepEqual(f.store.get<any>('memory-entity', 'known').aliases, []);
 });
+
+test('real tool admission permits open team spawning and can repair a fixed roster without resetting history', async (t) => {
+  const f = fixture(t);
+  f.conversation.teamStrategy = 'auto';
+  f.conversation.teamMode = 'auto';
+  f.store.put('conversation', f.conversation);
+  let spawned = 0;
+  f.ctx.team = {
+    spawn: async () => {
+      spawned++;
+      f.store.put('run', { ...f.run, id: 'child' + spawned, parentRunId: 'r' });
+      return 'child' + spawned;
+    },
+  };
+  const created = JSON.parse(
+    (await f.registry.invoke('configure_team', { mode: 'creative', members: ['r'] }, f.ctx))
+      .content,
+  );
+  assert.equal(created.autoEnroll, true);
+  await f.registry.invoke(
+    'spawn_agent',
+    { task: 'Investigate one hypothesis', deliverable: 'Evidence report' },
+    f.ctx,
+  );
+  assert.equal(spawned, 1);
+  const fixed = JSON.parse(
+    (await f.registry.invoke('update_team_roster', { revision: 1, autoEnroll: false }, f.ctx))
+      .content,
+  );
+  await assert.rejects(
+    f.registry.invoke('spawn_agent', { task: 'Investigate another independent question', deliverable: 'Evidence report' }, f.ctx),
+    (e: any) => e.code === 'TEAM_ROSTER_FIXED',
+  );
+  assert.equal(spawned, 1);
+  const opened = JSON.parse(
+    (
+      await f.registry.invoke(
+        'update_team_roster',
+        { revision: fixed.revision, autoEnroll: true },
+        f.ctx,
+      )
+    ).content,
+  );
+  assert.equal(opened.roles.coordinator, 'r');
+  await f.registry.invoke(
+    'spawn_agent',
+    { task: 'Investigate another independent question', deliverable: 'Evidence report' },
+    f.ctx,
+  );
+  assert.equal(spawned, 2);
+  assert(f.registry.modelSpecs(f.ctx).some((x) => x.name === 'update_team_roster'));
+});
+
+test('retrieval assessments cannot label testimony as direct observation or cite unassessed evidence', async (t) => {
+  const f = fixture(t);
+  f.ctx.scopes = ['general'];
+  f.store.put('retrieval-trace', {
+    id: 'trace',
+    scopes: ['general'],
+    hits: [{ chunkId: 'chunk' }],
+  });
+  const args = {
+    id: 'trace',
+    status: 'sufficient',
+    evidenceIds: ['chunk'],
+    reason: 'Review source status',
+    missing: [],
+    claims: [
+      {
+        claim: 'A statement',
+        evidenceIds: ['chunk'],
+        sourceNature: 'attributed-statement',
+        conclusion: 'observation',
+      },
+    ],
+  };
+  await assert.rejects(
+    f.registry.invoke('assess_retrieval', args, f.ctx),
+    (e: any) => e.code === 'RETRIEVAL_ATTRIBUTION',
+  );
+  args.claims[0].evidenceIds = ['other'];
+  await assert.rejects(
+    f.registry.invoke('assess_retrieval', args, f.ctx),
+    (e: any) => e.code === 'RETRIEVAL_EVIDENCE',
+  );
+  assert.equal(f.store.list('retrieval-assessment').length, 0);
+});

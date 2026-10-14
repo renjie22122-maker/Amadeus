@@ -202,6 +202,8 @@ export class ToolRegistry {
             'configure_team_scheduler',
             'await_team_task',
             'update_team_discussion_limits',
+            'update_team_roster',
+            'configure_team_group',
           ]
         : ['configure_team', 'message_agent'],
     );
@@ -237,10 +239,10 @@ export class ToolRegistry {
       });
     }
     const team = new Teams(ctx.store).get(ctx.run);
-    if (team && ['spawn_agent', 'continue_agent'].includes(name))
+    if (team && !team.autoEnroll && ['spawn_agent', 'continue_agent'].includes(name))
       throw new NotStartedError(
         'TEAM_ROSTER_FIXED',
-        'Create all peer members before configuring the fixed roster.',
+        'Roster is fixed. The coordinator can call update_team_roster with the current revision and autoEnroll=true, then retry once. Do not recreate the team or reset its history.',
       );
     if (team?.closed[ctx.run.id] && def.effect !== 'read')
       throw new NotStartedError(

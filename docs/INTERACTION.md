@@ -85,3 +85,13 @@ The default organization mode is now `auto` for new conversations and conversati
 ### Responsive history and team visibility
 
 Chat opens the latest 500 events and loads earlier pages on request; this is a page size, not a retention limit. Live updates use event cursors. Team member feeds also refresh incrementally, with earlier records available in execution details. Each round shows delegation versus team mode, member completion/running/attention counts and task completion separately; completion is not acceptance. The relation view exposes members, dependencies and recorded communication. Background recovery reads only the relevant run/tool events and uses metadata for roster scans, avoiding historical checkpoint deserialization. Existing launchers rebuild changed sources; no new dependency or setup step is required.
+
+### Topic teams and recoverable enrollment
+
+![Team organization and evidence review](images/team-research-flow.svg)
+
+`configure_team` defaults to open enrollment: configure the lead first, then spawn or continue peers. An explicitly fixed roster still blocks those calls. The coordinator can inspect the revision and call `update_team_roster` to open enrollment or add active same-tree peers without deleting messages, roles or tasks. Closed participation, permissions and resource limits still apply.
+
+`configure_team_group` organizes parallel topics inside one team. `team_discuss(groupId)` routes to that group's members; a nonmember cannot post to it, except the coordinator. Groups can overlap and share the team's message allowance, permissions and coordinator: they are not isolated nested teams. The round panel shows group purposes and members. Continuation/recovery updates membership while old message recipients remain historical facts.
+
+Research assessments can record claim-level source nature, conclusion type, edition context and limitations. Testimony/commentary cannot be labeled direct observation in this record. These are agent assessments, not truth certification. A primary document can contain secondary commentary; absent search results cannot prove a statement never appears. Separate self-review from actual independent contributors, and repeated citations from independent sources.

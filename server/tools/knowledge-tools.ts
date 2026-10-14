@@ -181,13 +181,32 @@ export function installKnowledgeTools(registry: ToolRegistry) {
     effect: 'coordinate',
     atomic: true,
     description:
-      'Record an agent assessment against retrieved evidence. Insufficient or conflicting evidence is not a negative corpus fact; no verification status is granted.',
+      'Record an agent assessment against retrieved evidence. Insufficient or conflicting evidence is not a negative corpus fact; no verification status is granted. Optional claims separate source nature, inference, edition context and limitations; classifications are agent assessments, not automatic truth labels.',
     schema: z.object({
       id: z.string(),
       status: z.enum(['sufficient', 'insufficient', 'conflicting']),
       evidenceIds: z.array(z.string()).max(24),
       reason: z.string().min(1).max(2000),
       missing: z.array(z.string().max(500)).max(12),
+      claims: z
+        .array(
+          z.object({
+            claim: z.string().min(1).max(1000),
+            evidenceIds: z.array(z.string()).min(1).max(24),
+            sourceNature: z.enum([
+              'direct-observation',
+              'attributed-statement',
+              'editorial-commentary',
+              'secondary-source',
+              'uncertain',
+            ]),
+            conclusion: z.enum(['observation', 'reported-claim', 'inference', 'unresolved']),
+            versionContext: z.string().max(1000).optional(),
+            limitation: z.string().max(1000).optional(),
+          }),
+        )
+        .max(24)
+        .default([]),
     }),
     run: (a, c) => {
       const trace = c.store.get<any>('retrieval-trace', a.id);
@@ -202,6 +221,18 @@ export function installKnowledgeTools(registry: ToolRegistry) {
         'RETRIEVAL_EVIDENCE',
         'Cite retrieved chunks.',
       );
+      for (const claim of a.claims) {
+        assert(
+          claim.evidenceIds.every((id: string) => a.evidenceIds.includes(id)),
+          'RETRIEVAL_EVIDENCE',
+          'Claim citations must be among assessed retrieved chunks.',
+        );
+        assert(
+          claim.conclusion !== 'observation' || claim.sourceNature === 'direct-observation',
+          'RETRIEVAL_ATTRIBUTION',
+          'Testimony, commentary and secondary sources cannot be recorded as direct observations; attribute or qualify the claim.',
+        );
+      }
       for (const key of a.evidenceIds) {
         const hit = trace.hits.find((h: any) => h.chunkId === key);
         const chunk = c.store.db

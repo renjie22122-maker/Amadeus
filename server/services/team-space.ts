@@ -13,6 +13,7 @@ export interface TeamSpace {
   closed: Record<string, string>;
   maxMessages: number;
   autoEnroll?: boolean;
+  groups?: { id: string; title: string; purpose: string; members: string[] }[];
   selection?: { by: 'agent' | 'user'; reason: string };
 }
 export class Teams {
@@ -44,7 +45,7 @@ export class Teams {
     assert(
       !this.get(run),
       'TEAM_EXISTS',
-      'Team already exists; use role handoff rather than resetting state.',
+      'Team already exists. Use update_team_roster to open enrollment or add active peers; configure_team_group for parallel topics; role handoff for authority. History is preserved.',
     );
     assert(
       members.length >= (autoEnroll ? 1 : 2) &&
@@ -71,7 +72,7 @@ export class Teams {
     );
     assert(
       this.store
-        .runs()
+        .runMetadata()
         .filter((r) => rootRun(this.store, r) === root && !terminal(r.status))
         .every((r) => members.includes(r.id)),
       'TEAM_ROSTER',
@@ -130,9 +131,82 @@ export class Teams {
       return true;
     });
     if (!t.members.includes(child.id)) t.members.push(child.id);
+    for (const group of t.groups || [])
+      group.members = [
+        ...new Set(
+          group.members.map((key) => {
+            const old = this.store.runHeader(key);
+            return old.conversationId === child.conversationId && terminal(old.status)
+              ? child.id
+              : key;
+          }),
+        ),
+      ];
     t.revision++;
     this.store.put('team-space', t);
     this.audit(parent, 'member-enrolled', { runId: child.id });
+  }
+  updateRoster(run: Run, revision: number, autoEnroll: boolean, addMembers: string[] = []) {
+    return this.store.transaction(() => {
+      const t = this.get(run);
+      assert(
+        t && this.authority(run) && !t.closed[run.id],
+        'TEAM_ROLE',
+        'Only the participating coordinator can change enrollment.',
+      );
+      assert(
+        t.revision === revision,
+        'TEAM_CHANGED',
+        'Read current team revision before changing enrollment.',
+      );
+      for (const key of addMembers) {
+        const member = this.store.runHeader(key);
+        assert(
+          rootRun(this.store, member) === t.id &&
+            !terminal(member.status) &&
+            !member.recoveryOnly &&
+            !t.closed[key],
+          'TEAM_SCOPE',
+          'Add active members from this task tree only.',
+        );
+      }
+      const members = [...new Set([...t.members, ...addMembers])];
+      assert(members.length <= 32, 'TEAM_MEMBERS', 'Team roster is full (32).');
+      t.members = members;
+      t.autoEnroll = autoEnroll;
+      t.revision++;
+      this.store.put('team-space', t);
+      this.audit(run, 'roster-updated', { autoEnroll, addMembers });
+      return this.project(run);
+    });
+  }
+  configureGroup(
+    run: Run,
+    revision: number,
+    group: { id: string; title: string; purpose: string; members: string[] },
+  ) {
+    return this.store.transaction(() => {
+      const t = this.get(run);
+      assert(
+        t && this.authority(run) && !t.closed[run.id],
+        'TEAM_ROLE',
+        'Only the participating coordinator manages topic groups.',
+      );
+      assert(t.revision === revision, 'TEAM_CHANGED', 'Read current team revision.');
+      assert(
+        group.members.length > 0 &&
+          new Set(group.members).size === group.members.length &&
+          group.members.every((key) => t.members.includes(key) && !t.closed[key]),
+        'TEAM_SCOPE',
+        'Choose distinct enrolled participants.',
+      );
+      t.groups = [...(t.groups || []).filter((g) => g.id !== group.id), group];
+      assert(t.groups.length <= 32, 'TEAM_GROUPS', 'At most 32 topic groups.');
+      t.revision++;
+      this.store.put('team-space', t);
+      this.audit(run, 'group-updated', { group });
+      return this.project(run);
+    });
   }
   updateLimits(run: Run, maxMessages: number) {
     const t = this.get(run);
@@ -181,7 +255,7 @@ export class Teams {
       return t;
     });
   }
-  post(run: Run, text: string, to: string[]) {
+  post(run: Run, text: string, to: string[], groupId?: string) {
     return this.store.transaction(() => {
       const t = this.get(run);
       assert(
@@ -195,7 +269,18 @@ export class Teams {
         'DISCUSSION_LIMIT',
         'Configured per-member discussion limit reached; summarize or end participation.',
       );
-      const recipients = to.length ? [...new Set(to)] : t.members.filter((k) => k !== run.id);
+      const group = groupId ? t.groups?.find((g) => g.id === groupId) : undefined;
+      assert(
+        !groupId || (group && (group.members.includes(run.id) || this.authority(run))),
+        'TEAM_GROUP',
+        'Choose a group you belong to; coordinator may address any group.',
+      );
+      assert(!groupId || !to.length, 'TEAM_GROUP', 'Use either groupId or recipients, not both.');
+      const recipients = group
+        ? group.members.filter((k) => k !== run.id)
+        : to.length
+          ? [...new Set(to)]
+          : t.members.filter((k) => k !== run.id);
       assert(
         recipients.every((k) => t.members.includes(k) && k !== run.id),
         'TEAM_SCOPE',
@@ -209,6 +294,7 @@ export class Teams {
         teamId: t.id,
         sender: run.id,
         recipients,
+        ...(groupId ? { groupId } : {}),
         text,
         at: Date.now(),
       };

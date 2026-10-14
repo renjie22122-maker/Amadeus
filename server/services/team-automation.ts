@@ -123,6 +123,8 @@ export class TeamAutomation {
         if (t.roles[role] === old.id) t.roles[role] = next.id;
       delete t.closed[old.id];
       t.revision++;
+      for (const group of t.groups || [])
+        group.members = [...new Set(group.members.map((key) => (key === old.id ? next.id : key)))];
       this.store.put('team-space', t);
       const board = new TaskBoard(this.store).get(old);
       for (const task of board.tasks)

@@ -154,3 +154,53 @@ test('automatic organization accepts either team kind while explicit hierarchy a
     f.store.close();
   }
 });
+
+test('roster updates preserve discussion, require coordinator/current revision and reject foreign members', () => {
+  const f = fixture();
+  try {
+    const a = f.child('a');
+    f.teams.configure(f.lead, 'creative', ['lead', 'a'], 8);
+    f.teams.post(a, 'Original evidence', ['lead']);
+    assert.throws(() => f.teams.updateRoster(a, 1, true), /coordinator/);
+    assert.throws(() => f.teams.updateRoster(f.lead, 99, true), /revision/);
+    const t = f.teams.updateRoster(f.lead, 1, true);
+    assert.equal(t!.messages[0].text, 'Original evidence');
+    const b = f.child('b');
+    f.teams.enrollSpawn(f.lead, b);
+    assert(f.teams.get(f.lead)!.members.includes('b'));
+    f.store.put('run', { ...b, id: 'foreign', parentRunId: null });
+    assert.throws(() => f.teams.updateRoster(f.lead, 3, true, ['foreign']), /task tree/);
+  } finally {
+    f.store.close();
+  }
+});
+
+test('topic groups route only to their members, retain global budgets and survive continuation', () => {
+  const f = fixture();
+  try {
+    const a = f.child('a'),
+      b = f.child('b'),
+      c = f.child('c');
+    f.teams.configure(f.lead, 'creative', ['lead', 'a', 'b', 'c'], 1, true);
+    f.teams.configureGroup(f.lead, 1, {
+      id: 'topic',
+      title: 'Independent question',
+      purpose: 'Test alternatives',
+      members: ['a', 'b'],
+    });
+    const message = f.teams.post(a, 'Evidence for this topic', [], 'topic');
+    assert.deepEqual(message.recipients, ['b']);
+    assert.equal(f.teams.messages(c).length, 0);
+    assert.equal(f.teams.messages(b).length, 1);
+    assert.throws(() => f.teams.post(c, 'intrude', [], 'topic'), /group/);
+    assert.throws(() => f.teams.post(a, 'over budget', [], 'topic'), /limit/);
+    f.store.put('run', { ...b, status: 'completed' });
+    const next = { ...b, id: 'b2' };
+    f.store.put('run', next);
+    f.teams.enrollSpawn(f.lead, next);
+    assert.deepEqual(f.teams.get(f.lead)!.groups![0].members, ['a', 'b2']);
+    assert.deepEqual(f.teams.messages(a)[0].recipients, ['b']);
+  } finally {
+    f.store.close();
+  }
+});
