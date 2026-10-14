@@ -1,3 +1,5 @@
+import { validateDocumentText } from './document-quality.js';
+import { suspiciousText } from './text-decoding.js';
 import { decodeDocumentText } from './text-decoding.js';
 import { ocrImage } from './ocr.js';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
@@ -7,6 +9,16 @@ import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 export async function extract(path: string, options: { ocr?: boolean } = {}): Promise<string> {
+  const text = await extractContent(path, options);
+  // Image placeholders remain valid chat attachments, but knowledge imports request OCR.
+  if (
+    !options.ocr &&
+    ['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(extname(path).toLowerCase())
+  )
+    return text;
+  return validateDocumentText(text);
+}
+async function extractContent(path: string, options: { ocr?: boolean }): Promise<string> {
   const ext = extname(path).toLowerCase();
   if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext))
     return options.ocr
@@ -21,6 +33,7 @@ export async function extract(path: string, options: { ocr?: boolean } = {}): Pr
     const book = new Excel.Workbook();
     await book.xlsx.readFile(path);
     const text: string[] = [];
+    let populated = 0;
     book.eachSheet((sheet) => {
       text.push('# ' + sheet.name);
       text.push(
@@ -30,6 +43,7 @@ export async function extract(path: string, options: { ocr?: boolean } = {}): Pr
       sheet.eachRow({ includeEmpty: true }, (row) => {
         row.eachCell({ includeEmpty: true }, (cell) => {
           if (cell.value == null && !Object.keys(cell.style || {}).length && !cell.isMerged) return;
+          if (cell.value != null && String(cell.value).trim()) populated++;
           if (++count > 100000)
             throw Error(
               'Spreadsheet exceeds 100000 inspected cells; select a smaller workbook/range.',
@@ -47,6 +61,10 @@ export async function extract(path: string, options: { ocr?: boolean } = {}): Pr
         });
       });
     });
+    if (!populated)
+      throw Error(
+        'DOCUMENT_EMPTY: Spreadsheet contains no cell values; formatting alone is not knowledge.',
+      );
     return text.join('\n');
   }
   if (ext === '.pdf') {
@@ -62,7 +80,7 @@ export async function extract(path: string, options: { ocr?: boolean } = {}): Pr
         const page = await doc.getPage(i);
         const content = await page.getTextContent();
         let text = content.items.map((x) => ('str' in x ? x.str : '')).join(' ');
-        if (options.ocr && text.trim().length < 12) {
+        if (options.ocr && (text.trim().length < 12 || suspiciousText(text))) {
           const require = createRequire(import.meta.url);
           const canvasModule = createRequire(require.resolve('pdfjs-dist/package.json'))(
             '@napi-rs/canvas',
@@ -85,6 +103,12 @@ export async function extract(path: string, options: { ocr?: boolean } = {}): Pr
             await rm(dir, { recursive: true, force: true });
           }
         }
+        if (suspiciousText(text))
+          throw Error(
+            'DOCUMENT_TEXT_QUALITY: PDF page ' +
+              i +
+              ' has unreadable text mapping; OCR is unavailable or did not recover readable text.',
+          );
         characters += text.length;
         if (characters > 5_000_000)
           throw Error('Extracted PDF text exceeds 5 million characters; split the source.');

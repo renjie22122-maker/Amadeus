@@ -772,7 +772,9 @@ export async function createApp(options: { directory: string; dist?: string; run
           'Non-media document upload exceeds 25 MB; use folder knowledge import for large documents.',
         );
         text =
-          !req.query.scope && mediaMime ? mediaAttachmentText(key, mediaMime) : await extract(path);
+          !req.query.scope && mediaMime
+            ? mediaAttachmentText(key, mediaMime)
+            : await extract(path, { ocr: !!req.query.scope });
       } catch (error) {
         await rm(folder, { recursive: true, force: true });
         throw error;
