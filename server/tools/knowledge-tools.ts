@@ -1,11 +1,41 @@
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { assert } from '../core/errors.js';
+import { documentAt } from '../services/knowledge-versions.js';
 import type { ToolRegistry } from './registry.js';
 const text = (value: unknown) => ({
   content: typeof value === 'string' ? value : JSON.stringify(value, null, 2),
 });
 export function installKnowledgeTools(registry: ToolRegistry) {
+  registry.add({
+    name: 'list_knowledge_documents',
+    effect: 'read',
+    description:
+      'List current scoped knowledge document IDs and names without vector search. Filter by title before document-specific retrieval.',
+    schema: z.object({
+      query: z.string().default(''),
+      offset: z.number().int().min(0).default(0),
+      limit: z.number().int().min(1).max(100).default(30),
+    }),
+    run: (a, c) => {
+      const docs = c.store
+        .list<any>('document')
+        .filter(
+          (d) =>
+            c.scopes.includes(d.scope) &&
+            documentAt(d, Date.now()) &&
+            String(d.name).toLowerCase().includes(a.query.toLowerCase()),
+        )
+        .sort((a, b) => a.id.localeCompare(b.id));
+      return text({
+        total: docs.length,
+        documents: docs
+          .slice(a.offset, a.offset + a.limit)
+          .map((d) => ({ id: d.id, name: d.name, scope: d.scope })),
+        nextOffset: a.offset + a.limit < docs.length ? a.offset + a.limit : null,
+      });
+    },
+  });
   registry.add({
     name: 'search_knowledge',
     description:
@@ -13,6 +43,7 @@ export function installKnowledgeTools(registry: ToolRegistry) {
     effect: 'read',
     schema: z.object({
       query: z.string().min(1),
+      mode: z.enum(['hybrid', 'lexical']).default('hybrid'),
       documentIds: z.array(z.string()).max(20).default([]),
       limit: z.number().int().min(1).max(12).default(6),
       asOf: z.number().int().nonnegative().optional(),
@@ -26,11 +57,16 @@ export function installKnowledgeTools(registry: ToolRegistry) {
         a.asOf,
         false,
         a.documentIds,
+        a.mode,
       );
       return text(
         results.length
           ? results
-          : { results, diagnostics: c.knowledge.diagnostics(c.scopes, a.asOf) },
+          : {
+              results,
+              diagnostics: c.knowledge.diagnostics(c.scopes, a.asOf),
+              retrievalDiagnostics: c.knowledge.lastRetrieval,
+            },
       );
     },
   });

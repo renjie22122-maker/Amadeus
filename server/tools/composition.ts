@@ -176,7 +176,10 @@ export function installComposition(registry: ToolRegistry) {
         tools: ['search_tools', { query: a.query, semantic: a.semantic }],
         skills: ['find_skills', { query: a.query, limit: 6 }],
         memory: ['recall_memories', { query: a.query }],
-        knowledge: ['search_knowledge', { query: a.query, limit: 6 }],
+        knowledge: [
+          'search_knowledge',
+          { query: a.query, limit: 6, mode: a.semantic ? 'hybrid' : 'lexical' },
+        ],
       } as const;
       const results: Record<string, unknown> = {};
       let index = 0;

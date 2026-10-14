@@ -66,7 +66,41 @@ export async function retrievalPost(
   return JSON.parse(Buffer.concat(parts).toString('utf8'));
 }
 
+// Bound each wire payload; total corpus size is not a request-size limit.
 export async function externalVectorSearch(
+  c: NonNullable<RetrievalSettings['vectors']>,
+  rows: { id: string; values: number[] }[],
+  query: number[],
+  signal?: AbortSignal,
+) {
+  assert(
+    query.length > 0 && query.length <= 16384,
+    'VECTOR_DIMENSIONS',
+    'Invalid query dimensions.',
+  );
+  const size = Math.min(200000, Math.floor((16 * 1024 * 1024) / (query.length * 4)));
+  const hits: { id: string; score: number }[] = [];
+  const indexes = new Set<string>(),
+    reasons = new Set<string>();
+  for (let offset = 0; offset < rows.length; offset += size) {
+    signal?.throwIfAborted();
+    const part = await vectorShardSearch(c, rows.slice(offset, offset + size), query, signal);
+    hits.push(...part.result);
+    indexes.add(part.effectiveIndex);
+    if (part.fallbackReason) reasons.add(part.fallbackReason);
+    hits.sort((a, b) => b.score - a.score);
+    hits.splice(60);
+  }
+  return {
+    result: hits,
+    backend: c.backend,
+    effectiveIndex: [...indexes].join(','),
+    fallbackReason: [...reasons].join('; ') || null,
+    shards: Math.ceil(rows.length / size),
+  };
+}
+const uploadedShards = new Set<string>();
+async function vectorShardSearch(
   c: NonNullable<RetrievalSettings['vectors']>,
   rows: { id: string; values: number[] }[],
   query: number[],
@@ -104,22 +138,47 @@ export async function externalVectorSearch(
     .update(packed)
     .update(JSON.stringify(vectorIds))
     .digest('hex');
-  const result = await retrievalPost(
-    'vectors',
-    c,
-    '/vectors/search',
-    {
-      backend: c.backend,
-      index: c.index,
-      generation,
-      ids: vectorIds,
-      dimensions,
-      vectorsBase64: packed.toString('base64'),
-      query,
-      limit: 60,
-    },
-    signal,
-  );
+  const key = retrievalTarget('vectors', c) + '|' + generation;
+  let result: any;
+  if (uploadedShards.has(key)) {
+    try {
+      result = await retrievalPost(
+        'vectors',
+        c,
+        '/vectors/search',
+        {
+          backend: c.backend,
+          index: c.index,
+          generation,
+          query,
+          limit: 60,
+          cachedOnly: true,
+        },
+        signal,
+      );
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      // Older sidecars may not support cache probes; the bounded legacy request still works.
+    }
+  }
+  if (!result || result.cacheMiss) {
+    result = await retrievalPost(
+      'vectors',
+      c,
+      '/vectors/search',
+      {
+        backend: c.backend,
+        index: c.index,
+        generation,
+        ids: vectorIds,
+        dimensions,
+        vectorsBase64: packed.toString('base64'),
+        query,
+        limit: 60,
+      },
+      signal,
+    );
+  }
   const ids = new Set(rows.map((r) => r.id)),
     seen = new Set<string>();
   assert(
@@ -134,6 +193,10 @@ export async function externalVectorSearch(
       'Foreign, repeated or invalid vector hit.',
     );
     seen.add(r.id);
+  }
+  if (result.snapshotCached) {
+    uploadedShards.add(key);
+    if (uploadedShards.size > 256) uploadedShards.delete(uploadedShards.values().next().value!);
   }
   return {
     result: result.result as { id: string; score: number }[],

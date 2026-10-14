@@ -299,6 +299,7 @@ export class Knowledge {
     asOf = Date.now(),
     bypassPolicy = false,
     documentIds: string[] = [],
+    mode: 'hybrid' | 'lexical' = 'hybrid',
   ) {
     const traceId = id(),
       startedAt = Date.now();
@@ -332,6 +333,7 @@ export class Knowledge {
         bypassPolicy,
         documentIds,
         diagnostics,
+        mode,
       );
       record({
         status: results.length ? 'candidates' : 'no-candidates',
@@ -366,9 +368,19 @@ export class Knowledge {
     bypassPolicy = false,
     documentIds: string[] = [],
     diagnostics: Record<string, unknown> = {},
+    mode: 'hybrid' | 'lexical' = 'hybrid',
   ) {
     this.lastRetrieval = diagnostics;
+    signal?.throwIfAborted();
     if (!query.trim() || !scopes.length) return [];
+    if (mode === 'lexical') {
+      Object.assign(diagnostics, { backend: 'lexical', requestedMode: mode });
+      // Explicit lexical mode has no embedding, graph, sidecar or reranker dependency.
+      return this.search(scopes, query, limit, asOf, documentIds).map((hit) => ({
+        ...hit,
+        retrievalDiagnostics: diagnostics,
+      }));
+    }
     if (
       !bypassPolicy &&
       scopes.length === 1 &&
@@ -403,9 +415,13 @@ export class Knowledge {
       .prepare(
         'SELECT * FROM chunks WHERE vector IS NOT NULL AND scope IN (' +
           scopes.map(() => '?').join(',') +
-          ')',
+          ')' +
+          (documentIds.length
+            ? ' AND document_id IN (' + documentIds.map(() => '?').join(',') + ')'
+            : '') +
+          ' ORDER BY id',
       )
-      .all(...scopes) as any[];
+      .all(...scopes, ...documentIds) as any[];
     const eligible = rows.filter(
       (r) =>
         (documentIds.length === 0 || documentIds.includes(r.document_id)) &&
@@ -444,12 +460,26 @@ export class Knowledge {
       const revision = (
         this.store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any
       ).version;
-      const result = await externalVectorSearch(
-        external,
-        vectors.map((r) => ({ id: r.id, values: r.v.values })),
-        q,
-        signal,
-      );
+      let result;
+      try {
+        result = await externalVectorSearch(
+          external,
+          vectors.map((r) => ({ id: r.id, values: r.v.values })),
+          q,
+          signal,
+        );
+      } catch (error: any) {
+        if (signal?.aborted) throw error;
+        Object.assign(diagnostics, {
+          backend: 'lexical',
+          degraded: true,
+          reason: 'vector_backend_unavailable',
+          errorCode: String(error.code || 'RETRIEVAL_SERVICE'),
+        });
+        return lexical
+          .slice(0, limit)
+          .map((hit) => ({ ...hit, retrievalDiagnostics: diagnostics }));
+      }
       assert(
         (this.store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any)
           .version === revision,

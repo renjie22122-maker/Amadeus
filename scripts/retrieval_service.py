@@ -87,6 +87,32 @@ def rerank(data):
         scores = scorer.predict(pairs, batch_size=4, activation_fn=torch.nn.Sigmoid())
     return sorted([dict(index=i, score=float(s)) for i, s in enumerate(scores)], key=lambda r: -r["score"])
 
+def cached_vector_search(data):
+    generation = data.get("generation", "")
+    if not isinstance(generation, str) or len(generation) != 64 or any(c not in "0123456789abcdef" for c in generation):
+        raise ValueError("Invalid vector generation")
+    cache = ROOT / "vector-snapshots"
+    cache.mkdir(exist_ok=True)
+    path = cache / (generation + ".json")
+    if data.get("cachedOnly"):
+        if not path.exists(): return {"cacheMiss": True}
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        data = {**saved, "query": data["query"], "backend": data["backend"], "index": data["index"], "limit": data.get("limit",60)}
+    result = vector_search(data)
+    if not path.exists():
+        # Only validated snapshots are persisted, atomically and under opaque content IDs.
+        saved = {k:data[k] for k in ("ids","dimensions","vectorsBase64","generation")}
+        temporary = cache / (generation + "." + str(threading.get_ident()) + ".tmp")
+        temporary.write_text(json.dumps(saved),encoding="utf-8"); os.replace(temporary,path)
+    os.utime(path,None)
+    total = 0
+    for old in sorted(cache.glob("*.json"),key=lambda f:f.stat().st_mtime,reverse=True):
+        total += old.stat().st_size
+        if total > 512*1024*1024 and old != path:
+            try: old.unlink()
+            except OSError: pass
+    return {**result, "snapshotCached": True}
+
 def vector_search(data):
     import numpy as np
     backend, requested = data["backend"], data["index"]
@@ -323,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
                     "data":[{"object":"embedding","index":i,"embedding":v} for i,v in enumerate(values)],
                     "usage":{"prompt_tokens":tokens,"total_tokens":tokens}}
             elif self.path == "/rerank": result = rerank(data)
-            elif self.path == "/vectors/search": result = vector_search(data)
+            elif self.path == "/vectors/search": result = cached_vector_search(data)
             elif self.path == "/lightrag/documents/texts":
                 if not isinstance(data.get("scope"),str) or not 0<len(data["scope"])<=200:
                     raise ValueError("Invalid scope")

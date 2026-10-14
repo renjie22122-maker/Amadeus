@@ -137,3 +137,83 @@ test('vector snapshots use bounded float32 payloads and preserve scoped identifi
     externalVectorSearch(config, [{ id: 'one', values: [NaN, 0] }], [1, 0]),
   );
 });
+
+test('corpora above 80 MiB search bounded shards, merge top hits and reuse snapshots', async (t) => {
+  let uploads = 0,
+    probes = 0;
+  const cached = new Map<string, string[]>();
+  const baseUrl = await service(t, (_path, body) => {
+    if (body.cachedOnly) probes++;
+    else {
+      uploads++;
+      assert(Buffer.from(body.vectorsBase64, 'base64').length <= 16 * 1024 * 1024);
+      cached.set(body.generation, body.ids);
+    }
+    const ids = cached.get(body.generation);
+    if (!ids) return { cacheMiss: true };
+    return {
+      result: [{ id: ids.at(-1), score: Number(ids.at(-1)) / 22000 }],
+      effectiveIndex: 'flat',
+      snapshotCached: true,
+    };
+  });
+  const config: any = { enabled: true, baseUrl, backend: 'faiss', index: 'flat' };
+  config.authorizedTarget = retrievalTarget('vectors', config);
+  const values = Array(1024).fill(0);
+  values[0] = 1;
+  const rows = Array.from({ length: 22000 }, (_, i) => ({ id: String(i), values }));
+  const result = await externalVectorSearch(config, rows, values);
+  assert.equal(result.result[0].id, '21999');
+  assert.equal(uploads, 6);
+  await externalVectorSearch(config, rows, values);
+  assert.equal(uploads, 6);
+  assert.equal(probes, 6);
+  cached.clear();
+  await externalVectorSearch(config, rows, values);
+  assert.equal(uploads, 12);
+});
+
+test('vector outage preserves lexical evidence and explicit lexical mode never embeds', async (t) => {
+  const baseUrl = await service(t, () => ({ result: [{ id: 'foreign', score: 1 }] }));
+  const config: any = { enabled: true, baseUrl, backend: 'faiss', index: 'flat' };
+  config.authorizedTarget = retrievalTarget('vectors', config);
+  const store = new Store(':memory:');
+  let calls = 0;
+  const embedding: any = {
+    enabled: () => true,
+    fingerprint: () => 'test',
+    encode: async () => {
+      calls++;
+      return [[1, 0]];
+    },
+  };
+  const kb = new Knowledge(store, embedding, () => ({ vectors: config }));
+  t.after(() => {
+    kb.close();
+    store.close();
+  });
+  const doc: any = kb.import('general', 'evidence', 'target lexical evidence');
+  store.db
+    .prepare('UPDATE chunks SET vector=? WHERE document_id=?')
+    .run(JSON.stringify({ model: 'test', values: [1, 0] }), doc.id);
+  const hits = await kb.hybrid(['general'], 'target');
+  assert.equal(hits[0].documentId, doc.id);
+  assert.equal((hits[0] as any).retrievalDiagnostics.degraded, true);
+  const before = calls;
+  const lexical = await kb.hybrid(
+    ['general'],
+    'target',
+    6,
+    undefined,
+    Date.now(),
+    false,
+    [],
+    'lexical',
+  );
+  assert.equal(calls, before);
+  assert.equal(lexical[0].documentId, doc.id);
+  assert.deepEqual(
+    await kb.hybrid(['project:private'], 'target', 6, undefined, Date.now(), false, [], 'lexical'),
+    [],
+  );
+});
