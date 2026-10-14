@@ -3,7 +3,7 @@ import { compilePlan } from './plan-compiler.js';
 import { startTaskMeasurement, finishTaskMeasurement } from './routing-outcomes.js';
 import { Teams } from './team-space.js';
 import { z } from 'zod';
-import type { Run } from '../../shared/types.js';
+import type { Conversation, Run } from '../../shared/types.js';
 import { Store } from '../storage/store.js';
 import { terminal } from '../core/lifecycle.js';
 import type { ArtifactStamp } from './verification.js';
@@ -303,6 +303,9 @@ export class TaskBoard {
       .filter((r) => rootRun(this.store, r) === root)
       .map((r) => ({
         runId: r.id,
+        name:
+          this.store.get<Conversation>('conversation', r.conversationId).title ||
+          (r.id === root ? 'Coordinator' : 'Member'),
         status: r.status,
         depth: r.depth,
         role: r.id === root ? 'lead' : 'worker',

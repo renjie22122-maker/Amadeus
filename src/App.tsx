@@ -1015,7 +1015,7 @@ export function App() {
                       )}
                       <p>
                         {language === 'zh'
-                          ? '单个成员结束不代表团队完成。'
+                          ? '以下是团队职责，不是四个独立成员；同一 Agent 可以兼任。团队是否完成由任务与验收状态决定。'
                           : 'An individual final answer does not complete the team.'}
                       </p>
                       {Object.entries(detail.teamSpace.roles).map(([role, member]) => (
@@ -1032,7 +1032,22 @@ export function App() {
                                 )[role] || role
                               : role}
                           </span>
-                          <code title={member}>{member.slice(0, 8)}</code>
+                          <span title={member}>
+                            {detail.teamMembers?.find((m) => m.runId === member)?.name ||
+                              (member === detail.teamSpace?.id
+                                ? language === 'zh'
+                                  ? '主 Agent'
+                                  : 'Lead agent'
+                                : member.slice(0, 8))}
+                            {Object.values(detail.teamSpace!.roles).filter((id) => id === member)
+                              .length > 1 && (
+                              <small>
+                                {language === 'zh'
+                                  ? ' · 兼任多个职责'
+                                  : ' · multiple responsibilities'}
+                              </small>
+                            )}
+                          </span>
                           <select
                             aria-label={'Transfer ' + role}
                             value=""
@@ -1048,24 +1063,8 @@ export function App() {
                             }}
                           >
                             <option value="">
-                              {language === 'zh' ? '交接角色…' : 'Transfer role…'}
+                              {language === 'zh' ? '改由其他成员负责…' : 'Assign another member…'}
                             </option>
-                            {detail.teamScheduling?.enabled && (
-                              <div className="notice">
-                                Scheduling 路 max load {detail.teamScheduling.maxLoad}
-                                {detail.teamScheduling.loads?.map((m) => (
-                                  <div key={m.runId}>
-                                    {m.runId.slice(0, 8)} 路 {m.load}/
-                                    {detail.teamScheduling!.maxLoad}
-                                  </div>
-                                ))}
-                                {detail.teamScheduling.blocked?.map((b) => (
-                                  <div key={b.taskId}>
-                                    {b.taskId}: {b.reason}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
                             {detail.teamMembers
                               ?.filter(
                                 (m) =>
@@ -1074,19 +1073,77 @@ export function App() {
                               )
                               .map((m) => (
                                 <option key={m.runId} value={m.runId}>
-                                  {m.runId}
+                                  {m.name || m.runId.slice(0, 8)}
                                 </option>
                               ))}
                           </select>
                         </div>
                       ))}
+                      {detail.teamScheduling?.enabled && (
+                        <div className="notice">
+                          Scheduling 路 max load {detail.teamScheduling.maxLoad}
+                          {detail.teamScheduling.loads?.map((m) => (
+                            <div key={m.runId}>
+                              {m.runId.slice(0, 8)} 路 {m.load}/{detail.teamScheduling!.maxLoad}
+                            </div>
+                          ))}
+                          {detail.teamScheduling.blocked?.map((b) => (
+                            <div key={b.taskId}>
+                              {b.taskId}: {b.reason}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {detail.teamSpace.mode === 'creative' && (
-                        <p>
+                        <div>
                           {language === 'zh'
-                            ? '每成员讨论消息上限：'
+                            ? '每成员最多可发送的团队消息数（不是辩论轮次）：'
                             : 'Discussion message limit per member: '}
                           {detail.teamSpace.maxMessages}
-                        </p>
+                          <form
+                            key={detail.teamSpace.id + ':' + detail.teamSpace.maxMessages}
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              const data = new FormData(e.currentTarget);
+                              void action(() =>
+                                api('/runs/' + detail.teamSpace!.id + '/team-discussion-limit', {
+                                  maxMessages: Number(data.get('maxMessages')),
+                                }),
+                              );
+                            }}
+                          >
+                            <input
+                              aria-label={
+                                language === 'zh' ? '每成员讨论消息预算' : 'Messages per member'
+                              }
+                              name="maxMessages"
+                              type="number"
+                              min="1"
+                              max="1000"
+                              defaultValue={detail.teamSpace.maxMessages}
+                            />
+                            <button type="submit">
+                              {language === 'zh' ? '保存讨论额度' : 'Save discussion budget'}
+                            </button>
+                          </form>
+                          {detail.teamSpace.discussionBudget && (
+                            <span>
+                              {language === 'zh'
+                                ? ' · 当前成员已用 / 剩余：'
+                                : ' · Current member used / remaining: '}
+                              {detail.teamSpace.discussionBudget.used} /{' '}
+                              {detail.teamSpace.discussionBudget.remaining}
+                            </span>
+                          )}
+                          <br />
+                          {detail.teamSpace.autoEnroll
+                            ? language === 'zh'
+                              ? '本团队自动纳入后续成员'
+                              : 'This team automatically enrolls new members'
+                            : language === 'zh'
+                              ? '本团队使用固定成员名单'
+                              : 'This team uses a fixed roster'}
+                        </div>
                       )}
                       {detail.teamSpace.blockers.map((b) => (
                         <p key={b}>{b}</p>

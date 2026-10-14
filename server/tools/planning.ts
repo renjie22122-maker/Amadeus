@@ -200,19 +200,31 @@ export function installPlanning(registry: ToolRegistry) {
     }),
   });
   registry.add({
+    name: 'update_team_discussion_limits',
+    effect: 'coordinate',
+    atomic: true,
+    description:
+      'Coordinator adjusts the existing per-member message budget without resetting history. Messages are not rounds or votes; prefer synthesis when no new evidence remains.',
+    schema: z.object({ maxMessages: z.number().int().min(1).max(1000) }),
+    run: (a, c) => ({
+      content: JSON.stringify(new Teams(c.store).updateLimits(c.run, a.maxMessages)),
+    }),
+  });
+  registry.add({
     name: 'configure_team',
     effect: 'coordinate',
     atomic: true,
     description:
-      'Create a persistent peer team in the user-selected host or creative mode. Enroll existing members including yourself. Host completion is computed, never voted into truth. Discussion limit is explicit per member.',
+      'Create a persistent peer team in the user-selected host or creative mode. Use autoEnroll=true with just your current run ID to create the team BEFORE spawning; new children and continuations then join automatically. Otherwise enroll existing active members including yourself. Host completion is computed, never voted into truth. Discussion limit is explicit per member.',
     schema: z.object({
       mode: z.enum(['host', 'creative']),
-      members: z.array(z.string()).min(2).max(32),
-      maxMessages: z.number().int().min(1).max(100).default(12),
+      members: z.array(z.string()).min(1).max(32),
+      autoEnroll: z.boolean().default(false),
+      maxMessages: z.number().int().min(1).max(1000).default(12),
     }),
     run: (a, c) => ({
       content: JSON.stringify(
-        new Teams(c.store).configure(c.run, a.mode, a.members, a.maxMessages),
+        new Teams(c.store).configure(c.run, a.mode, a.members, a.maxMessages, a.autoEnroll),
       ),
     }),
   });

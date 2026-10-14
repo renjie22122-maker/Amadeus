@@ -45,6 +45,9 @@ export const coreTools = new Set([
 ]);
 export function findTools(specs: ToolSpec[], query: string, offset: number, limit: number) {
   const aliases: Record<string, string> = {
+    团队: 'team agent discussion',
+    辩论: 'team discussion limits challenge',
+    通讯: 'message agent team',
     浏览器: 'browser mcp',
     桌面: 'computer mcp',
     截图: 'screenshot image mcp',
@@ -66,7 +69,6 @@ export function findTools(specs: ToolSpec[], query: string, offset: number, limi
     抽帧: 'extract media frames',
     音乐: 'audio music media',
     展示: 'import media',
-    团队: 'team agent',
   };
   const expanded =
     query +

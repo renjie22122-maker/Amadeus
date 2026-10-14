@@ -429,6 +429,13 @@ export async function createApp(options: { directory: string; dist?: string; run
     runtime.stopTeam(req.params.id);
     return { ok: true };
   });
+  app.post<{ Params: { id: string } }>('/api/runs/:id/team-discussion-limit', async (req) => {
+    const a = z.object({ maxMessages: z.number().int().min(1).max(1000) }).parse(req.body);
+    const service = new Teams(store),
+      team = service.get(store.get<Run>('run', req.params.id));
+    assert(team, 'TEAM_MISSING', 'No team.');
+    return service.updateLimits(store.get<Run>('run', team.roles.coordinator), a.maxMessages);
+  });
   app.post<{ Params: { id: string } }>('/api/runs/:id/team-role', async (req) => {
     const a = z
       .object({

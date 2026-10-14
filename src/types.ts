@@ -40,6 +40,8 @@ export interface ConversationDetail {
     status: string;
     revision: number;
     maxMessages: number;
+    autoEnroll?: boolean;
+    discussionBudget?: { limit: number; used: number; remaining: number; unit: string };
     roles: Record<string, string>;
     blockers: string[];
     closed: Record<string, string>;
@@ -54,6 +56,7 @@ export interface ConversationDetail {
   } | null;
   teamMembers?: {
     runId: string;
+    name?: string;
     status: string;
     role: string;
     depth: number;

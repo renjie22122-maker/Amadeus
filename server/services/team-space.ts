@@ -12,6 +12,7 @@ export interface TeamSpace {
   roles: Record<'coordinator' | 'planner' | 'reviewer' | 'summarizer', string>;
   closed: Record<string, string>;
   maxMessages: number;
+  autoEnroll?: boolean;
 }
 export class Teams {
   constructor(private store: Store) {}
@@ -22,7 +23,13 @@ export class Teams {
     const team = this.get(run);
     return team ? team.roles[role] === run.id : run.id === rootRun(this.store, run);
   }
-  configure(run: Run, mode: TeamSpace['mode'], members: string[], maxMessages: number) {
+  configure(
+    run: Run,
+    mode: TeamSpace['mode'],
+    members: string[],
+    maxMessages: number,
+    autoEnroll = false,
+  ) {
     assert(this.authority(run), 'TEAM_ROLE', 'Only current coordinator configures the team.');
     const root = rootRun(this.store, run),
       origin = this.store.get<Run>('run', root);
@@ -38,7 +45,7 @@ export class Teams {
       'Team already exists; use role handoff rather than resetting state.',
     );
     assert(
-      members.length >= 2 &&
+      members.length >= (autoEnroll ? 1 : 2) &&
         members.length <= 32 &&
         new Set(members).size === members.length &&
         members.includes(run.id),
@@ -52,13 +59,13 @@ export class Teams {
       assert(
         rootRun(this.store, r) === root && !terminal(r.status) && !r.recoveryOnly,
         'TEAM_SCOPE',
-        'Enroll active members in this task tree.',
+        'Enroll active members in this task tree. For completed direct members call continue_agent with their stable agentId, then enroll the returned runId; or configure an autoEnroll team before spawning.',
       );
     }
     assert(
-      Number.isInteger(maxMessages) && maxMessages >= 1 && maxMessages <= 100,
+      Number.isInteger(maxMessages) && maxMessages >= 1 && maxMessages <= 1000,
       'TEAM_LIMIT',
-      'Set 1–100 discussion messages per member.',
+      'Set 1–1000 discussion messages per member.',
     );
     assert(
       this.store
@@ -76,10 +83,68 @@ export class Teams {
       roles: { coordinator: run.id, planner: run.id, reviewer: run.id, summarizer: run.id },
       closed: {},
       maxMessages,
+      autoEnroll,
     };
     this.store.put('team-space', team);
+    const defaults = this.store.maybe<any>('team-automation-default', origin.conversationId);
+    if (defaults && !this.store.maybe('team-automation', root))
+      this.store.put('team-automation', { ...defaults, id: root });
     this.audit(run, 'created', { mode, members, maxMessages });
     return team;
+  }
+  checkEnrollment(parent: Run, conversationId: string) {
+    const t = this.get(parent);
+    if (!t?.autoEnroll || !t.members.includes(parent.id) || t.closed[parent.id]) return;
+    const retained = t.members.filter((key) => {
+      const old = this.store.get<Run>('run', key);
+      return old.conversationId !== conversationId || !terminal(old.status);
+    });
+    assert(
+      retained.length < 32,
+      'TEAM_MEMBERS',
+      'Team roster is full (32); use independent delegation or a separate team task.',
+    );
+  }
+  enrollSpawn(parent: Run, child: Run) {
+    const t = this.get(parent);
+    if (!t?.autoEnroll || !t.members.includes(parent.id) || t.closed[parent.id]) return;
+    assert(
+      rootRun(this.store, child) === t.id,
+      'TEAM_SCOPE',
+      'New member must belong to the same task tree.',
+    );
+    // Retire an older completed invocation of this stable member without erasing its transcript.
+    t.members = t.members.filter((key) => {
+      const old = this.store.get<Run>('run', key);
+      if (old.conversationId === child.conversationId && terminal(old.status)) {
+        for (const role of Object.keys(t.roles) as (keyof TeamSpace['roles'])[])
+          if (t.roles[role] === key) t.roles[role] = child.id;
+        return false;
+      }
+      return true;
+    });
+    if (!t.members.includes(child.id)) t.members.push(child.id);
+    t.revision++;
+    this.store.put('team-space', t);
+    this.audit(parent, 'member-enrolled', { runId: child.id });
+  }
+  updateLimits(run: Run, maxMessages: number) {
+    const t = this.get(run);
+    assert(
+      t && this.authority(run),
+      'TEAM_ROLE',
+      'Only the coordinator can change discussion limits.',
+    );
+    assert(
+      Number.isInteger(maxMessages) && maxMessages >= 1 && maxMessages <= 1000,
+      'TEAM_LIMIT',
+      'Set 1–1000 messages per member.',
+    );
+    t.maxMessages = maxMessages;
+    t.revision++;
+    this.store.put('team-space', t);
+    this.audit(run, 'discussion-limit-updated', { maxMessages });
+    return this.project(run);
   }
   handoff(
     run: Run,
@@ -221,6 +286,17 @@ export class Teams {
       status,
       blockers,
       messages: this.messages(run),
+      discussionBudget: {
+        unit: 'messages_per_member',
+        limit: t.maxMessages,
+        used: this.messages(run).filter((m) => m.sender === run.id).length,
+        remaining: Math.max(
+          0,
+          t.maxMessages - this.messages(run).filter((m) => m.sender === run.id).length,
+        ),
+        notice:
+          'Message allowance is not evidence quality or consensus. Summarize when no new evidence remains; request coordinator adjustment if necessary.',
+      },
       basis:
         t.mode === 'creative'
           ? 'Participation ended; not factual consensus or correctness verification.'

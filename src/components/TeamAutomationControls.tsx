@@ -56,6 +56,12 @@ export function TeamAutomationControls({
   );
 
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<any>(policy);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setSaved(policy);
+    setError('');
+  }, [id, JSON.stringify(policy)]);
   const defaults = {
     enabled: false,
     autoRecover: false,
@@ -68,7 +74,7 @@ export function TeamAutomationControls({
     costLimitUsd: null,
   };
   const dirty = Object.keys(defaults).some(
-    (k) => draft[k] !== (policy?.[k] ?? (defaults as any)[k]),
+    (k) => draft[k] !== (saved?.[k] ?? (defaults as any)[k]),
   );
   const interrupted = recovery.filter((r) => ['interrupted', 'failed'].includes(r.status));
   const switches = [
@@ -107,7 +113,9 @@ export function TeamAutomationControls({
           <span>
             <strong>{zh ? '启用宿主自动化' : 'Enable host automation'}</strong>
             <small>
-              {zh ? '设置团队如何恢复与分配工作' : 'Choose how your team recovers and shares work'}
+              {zh
+                ? '本对话后续团队沿用；未建队时不执行'
+                : 'Inherited by future teams in this conversation; inactive until a team exists'}
             </small>
           </span>
           <input
@@ -189,6 +197,7 @@ export function TeamAutomationControls({
               : 'The cost threshold limits new starts and recovery. Global concurrency, depth and permissions still apply.'}
           </p>
         </details>
+        {error && <p role="alert">{error}</p>}
         <div className="automation-save">
           <span>
             {dirty ? (
@@ -209,9 +218,16 @@ export function TeamAutomationControls({
             disabled={!dirty || saving}
             onClick={() => {
               setSaving(true);
-              void action(() => api('/runs/' + id + '/team-automation', draft)).finally(() =>
-                setSaving(false),
-              );
+              setError('');
+              void action(async () => {
+                try {
+                  const result = await api('/runs/' + id + '/team-automation', draft);
+                  setSaved(result);
+                } catch (e: any) {
+                  setError(e.message || String(e));
+                  throw e;
+                }
+              }).finally(() => setSaving(false));
             }}
           >
             {saving

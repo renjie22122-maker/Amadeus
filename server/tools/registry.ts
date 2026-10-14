@@ -1264,7 +1264,8 @@ export function tools() {
   });
   registry.add({
     name: 'wait_agents',
-    description: 'Wait for delegated runs to finish without polling model calls.',
+    description:
+      'Wait up to 60 seconds for delegated runs. New input wakes this wait immediately; unfinished children keep running. Inspect waitReason/status, process user steering, and do independent work where possible.',
     effect: 'coordinate',
     schema: z.object({ runIds: z.array(z.string()).min(1).max(16) }),
     run: async (a, c) => text(await c.team.wait(c.run, a.runIds, c.signal)),

@@ -58,6 +58,15 @@ export class TeamCoordinator {
           signal.removeEventListener('abort', abort);
         };
         const check = () => {
+          if (
+            this.store
+              .list<any>('user-inbox')
+              .some((x) => x.runId === run.id && x.state === 'pending')
+          ) {
+            clean();
+            resolve({ status: 'input_pending', messages: [] });
+            return;
+          }
           const teams = new Teams(this.store),
             team = teams.get(run);
           if (!team || !team.members.includes(run.id)) return;
@@ -111,6 +120,15 @@ export class TeamCoordinator {
           signal.removeEventListener('abort', abort);
         };
         const check = () => {
+          if (
+            this.store
+              .list<any>('user-inbox')
+              .some((x) => x.runId === run.id && x.state === 'pending')
+          ) {
+            cleanup();
+            resolve({ status: 'input_pending', tasks: [] });
+            return;
+          }
           const board = new TaskBoard(this.store).get(run);
           const assigned = board.tasks.filter((t) => t.owner === run.id && t.status === 'running');
           if (

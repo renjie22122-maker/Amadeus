@@ -42,7 +42,9 @@ export function conversationViewRoutes(app: FastifyInstance, runtime: Runtime) {
         attachments: store
           .forConversation<Attachment>('attachment', c.id)
           .map(({ path, text, ...a }) => a),
-        teamAutomation: latest ? store.maybe('team-automation', rootRun(store, latest!)) : null,
+        teamAutomation:
+          (latest ? store.maybe('team-automation', rootRun(store, latest!)) : null) ||
+          store.maybe('team-automation-default', c.id),
         teamRecovery: latest
           ? (new Teams(store).get(latest!)?.members || []).map((key) =>
               runtime.teamAutomation.plan(store.runHeader(key)),

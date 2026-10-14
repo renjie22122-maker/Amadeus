@@ -31,9 +31,15 @@ export class TeamAutomation {
     private clock = Date.now,
   ) {}
   configure(run: Run, input: z.infer<typeof automationInput>) {
-    const team = new Teams(this.store).get(run);
-    assert(team, 'TEAM_MISSING', 'Configure a team first.');
-    return this.store.put('team-automation', { id: team.id, ...automationInput.parse(input) });
+    // Saving preferences must not require a team already running. The executor still checks for a team.
+    const saved = this.store.put('team-automation', {
+      id: rootRun(this.store, run),
+      ...automationInput.parse(input),
+    });
+    const root = this.store.get<Run>('run', rootRun(this.store, run));
+    this.store.put('team-automation-default', { ...saved, id: root.conversationId });
+    this.store.event(root.conversationId, root.id, 'team.control', { action: 'policy-updated' });
+    return saved;
   }
   plan(run: Run) {
     reconcileCoordination(this.store, run);

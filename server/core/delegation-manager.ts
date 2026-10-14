@@ -1,3 +1,4 @@
+import { Teams } from '../services/team-space.js';
 import { configuredLimit } from './limits.js';
 import { Isolations } from '../services/isolation.js';
 import type { Run, Conversation } from '../../shared/types.js';
@@ -101,6 +102,7 @@ export class DelegationManager {
       this.store.put('conversation', child);
       this.store.put('agent-binding', { id: child.id, owner: c.id, roots: source.roots, mode });
 
+      new Teams(this.store).checkEnrollment(parent, child.id);
       const run = this.host.start(
         child.id,
         (mode === 'isolated'
@@ -117,6 +119,7 @@ export class DelegationManager {
         0,
         { parentRunId: parent.id, depth: parent.depth + 1, fresh: true, controlTicket },
       );
+      new Teams(this.store).enrollSpawn(parent, run);
       this.store.event(c.id, parent.id, 'child.started', {
         runId: run.id,
         conversationId: child.id,
@@ -320,6 +323,7 @@ export class DelegationManager {
           teamMode: c.teamMode,
         });
         this.store.put('agent-binding', { id: child.id, owner: c.id, roots: source.roots, mode });
+        new Teams(this.store).checkEnrollment(parent, child.id);
         const next = this.host.start(
           child.id,
           'Continue your existing role/task with retained history. This is a new instruction, not authorization to replay interrupted operations. Recheck current workspace facts.\n' +
@@ -327,6 +331,7 @@ export class DelegationManager {
           0,
           { parentRunId: parent.id, depth: parent.depth + 1, fresh: false, controlTicket },
         );
+        new Teams(this.store).enrollSpawn(parent, next);
         this.store.event(c.id, parent.id, 'child.started', {
           runId: next.id,
           conversationId: child.id,
@@ -401,32 +406,40 @@ export class DelegationManager {
     this.waitingOn.set(parent.id, keys);
     this.store.transition(parent.id, 'waiting_children');
     this.host.pump();
+    let waitReason = 'completed';
     try {
-      await Promise.all(
-        keys.map(
-          (key) =>
-            new Promise<void>((resolve, reject) => {
-              const done = () => {
-                if (terminal(this.store.get<Run>('run', key).status)) {
-                  cleanup();
-                  resolve();
-                }
-              };
-              const abort = () => {
-                cleanup();
-                reject(abortError());
-              };
-              const cleanup = () => {
-                this.bus.off('finished', done);
-                signal.removeEventListener('abort', abort);
-              };
-              this.bus.on('finished', done);
-              signal.addEventListener('abort', abort, { once: true });
-              if (signal.aborted) abort();
-              else done();
-            }),
-        ),
-      );
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timer);
+          this.bus.off('finished', check);
+          this.bus.off('event', check);
+          signal.removeEventListener('abort', abort);
+        };
+        const check = () => {
+          const pending = this.store
+            .list<any>('user-inbox')
+            .some((x) => x.runId === parent.id && x.state === 'pending');
+          if (pending || keys.every((key) => terminal(this.store.get<Run>('run', key).status))) {
+            waitReason = pending ? 'input_pending' : 'completed';
+            cleanup();
+            resolve();
+          }
+        };
+        const abort = () => {
+          cleanup();
+          reject(abortError());
+        };
+        const timer = setTimeout(() => {
+          waitReason = 'timeout';
+          cleanup();
+          resolve();
+        }, 60000);
+        this.bus.on('finished', check);
+        this.bus.on('event', check);
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) abort();
+        else check();
+      });
     } finally {
       this.waitingOn.delete(parent.id);
       if (!signal.aborted && this.store.get<Run>('run', parent.id).status === 'waiting_children')
@@ -436,6 +449,7 @@ export class DelegationManager {
       const r = this.store.get<Run>('run', key);
       return {
         runId: key,
+        waitReason,
         status: r.status,
         error: r.error,
         answer:
