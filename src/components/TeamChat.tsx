@@ -1,6 +1,6 @@
 import { TeamRelations } from './TeamRelations';
 import { relatedRuns } from '../team-relations';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Users } from 'lucide-react';
 import { api } from '../api';
 import type { ConversationDetail, UiState } from '../types';
@@ -33,7 +33,10 @@ export function TeamChat(props: Parameters<typeof TeamRound>[0]) {
     const update = async () => {
       try {
         const value = await api<ConversationDetail>(
-          '/conversations/' + detail.conversation.id + '?runId=' + encodeURIComponent(selected),
+          '/conversations/' +
+            detail.conversation.id +
+            '?limit=1&runId=' +
+            encodeURIComponent(selected),
         );
         if (!disposed) {
           setSnapshot({ id: selected, value });
@@ -114,22 +117,52 @@ function TeamRound({
   const [filter, setFilter] = useState('');
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  const memberCache = useRef<Record<string, ConversationDetail>>({});
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     setViews({});
+    memberCache.current = {};
     setFilter('');
     const update = async () => {
       const results = await Promise.allSettled(
-        [...new Set(key.split(',').filter(Boolean))].map(
-          async (id) => [id, await api<ConversationDetail>('/conversations/' + id)] as const,
-        ),
+        [...new Set(key.split(',').filter(Boolean))].map(async (id) => {
+          const cached = memberCache.current[id];
+          const after = cached?.events.at(-1)?.id || 0;
+          const value = await api<ConversationDetail>(
+            '/conversations/' + id + (after ? '?after=' + after : '?limit=500'),
+          );
+          return [
+            id,
+            {
+              ...value,
+              hasOlderEvents: value.hasOlderEvents ?? cached?.hasOlderEvents,
+              events: [
+                ...new Map(
+                  [...(cached?.events || []), ...value.events].map((e) => [e.id, e]),
+                ).values(),
+              ].sort((a, b) => a.id - b.id),
+            },
+          ] as const;
+        }),
       );
       if (disposed) return;
       setViews((previous) => {
         const next = { ...previous };
         for (const result of results)
-          if (result.status === 'fulfilled') next[result.value[0]] = result.value[1];
+          if (result.status === 'fulfilled') {
+            const [id, value] = result.value;
+            next[id] = {
+              ...value,
+              hasOlderEvents: previous[id]?.hasOlderEvents ?? value.hasOlderEvents,
+              events: [
+                ...new Map(
+                  [...(previous[id]?.events || []), ...value.events].map((e) => [e.id, e]),
+                ).values(),
+              ].sort((a, b) => a.id - b.id),
+            };
+          }
+        memberCache.current = next;
         return next;
       });
       setError(
@@ -162,6 +195,48 @@ function TeamRound({
   return (
     <section className="team-chat" aria-label={zh ? '团队群聊' : 'Team chat'}>
       <div className="team-chat-content">
+        <div className="team-summary" role="status">
+          <strong>
+            {detail.teamSpace
+              ? detail.teamSpace.mode === 'creative'
+                ? zh
+                  ? '团队讨论'
+                  : 'Team discussion'
+                : zh
+                  ? '任务协作'
+                  : 'Task coordination'
+              : zh
+                ? '普通子任务委派'
+                : 'Independent delegation'}
+          </strong>
+          <p>
+            {zh ? '成员完成' : 'Members completed'}{' '}
+            {members.filter((m) => m.status === 'completed').length}/{members.length}
+            {' · '}
+            {zh ? '运行中' : 'Running'}{' '}
+            {members.filter((m) => ['running', 'queued'].includes(m.status)).length}
+            {' · '}
+            {zh ? '需关注' : 'Needs attention'}{' '}
+            {
+              members.filter((m) =>
+                ['failed', 'interrupted', 'waiting_approval', 'waiting_user'].includes(m.status),
+              ).length
+            }
+          </p>
+          {detail.taskBoard && (
+            <p>
+              {zh ? '任务完成' : 'Tasks done'}{' '}
+              {detail.taskBoard.tasks.filter((t) => t.status === 'done').length}/
+              {detail.taskBoard.tasks.length}
+            </p>
+          )}
+          <p className="muted">
+            {zh
+              ? '成员结束不代表团队验收完成。下方可切换成员关系、任务依赖和实际通讯。'
+              : 'Member completion is not team acceptance. Explore member relations, dependencies and recorded communication below.'}
+          </p>
+          {detail.teamSpace?.selection?.reason && <p>{detail.teamSpace.selection.reason}</p>}
+        </div>
         <TeamRelations
           runs={related}
           state={state}
@@ -242,6 +317,38 @@ function TeamRound({
               <summary>
                 {name(m.conversationId)} · {zh ? '执行步骤' : 'Execution steps'}
               </summary>
+              {views[m.conversationId]?.hasOlderEvents && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const current = memberCache.current[m.conversationId];
+                      if (!current?.events.length) return;
+                      const page = await api<ConversationDetail>(
+                        '/conversations/' +
+                          m.conversationId +
+                          '?limit=500&before=' +
+                          current.events[0].id,
+                      );
+                      const latest = memberCache.current[m.conversationId];
+                      const next = {
+                        ...latest,
+                        hasOlderEvents: page.hasOlderEvents,
+                        events: [
+                          ...new Map(
+                            [...page.events, ...latest.events].map((e) => [e.id, e]),
+                          ).values(),
+                        ].sort((a, b) => a.id - b.id),
+                      };
+                      memberCache.current = { ...memberCache.current, [m.conversationId]: next };
+                      setViews(memberCache.current);
+                    } catch (e: any) {
+                      notify(e.message);
+                    }
+                  }}
+                >
+                  {zh ? '加载成员更早记录' : 'Load earlier member records'}
+                </button>
+              )}
               <Activity
                 events={(views[m.conversationId]?.events || []).filter(
                   (e) =>

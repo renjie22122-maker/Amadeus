@@ -66,7 +66,7 @@ export function reconcileCoordination(store: Store, onlyRun?: Run) {
           .all() as { run_id: string }[]
       ).map((r) => store.runHeader(r.run_id));
   for (const run of candidates.filter((r) => terminal(r.status))) {
-    const events = store.events(run.conversationId).filter((e) => e.runId === run.id);
+    const events = store.eventsForRun(run.id, ['tool.started', 'tool.completed']);
     const completed = new Set(
       events.filter((e) => e.type === 'tool.completed').map((e) => e.data.callId),
     );
@@ -93,7 +93,7 @@ export function reconcileCoordination(store: Store, onlyRun?: Run) {
         receipt.epoch !== executionEpoch
       ) {
         const children = store
-          .runs()
+          .runMetadata()
           .filter((r) => r.parentRunId === run.id && r.controlTicket === receipt!.id);
         if (children.length === 1)
           receipt = store.put<CoordinationReceipt>('coordination-receipt', {

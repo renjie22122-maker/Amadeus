@@ -98,3 +98,59 @@ test('snapshot merge fills SSE gaps, deduplicates events and updates old message
   );
   assert.equal(result[0].data.delivery, 'delivered');
 });
+
+test('bounded history pages cover every event exactly once and never cross conversations', async () => {
+  const store = new Store(':memory:');
+  const app = Fastify();
+  try {
+    store.put('conversation', { id: 'a' });
+    const ids = [];
+    for (let i = 0; i < 17; i++) {
+      ids.push(store.event('a', null, 'user.message', { text: String(i) }).id);
+      store.event('b', null, 'user.message', { text: 'private' });
+    }
+    conversationViewRoutes(app, { store, streams: new Map() } as any);
+    let before = Number.MAX_SAFE_INTEGER;
+    const loaded: number[] = [];
+    for (;;) {
+      const response = await app.inject('/api/conversations/a?limit=5&before=' + before);
+      assert.equal(response.statusCode, 200);
+      const page = response.json();
+      assert(page.events.length <= 5);
+      assert(page.events.every((e: any) => e.conversationId === 'a'));
+      loaded.unshift(...page.events.map((e: any) => e.id));
+      if (!page.hasOlderEvents) break;
+      before = page.events[0].id;
+    }
+    assert.deepEqual(loaded, ids);
+    assert.equal((await app.inject('/api/conversations/a?limit=0')).statusCode, 400);
+    assert.equal((await app.inject('/api/conversations/a?limit=1001')).statusCode, 400);
+    assert.equal((await app.inject('/api/conversations/a?after=1&before=2')).statusCode, 400);
+    const next = store.event('a', null, 'assistant.message', { text: 'new' });
+    assert.deepEqual(
+      (await app.inject('/api/conversations/a?after=' + ids.at(-1)))
+        .json()
+        .events.map((e: any) => e.id),
+      [next.id],
+    );
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test('run event projection filters before decoding unrelated payloads', () => {
+  const store = new Store(':memory:');
+  try {
+    store.event('a', 'old', 'assistant.message', { text: 'large unrelated history' });
+    const selected = store.event('a', 'current', 'tool.completed', { callId: 'ok' });
+    store.event('a', 'current', 'assistant.message', { text: 'not needed for recovery' });
+    store.db.prepare("UPDATE events SET data='invalid' WHERE type='assistant.message'").run();
+    assert.deepEqual(
+      store.eventsForRun('current', ['tool.started', 'tool.completed']).map((e) => e.id),
+      [selected.id],
+    );
+  } finally {
+    store.close();
+  }
+});

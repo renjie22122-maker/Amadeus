@@ -31,6 +31,7 @@ export interface UiState {
   };
 }
 export interface ConversationDetail {
+  hasOlderEvents?: boolean;
   teamAutomation?: any;
   teamRecovery?: any[];
   teamControlEvents?: any[];

@@ -43,7 +43,7 @@ export class TeamAutomation {
   }
   plan(run: Run) {
     reconcileCoordination(this.store, run);
-    const events = this.store.events(run.conversationId).filter((e) => e.runId === run.id);
+    const events = this.store.eventsForRun(run.id, ['tool.started', 'tool.completed']);
     const completed = new Set(
       events.filter((e) => e.type === 'tool.completed').map((e) => e.data.callId),
     );
@@ -135,9 +135,9 @@ export class TeamAutomation {
         this.store.put('team-scheduling', p);
       }
       for (const child of this.store
-        .runs()
+        .runMetadata()
         .filter((r) => r.parentRunId === old.id && r.id !== next.id)) {
-        this.store.put('run', { ...child, parentRunId: next.id });
+        this.store.put('run', { ...this.store.get<Run>('run', child.id), parentRunId: next.id });
         this.store.put('run-reparented', {
           id: child.id,
           previousParent: old.id,
@@ -216,7 +216,7 @@ export class TeamAutomation {
         t = new Teams(this.store).get(source);
       if (!t) continue;
       const candidates = this.store
-        .runs()
+        .runMetadata()
         .filter((r) => rootRun(this.store, r) === op.root && r.controlTicket === op.id);
       if (candidates.length === 1) {
         const child = candidates[0];
@@ -289,7 +289,7 @@ export class TeamAutomation {
           .some((o) => o.root === t!.id && o.state === 'reserved')
       )
         continue;
-      const runs = this.store.runs().filter((r) => rootRun(this.store, r) === t!.id);
+      const runs = this.store.runMetadata().filter((r) => rootRun(this.store, r) === t!.id);
       if (policy.autoElect) {
         const elected = this.elect(origin);
         if (elected)
@@ -372,7 +372,7 @@ export class TeamAutomation {
         created.length < policy.maxNewWorkers &&
         t.members.length < 32
       ) {
-        const before = new Set(this.store.runs().map((r) => r.id));
+        const before = new Set(this.store.runMetadata().map((r) => r.id));
         const op = { id: id(), root: t.id, kind: 'scale', state: 'reserved', at: this.clock() };
         this.store.put('team-control-operation', op);
         try {
@@ -393,7 +393,11 @@ export class TeamAutomation {
           this.store.put('team-control-operation', { ...op, state: 'completed', next: key });
           this.record(t.id, 'scaled-up', { worker: key });
         } catch (error) {
-          if (!this.store.runs().some((r) => !before.has(r.id) && rootRun(this.store, r) === t!.id))
+          if (
+            !this.store
+              .runMetadata()
+              .some((r) => !before.has(r.id) && rootRun(this.store, r) === t!.id)
+          )
             this.store.put('team-control-operation', { ...op, state: 'not_started' });
           this.record(t.id, 'scale-uncertain', { operation: op.id, error: String(error) });
         }

@@ -227,6 +227,41 @@ export class Store {
       createdAt: r.created_at,
     }));
   }
+  eventsForRun(runId: string, types?: string[]): AgentEvent[] {
+    const filter = types?.length ? ` AND type IN (${types.map(() => '?').join(',')})` : '';
+    return (
+      this.db
+        .prepare('SELECT * FROM events WHERE run_id=?' + filter + ' ORDER BY id')
+        .all(runId, ...(types || [])) as any[]
+    ).map((r) => ({
+      id: r.id,
+      conversationId: r.conversation_id,
+      runId: r.run_id,
+      type: r.type,
+      data: JSON.parse(r.data),
+      createdAt: r.created_at,
+    }));
+  }
+  eventPage(conversationId: string, limit: number, before = Number.MAX_SAFE_INTEGER) {
+    const rows = this.db
+      .prepare('SELECT * FROM events WHERE conversation_id=? AND id<? ORDER BY id DESC LIMIT ?')
+      .all(conversationId, before, limit + 1) as any[];
+    const hasOlderEvents = rows.length > limit;
+    return {
+      hasOlderEvents,
+      events: rows
+        .slice(0, limit)
+        .reverse()
+        .map((r) => ({
+          id: r.id,
+          conversationId: r.conversation_id,
+          runId: r.run_id,
+          type: r.type,
+          data: JSON.parse(r.data),
+          createdAt: r.created_at,
+        })) as AgentEvent[],
+    };
+  }
   conversations() {
     return this.list<Conversation>('conversation').sort(
       (a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt,

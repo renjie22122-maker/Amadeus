@@ -135,15 +135,32 @@ export function App() {
   const sendingRef = useRef(false);
   const loadVersions = useRef(new Map<string, number>());
   const loading = useRef(new Map<string, Promise<any>>());
+  const anchorRef = useRef(anchor);
+  anchorRef.current = anchor;
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const load = useCallback(async (id: string) => {
     let request = loading.current.get(id);
     if (!request) {
       loadVersions.current.set(id, (loadVersions.current.get(id) || 0) + 1);
       const cached = detailCache.current.get(id);
-      const after = cached?.events.at(-1)?.id || 0;
-      request = api('/conversations/' + id + '?after=' + after).then((value) => ({
+      const after = anchorRef.current ? 0 : cached?.events.at(-1)?.id || 0;
+      request = api(
+        '/conversations/' +
+          id +
+          '?after=' +
+          after +
+          (!after && !anchorRef.current ? '&limit=500' : ''),
+      ).then((value) => ({
         ...value,
-        events: mergeConversationEvents(cached?.events || [], value.events, value.deliveries),
+        hasOlderEvents:
+          value.hasOlderEvents ??
+          (after ? detailCache.current.get(id)?.hasOlderEvents : false) ??
+          false,
+        events: mergeConversationEvents(
+          detailCache.current.get(id)?.events || [],
+          value.events,
+          value.deliveries,
+        ),
       }));
       loading.current.set(id, request);
     }
@@ -266,6 +283,7 @@ export function App() {
             e.type === 'plan.updated' ||
             e.type === 'team.assigned' ||
             e.type === 'team.lifecycle' ||
+            e.type === 'team.control' ||
             (e.type === 'tool.completed' &&
               [
                 'create_plan',
@@ -607,16 +625,40 @@ export function App() {
     const lastByRun = new Map(all.filter((e) => e.runId).map((e) => [e.runId, e.id]));
     const starts = all.map((e, i) => (e.type === 'user.message' ? i : -1)).filter((i) => i >= 0);
     const offset = starts.length > visibleTurns ? starts[starts.length - visibleTurns] : 0;
-    if (offset > 0)
+    if (offset > 0 || detail?.hasOlderEvents)
       nodes.push(
         <button
           key="older"
           className="load-older"
-          onClick={() => {
+          disabled={loadingOlder}
+          onClick={async () => {
+            if (!selected || !detail) return;
             stick.current = false;
             const container = scroll.current,
               height = container?.scrollHeight || 0,
               top = container?.scrollTop || 0;
+            if (!offset && detail.hasOlderEvents) {
+              setLoadingOlder(true);
+              try {
+                const earlier = await api<ConversationDetail>(
+                  '/conversations/' + selected + '?limit=500&before=' + all[0].id,
+                );
+                const latest = detailCache.current.get(selected) || detail;
+                const merged = {
+                  ...latest,
+                  hasOlderEvents: earlier.hasOlderEvents,
+                  events: mergeConversationEvents(earlier.events, latest.events),
+                };
+                detailCache.current.set(selected, merged);
+                if (selectedRef.current !== selected) return;
+                setDetail(merged);
+              } catch (e: any) {
+                notify(e.message);
+                return;
+              } finally {
+                setLoadingOlder(false);
+              }
+            }
             setVisibleTurns((n) => n + 6);
             requestAnimationFrame(() => {
               if (container) container.scrollTop = top + container.scrollHeight - height;
@@ -624,7 +666,7 @@ export function App() {
           }}
         >
           {language === 'zh' ? '加载较早的对话' : 'Load earlier messages'} ·{' '}
-          {starts.length - visibleTurns}
+          {loadingOlder ? '…' : Math.max(0, starts.length - visibleTurns) || '…'}
         </button>,
       );
     for (const e of all.slice(offset)) {
