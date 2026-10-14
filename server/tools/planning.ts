@@ -1,3 +1,4 @@
+import { installTeamCollaboration } from './team-collaboration.js';
 import {
   recoveryContract,
   prepareRecovery,
@@ -25,6 +26,7 @@ import { z } from 'zod';
 import type { ToolRegistry } from './registry.js';
 import { TaskBoard, taskInput, rootRun } from '../services/task-board.js';
 export function installPlanning(registry: ToolRegistry) {
+  installTeamCollaboration(registry);
   registry.add({
     name: 'prepare_recovery_action',
     effect: 'coordinate',
@@ -256,11 +258,12 @@ export function installPlanning(registry: ToolRegistry) {
     effect: 'coordinate',
     atomic: true,
     description:
-      'Create a peer team. In auto mode choose host for artifact/dependency scheduling or creative for evidence challenge/discussion; explain the task-based choice with reason. Explicit user modes and off remain binding. Auto-enrollment defaults to true. Use autoEnroll=true with just your current run ID to create the team BEFORE spawning; new children and continuations then join automatically. Otherwise enroll existing active members including yourself. Host completion is computed, never voted into truth. Discussion limit is explicit per member.',
+      'Create a peer team. In auto mode choose host for artifact/dependency scheduling or creative for evidence challenge/discussion; explain the task-based choice with reason. Explicit user modes and off remain binding. Auto-enrollment defaults to true. Use autoEnroll=true with just your current run ID to create the team BEFORE spawning; new children and continuations then join automatically. Otherwise enroll existing active members including yourself. Set reviewRequired=true only when the task needs peer feedback on shared proposals, constraints or conflicting interpretations. This requires concrete proposal review before coordinator completion, not a message quota. Leave false for independent aggregation. Host completion is computed, never voted into truth. Discussion limit is explicit per member.',
     schema: z.object({
       mode: z.enum(['host', 'creative']),
       members: z.array(z.string()).min(1).max(32),
       autoEnroll: z.boolean().default(true),
+      reviewRequired: z.boolean().default(false),
       reason: z.string().min(1).max(1000).optional(),
       maxMessages: z.number().int().min(1).max(1000).default(12),
     }),
@@ -273,6 +276,7 @@ export function installPlanning(registry: ToolRegistry) {
           a.maxMessages,
           a.autoEnroll,
           a.reason,
+          a.reviewRequired,
         ),
       ),
     }),

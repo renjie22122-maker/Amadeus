@@ -1,3 +1,4 @@
+import { TeamCollaboration, collaborationUsage } from './team-collaboration.js';
 import type { Conversation, Run } from '../../shared/types.js';
 import { Store, id } from '../storage/store.js';
 import { assert } from '../core/errors.js';
@@ -13,6 +14,7 @@ export interface TeamSpace {
   closed: Record<string, string>;
   maxMessages: number;
   autoEnroll?: boolean;
+  reviewRequired?: boolean;
   groups?: { id: string; title: string; purpose: string; members: string[] }[];
   selection?: { by: 'agent' | 'user'; reason: string };
 }
@@ -32,6 +34,7 @@ export class Teams {
     maxMessages: number,
     autoEnroll = false,
     reason = '',
+    reviewRequired = false,
   ) {
     assert(this.authority(run), 'TEAM_ROLE', 'Only current coordinator configures the team.');
     const root = rootRun(this.store, run),
@@ -87,6 +90,7 @@ export class Teams {
       closed: {},
       maxMessages,
       autoEnroll,
+      reviewRequired,
       selection: {
         by: (c.teamMode || 'auto') === 'auto' ? 'agent' : 'user',
         reason: reason.trim() || 'Selected for the current task',
@@ -265,7 +269,9 @@ export class Teams {
       );
       const messages = this.messages(run);
       assert(
-        messages.filter((m) => m.sender === run.id).length < t.maxMessages,
+        messages.filter((m) => m.sender === run.id).length +
+          collaborationUsage(this.store, run.id, t.id) <
+          t.maxMessages,
         'DISCUSSION_LIMIT',
         'Configured per-member discussion limit reached; summarize or end participation.',
       );
@@ -337,6 +343,11 @@ export class Teams {
       'TASK_INCOMPLETE',
       'Finish owned tasks or explicitly hand them off.',
     );
+    assert(
+      !new TeamCollaboration(this.store).blockers(run).length,
+      'TEAM_REVIEW_PENDING',
+      'Inspect team proposals: finish required peer review or explicitly retain/withdraw unresolved work before closing coordination.',
+    );
     t.closed[run.id] = summary;
     t.revision++;
     this.store.put('team-space', t);
@@ -348,7 +359,9 @@ export class Teams {
     if (!t) return null;
     const tasks = new TaskBoard(this.store).get(run).tasks;
     const members = t.members.map((k) => this.store.runHeader(k));
-    const blockers: string[] = [];
+    const blockers: string[] = new TeamCollaboration(this.store).blockers(
+      this.store.runHeader(t.roles.coordinator),
+    );
     for (const r of members) {
       if (this.store.unknownEffects(r.conversationId).length)
         blockers.push('Uncertain operation: ' + r.id);
@@ -377,14 +390,19 @@ export class Teams {
       ...t,
       status,
       blockers,
+      collaboration: new TeamCollaboration(this.store).summary(run),
       messages: this.messages(run),
       discussionBudget: {
         unit: 'messages_per_member',
         limit: t.maxMessages,
-        used: this.messages(run).filter((m) => m.sender === run.id).length,
+        used:
+          this.messages(run).filter((m) => m.sender === run.id).length +
+          collaborationUsage(this.store, run.id, t.id),
         remaining: Math.max(
           0,
-          t.maxMessages - this.messages(run).filter((m) => m.sender === run.id).length,
+          t.maxMessages -
+            this.messages(run).filter((m) => m.sender === run.id).length -
+            collaborationUsage(this.store, run.id, t.id),
         ),
         notice:
           'Message allowance is not evidence quality or consensus. Summarize when no new evidence remains; request coordinator adjustment if necessary.',

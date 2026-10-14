@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-15 — Versioned peer collaboration
+
+Optional concrete proposal review links objections, author responses, revisions and reassessment. Pending declared review blocks lead completion with bounded repair; unresolved/withdrawn outcomes remain warnings. Independent work needs no team or discussion quota. Adds team-panel status and continuation-safe reviewer identity. No new dependencies or launcher changes.
+
 ## Evidence and native evaluation
 
 Preserve spreadsheet styles and image detail; add explicit format contracts and repeat-observation hints. Separate three native GAIA arms from controlled shared-tool experiments, apply source exclusions and preserve raw grading. Optional Setup-Evaluation prepares dependencies without starting paid runs.

@@ -54,5 +54,12 @@ export async function finalizeRun(store: Store, run: Run, files: FileScope) {
       report.blockers.memories.join(', ') +
       '. Verify applicability or record a concrete reason with resolve_memory_check.',
   );
+  assert(
+    !report.blockers.collaboration.length,
+    'TEAM_REVIEW_PENDING',
+    'Required peer collaboration remains open: ' +
+      report.blockers.collaboration.join('; ') +
+      '. Inspect proposals; request response/revision or explicitly retain unresolved limits. Do not add empty discussion.',
+  );
   store.transition(run.id, 'completed');
 }

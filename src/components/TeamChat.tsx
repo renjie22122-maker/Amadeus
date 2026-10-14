@@ -259,6 +259,59 @@ function TeamRound({
             ))}
           </div>
         )}
+        {detail.teamSpace?.collaboration &&
+          (detail.teamSpace.collaboration.required ||
+            detail.teamSpace.collaboration.items.length > 0) && (
+            <section
+              className="team-management"
+              aria-label={zh ? '方案协作进度' : 'Proposal collaboration'}
+            >
+              <strong>{zh ? '方案协作进度' : 'Proposal collaboration'}</strong>
+              <p>
+                {zh ? '待处理' : 'Open'} {detail.teamSpace.collaboration.open} ·{' '}
+                {zh ? '保留分歧' : 'Retained concerns'} {detail.teamSpace.collaboration.retained} ·{' '}
+                {zh ? '已撤回' : 'Withdrawn'} {detail.teamSpace.collaboration.withdrawn}
+              </p>
+              {detail.teamSpace.collaboration.missing && (
+                <p>
+                  {zh
+                    ? '已要求交叉评审，但尚未提交具体方案。'
+                    : 'Peer review requested; no concrete proposal submitted yet.'}
+                </p>
+              )}
+              {detail.teamSpace.collaboration.items.map((p) => (
+                <details key={p.id}>
+                  <summary>
+                    {p.title} · v{p.version} ·{' '}
+                    {zh
+                      ? (
+                          {
+                            'awaiting-review': '等待评审',
+                            'needs-response': '异议待处理',
+                            'awaiting-recheck': '已回应，等待复核',
+                            reviewed: '当前版本已评审',
+                            retained: '保留未解决分歧',
+                            withdrawn: '方案已撤回',
+                          } as Record<string, string>
+                        )[p.state] || p.state
+                      : p.state}
+                  </summary>
+                  <p>
+                    {zh ? '作者' : 'Author'}: {name(p.author)}
+                  </p>
+                  <p>
+                    {zh ? '评审成员' : 'Reviewers'}: {p.reviewers.map(name).join(' · ')}
+                  </p>
+                  {p.reason && <p>{p.reason}</p>}
+                </details>
+              ))}
+              <small className="muted">
+                {zh
+                  ? '评审记录不等于事实或可行性证明；修改版本后需重新评审。不按消息数量计算完成。'
+                  : 'Reviews are not truth or feasibility proofs. New versions require fresh review; message count is not completion.'}
+              </small>
+            </section>
+          )}
         <TeamRelations
           runs={related}
           state={state}

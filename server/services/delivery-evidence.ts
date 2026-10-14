@@ -1,3 +1,4 @@
+import { TeamCollaboration } from './team-collaboration.js';
 import { acceptanceStatus } from './task-acceptance.js';
 import type { Run } from '../../shared/types.js';
 import type { Store } from '../storage/store.js';
@@ -7,7 +8,7 @@ import { MemoryChecks } from './memory-checks.js';
 import { Teams } from './team-space.js';
 export interface EvidenceItem {
   id: string;
-  kind: 'task' | 'challenge' | 'memory' | 'effect' | 'recovery';
+  kind: 'task' | 'challenge' | 'memory' | 'effect' | 'recovery' | 'collaboration';
   state: string;
   blocking: boolean;
   next: string;
@@ -44,7 +45,28 @@ export function deliveryEvidence(store: Store, run: Run) {
         r.runId === run.id &&
         ['executing', 'waiting-action', 'waiting-check', 'unknown'].includes(r.status),
     );
+  const collaboration = new TeamCollaboration(store);
+  const collaborationSummary = collaboration.summary(run);
+  const collaborationBlockers = collaboration.blockers(run);
   const entries: EvidenceItem[] = [
+    ...collaborationBlockers.map((next, index) => ({
+      id: 'collaboration-' + index,
+      kind: 'collaboration' as const,
+      state: 'pending',
+      blocking: true,
+      next,
+    })),
+    ...collaborationSummary.items
+      .filter((p) => p.state === 'retained' || p.state === 'withdrawn')
+      .map((p) => ({
+        id: p.id,
+        kind: 'collaboration' as const,
+        state: p.state,
+        blocking: false,
+        next:
+          p.reason ||
+          'Disclose unresolved disagreement or scope reduction; not a successful peer review.',
+      })),
     ...recovery.map((r) => ({
       id: r.id,
       kind: 'recovery' as const,
@@ -124,10 +146,11 @@ export function deliveryEvidence(store: Store, run: Run) {
     });
   const blocking = entries.filter((e) => e.blocking);
   const gaps =
-    entries.some((e) => e.state === 'declared-done-unverified') ||
+    entries.some((e) => ['declared-done-unverified', 'retained', 'withdrawn'].includes(e.state)) ||
     impact.some((i) => i.coverage !== 'declared-successor-checked');
   return {
     version: 1,
+    collaboration: collaborationSummary,
     verdict: blocking.length ? 'red' : gaps ? 'yellow' : entries.length ? 'green' : 'unassessed',
     meaning:
       'Green means recorded required gates satisfied, not correctness or security proof. Yellow reports coverage gaps without inventing a pass. Snapshot checks may become stale; finalization refreshes versions.',
@@ -142,6 +165,7 @@ export function deliveryEvidence(store: Store, run: Run) {
     limitations:
       'Declared artifacts and direct verification dependencies only; no complete semantic impact graph or test-to-behavior proof.',
     blockers: {
+      collaboration: collaborationBlockers,
       recoveries: recovery.map((r) => r.id),
       effects: effects.map((e) => e.id),
       tasks: unfinished.map((t) => t.id),

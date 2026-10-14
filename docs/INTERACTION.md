@@ -97,3 +97,15 @@ Chat opens the latest 500 events and loads earlier pages on request; this is a p
 Research assessments can record claim-level source nature, conclusion type, edition context and limitations. Testimony/commentary cannot be labeled direct observation in this record. These are agent assessments, not truth certification. A primary document can contain secondary commentary; absent search results cannot prove a statement never appears. Separate self-review from actual independent contributors, and repeated citations from independent sources.
 
 Management responsibilities are grouped by their current owner. The lead appears as “Lead agent”, not the full conversation prompt. Transfers are under an optional disclosure and only list other active members. These controls neither create professional roles nor spawn agents; actual contributors and assigned work remain in the round’s collaboration view.
+
+## Concrete peer collaboration
+
+Independent subtasks may return directly to the lead. A team is useful only when members need to reconcile constraints, competing proposals or conflicting evidence. The model chooses this based on the current task; a past role arrangement is not a mandatory template.
+
+For such work, `configure_team(reviewRequired=true)` declares a peer-review obligation. Submit a concrete version with `submit_team_proposal`, assigning only affected reviewers. Each reviewer reads it with `inspect_team_proposal`, then records acceptance or a specific requested change with `review_team_proposal`. The author either answers using `respond_team_review` or revises the proposal. An answer awaits reassessment; a revision invalidates old acceptance. No minimum message count, fixed professional roles, all-to-all discussion or majority vote is required.
+
+The team panel shows proposal version, author, reviewers and whether review, response or reassessment is pending. The lead cannot close declared review work without a proposal or with open reviews. Members may finish their own turn; the lead can continue the same member for follow-up. Notifications identify pending delivery and do not claim that recipients read them.
+
+Structured contributions share the existing member discussion budget; each proposal allows at most six versions. The coordinator can explicitly retain an unresolved disagreement or withdraw a proposal with its impact recorded. Both remain delivery warnings, never successful review. Reading receipts prove access to a version, not comprehension; peer acceptance is not factual truth, independent evidence or artifact verification. File changes still require the existing verification path.
+
+No dependency or launcher change is required. Existing teams default to no declared review requirement. Restart the service when ready to load this update; an already-running service is not upgraded automatically.

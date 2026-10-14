@@ -42,6 +42,24 @@ export interface ConversationDetail {
     revision: number;
     maxMessages: number;
     autoEnroll?: boolean;
+    reviewRequired?: boolean;
+    collaboration?: {
+      required: boolean;
+      missing: boolean;
+      open: number;
+      retained: number;
+      withdrawn: number;
+      items: {
+        id: string;
+        title: string;
+        version: number;
+        revision: number;
+        state: string;
+        author: string;
+        reviewers: string[];
+        reason?: string;
+      }[];
+    };
     groups?: { id: string; title: string; purpose: string; members: string[] }[];
     selection?: { by: 'agent' | 'user'; reason: string };
     discussionBudget?: { limit: number; used: number; remaining: number; unit: string };

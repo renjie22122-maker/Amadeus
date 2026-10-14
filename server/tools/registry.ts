@@ -204,6 +204,11 @@ export class ToolRegistry {
             'update_team_discussion_limits',
             'update_team_roster',
             'configure_team_group',
+            'submit_team_proposal',
+            'inspect_team_proposal',
+            'review_team_proposal',
+            'respond_team_review',
+            'settle_team_proposal',
           ]
         : ['configure_team', 'message_agent'],
     );
