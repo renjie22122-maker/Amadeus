@@ -1,3 +1,4 @@
+import { suspiciousText, textFormats, TEXT_DECODING_REVISION } from './text-decoding.js';
 import { diagnoseFailure, type FailureDiagnosis } from './failure-diagnosis.js';
 import { evaluateRetrieval } from './retrieval-evaluation.js';
 import { Configuration } from './settings.js';
@@ -23,6 +24,7 @@ export interface SourceIssue {
   hash?: string;
   attempts: number;
   revision: number;
+  parserRevision?: number;
 }
 export interface KnowledgeProgress {
   phase: 'scanning' | 'checking' | 'parsing' | 'graph' | 'indexing' | 'evaluating' | 'done';
@@ -317,7 +319,12 @@ export class KnowledgeMaintenance {
         const issue = (path: string, stage: string, error: unknown, hash?: string) => {
           const old = w.issues?.find(
             (x) =>
-              x.path === path && x.stage === stage && x.hash === hash && x.revision === w.revision,
+              x.path === path &&
+              x.stage === stage &&
+              x.hash === hash &&
+              x.revision === w.revision &&
+              x.parserRevision ===
+                (textFormats.has(extname(path).toLowerCase()) ? TEXT_DECODING_REVISION : undefined),
           );
           issues.push({
             path,
@@ -326,6 +333,9 @@ export class KnowledgeMaintenance {
             error: String((error as any)?.message || error).slice(0, 500),
             attempts: (old?.attempts || 0) + 1,
             revision: w.revision,
+            parserRevision: textFormats.has(extname(path).toLowerCase())
+              ? TEXT_DECODING_REVISION
+              : undefined,
           });
         };
         let visited = 0;
@@ -409,6 +419,21 @@ export class KnowledgeMaintenance {
             .digest('hex');
           publish({ phase: 'checking', currentFile: path }, true);
           const old = this.store.maybe<any>('knowledge-source', key);
+          const parserRevision = textFormats.has(extname(path).toLowerCase())
+            ? TEXT_DECODING_REVISION
+            : undefined;
+          let needsRepair = false;
+          if (old && !old.removed && parserRevision && old.parserRevision !== parserRevision) {
+            // One-time quality audit of old text sources; healthy documents keep their vectors.
+            const chunks = this.store.db
+              .prepare('SELECT text FROM chunks WHERE document_id=?')
+              .iterate(old.documentId);
+            for (const row of chunks)
+              if (suspiciousText((row as any).text)) {
+                needsRepair = true;
+                break;
+              }
+          }
           let hash: string | undefined;
           try {
             hash = await fileHash(path);
@@ -417,13 +442,16 @@ export class KnowledgeMaintenance {
                 x.path === path &&
                 x.stage === 'parse' &&
                 x.hash === hash &&
-                x.revision === w.revision,
+                x.revision === w.revision &&
+                x.parserRevision === parserRevision,
             );
             if (failed && failed.attempts >= 3) {
               issues.push(failed);
               continue;
             }
-            if (old?.hash === hash && !old.removed) {
+            if (old?.hash === hash && !old.removed && !needsRepair) {
+              if (old.parserRevision !== parserRevision)
+                this.store.put('knowledge-source', { ...old, parserRevision });
               unchanged++;
               continue;
             }
@@ -444,11 +472,12 @@ export class KnowledgeMaintenance {
               hash,
               documentId: doc.id,
               removed: false,
+              parserRevision,
             });
           } catch (e) {
             issue(path, 'parse', e, hash);
             // A failed replacement must not leave stale facts searchable.
-            if (old && hash && old.hash !== hash) {
+            if (old && hash && (old.hash !== hash || needsRepair)) {
               const doc = this.store.maybe<any>('document', old.documentId);
               if (doc) this.store.put('document', { ...doc, validUntil: Date.now() });
               this.store.put('knowledge-source', { ...old, removed: true });

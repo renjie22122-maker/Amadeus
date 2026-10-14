@@ -1,3 +1,4 @@
+import { decodeDocumentText } from './text-decoding.js';
 import { ocrImage } from './ocr.js';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -123,5 +124,5 @@ export async function extract(path: string, options: { ocr?: boolean } = {}): Pr
     ].includes(ext)
   )
     throw new Error('Unsupported document format: ' + ext);
-  return readFile(path, 'utf8');
+  return decodeDocumentText(await readFile(path)).text;
 }
