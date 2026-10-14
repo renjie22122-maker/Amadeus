@@ -136,6 +136,30 @@ export function KnowledgeAutomation({
       setBusy(false);
     }
   };
+  const dirty =
+    !!value &&
+    (graph !== !!value.graphProfileId ||
+      JSON.stringify(
+        [
+          ...new Set(
+            paths
+              .split('\n')
+              .map((x) => x.trim())
+              .filter(Boolean),
+          ),
+        ].sort(),
+      ) !== JSON.stringify([...value.paths].sort()));
+  const runAction = async (action: 'sync' | 'retry') => {
+    mutation.current++;
+    setBusy(true);
+    try {
+      setValue(await api('/knowledge/maintenance/action', { scope, action }));
+    } catch (e: any) {
+      notify(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
   if (!scope) return null;
   if (!value)
     return (
@@ -238,9 +262,31 @@ export function KnowledgeAutomation({
         />
         {zh ? '开启自动更新与索引' : 'Automatically update and index'}
       </label>
-      <button disabled={busy} onClick={() => void save(value.enabled)}>
-        {zh ? '保存范围 / 重试' : 'Save sources / retry'}
-      </button>
+      <div className="row wrap">
+        <button disabled={busy || !dirty} onClick={() => void save(value.enabled)}>
+          {zh ? '保存范围' : 'Save sources'}
+        </button>
+        <button disabled={busy || dirty || !value.enabled} onClick={() => void runAction('sync')}>
+          {zh ? '立即增量同步' : 'Sync changes now'}
+        </button>
+        {(value.error || value.issues?.length > 0) && (
+          <button
+            disabled={busy || dirty || !value.enabled}
+            onClick={() => void runAction('retry')}
+          >
+            {zh ? '重试失败项' : 'Retry failed items'}
+          </button>
+        )}
+      </div>
+      <p className="muted">
+        {dirty
+          ? zh
+            ? '范围有未保存的修改。保存后按自动维护开关增量处理。'
+            : 'Unsaved source changes. Save to apply automatic incremental maintenance.'
+          : zh
+            ? '新增文件夹保存后自动增量处理；未变化文件复用解析与索引。保存不会重置失败项。'
+            : 'Added folders are processed incrementally when enabled; unchanged files reuse parsing and indexes. Saving does not reset failed items.'}
+      </p>
       <p role="status">
         {zh ? '状态：' : 'Status: '}
         {value.status === 'partial' ? (zh ? '部分完成' : 'Partially completed') : value.status}
@@ -318,8 +364,8 @@ export function KnowledgeAutomation({
           </ul>
           <p>
             {zh
-              ? '保存 / 重试会重新处理失败项；未变化的成功文件不会重复导入。'
-              : 'Save / retry retries failed items; unchanged successful files are reused.'}
+              ? '点击“重试失败项”重新处理失败项；保存范围不会重置失败次数。未变化的成功文件不会重复导入。'
+              : 'Use Retry failed items to reset failures; saving sources preserves failure counts. Unchanged successful files are reused.'}
           </p>
         </details>
       )}

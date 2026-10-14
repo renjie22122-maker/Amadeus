@@ -659,24 +659,30 @@ export async function createApp(options: { directory: string; dist?: string; run
       'EMBEDDING_DISABLED',
       'Select local embedding or configure an endpoint in Settings first.',
     );
-    const old = store.maybe<any>('knowledge-watch', data.scope);
-    for (const job of store.list<any>('knowledge-index-job')) {
-      const doc = store.maybe<any>('document', job.id.split('|')[0]);
-      if (doc?.scope === data.scope && job.status !== 'completed')
-        store.remove('knowledge-index-job', job.id);
-    }
-    return store.put('knowledge-watch', {
+    return maintenance.saveSources({
       id: data.scope,
       enabled: data.enabled,
-      paths: [...new Set(data.paths)],
+      paths: data.paths,
       target: knowledgeEmbedding.fingerprint(),
       graphProfileId: data.graphProfileId,
       graphTarget: data.graphProfileId
         ? memoryTarget(config.profile(data.graphProfileId))
         : undefined,
-      revision: (old?.revision || 0) + 1,
-      status: data.enabled ? 'pending' : 'off',
     });
+  });
+  app.post('/api/knowledge/maintenance/action', async (req) => {
+    const data = z.object({ scope: z.string(), action: z.enum(['sync', 'retry']) }).parse(req.body);
+    checkScope(data.scope);
+    const result =
+      data.action === 'retry'
+        ? maintenance.recheck(data.scope)
+        : maintenance.synchronize(data.scope);
+    // Let an invalidated scan settle, then process the newly requested revision.
+    void maintenance
+      .tick()
+      .then(() => maintenance.tick())
+      .catch(() => {});
+    return result;
   });
   app.post('/api/knowledge/feedback', async (req) => {
     const d = z

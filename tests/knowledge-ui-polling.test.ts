@@ -74,11 +74,31 @@ test('knowledge panel renders immediately and polls while vector stats are delay
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.getByText('Loading maintenance status…').waitFor();
     await page.getByText('file-1', { exact: true }).waitFor();
+    assert.equal(
+      await page.getByRole('button', { name: 'Save sources', exact: true }).isDisabled(),
+      true,
+    );
+    assert.equal(
+      await page.getByRole('button', { name: 'Sync changes now', exact: true }).isEnabled(),
+      true,
+    );
+    assert.equal(
+      await page.getByRole('button', { name: 'Retry failed items', exact: true }).count(),
+      0,
+    );
     const draft = page.locator('textarea').first();
     await draft.fill('unsaved-new-folder');
     await page.getByText('file-2', { exact: true }).waitFor({ timeout: 5000 });
     assert.ok(polls >= 2);
     assert.equal(await draft.inputValue(), 'unsaved-new-folder');
+    assert.equal(
+      await page.getByRole('button', { name: 'Save sources', exact: true }).isEnabled(),
+      true,
+    );
+    assert.equal(
+      await page.getByRole('button', { name: 'Sync changes now', exact: true }).isDisabled(),
+      true,
+    );
     await page.close();
   } finally {
     await browser.close();

@@ -165,6 +165,56 @@ export class KnowledgeMaintenance {
       if (!job.documents.length) this.store.put('knowledge-batch', { ...job, status: 'completed' });
     }
   }
+  saveSources(
+    input: Pick<
+      KnowledgeWatch,
+      'id' | 'enabled' | 'paths' | 'target' | 'graphProfileId' | 'graphTarget'
+    >,
+  ) {
+    const old = this.store.maybe<KnowledgeWatch>('knowledge-watch', input.id);
+    const paths = [...new Set(input.paths)];
+    if (
+      old &&
+      old.enabled === input.enabled &&
+      old.target === input.target &&
+      old.graphTarget === input.graphTarget &&
+      old.graphProfileId === input.graphProfileId &&
+      JSON.stringify([...old.paths].sort()) === JSON.stringify([...paths].sort())
+    )
+      return old;
+    const revision = (old?.revision || 0) + 1;
+    return this.store.put('knowledge-watch', {
+      ...old,
+      ...input,
+      paths,
+      revision,
+      // Configuration changes invalidate active scans, not per-file failure history.
+      issues: old?.issues?.map((issue) => ({ ...issue, revision })),
+      status: input.enabled ? 'pending' : 'off',
+      progress: undefined,
+      // A changed scope/service needs a new scan; failed document jobs remain intact.
+      failures: 0,
+      nextRetryAt: undefined,
+      failedRevision: undefined,
+      error: undefined,
+      diagnosis: undefined,
+    });
+  }
+  synchronize(scope: string) {
+    const w = this.store.get<KnowledgeWatch>('knowledge-watch', scope);
+    if (!w.enabled || !this.current(w))
+      throw Error('Enable and save the source configuration first.');
+    if ((w.failures || 0) >= 3 && w.failureKind !== 'transient')
+      throw Error('Maintenance is paused after repeated failures; use Retry failed items.');
+    const revision = w.revision + 1;
+    return this.store.put('knowledge-watch', {
+      ...w,
+      revision,
+      status: 'pending',
+      progress: undefined,
+      issues: w.issues?.map((issue) => ({ ...issue, revision })),
+    });
+  }
   recheck(scope: string) {
     const w = this.store.get<KnowledgeWatch>('knowledge-watch', scope);
     if (!w.enabled || !this.current(w))
