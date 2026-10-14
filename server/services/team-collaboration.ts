@@ -1,10 +1,18 @@
+import { researchReferenceCurrent } from './research-case.js';
 import type { Run } from '../../shared/types.js';
 import { Store, id } from '../storage/store.js';
 import { assert } from '../core/errors.js';
 import { rootRun } from './task-board.js';
 import type { TeamSpace } from './team-space.js';
 
+export type ReviewFocus = {
+  alternativeId: string;
+  discriminatingObservation: string;
+  impact: string;
+};
+type ResearchReference = { id: string; revision: number; hypothesisIds: string[] };
 type Review = {
+  focus?: ReviewFocus;
   revision: number;
   version: number;
   reviewer: string;
@@ -22,6 +30,7 @@ type Response = {
   at: number;
 };
 export interface TeamProposal {
+  research?: ResearchReference;
   id: string;
   teamId: string;
   author: string;
@@ -128,6 +137,7 @@ export class TeamCollaboration {
       content: string;
       reviewerRunIds: string[];
       changeNote: string;
+      research?: ResearchReference;
     },
   ) {
     return this.store.transaction(() => {
@@ -172,6 +182,12 @@ export class TeamCollaboration {
           'TEAM_REVIEW_BUDGET',
           'Six versions exhausted. Retain unresolved concerns explicitly or withdraw the proposal; do not restart merely to evade this bound.',
         );
+        assert(
+          !p.research || input.research,
+          'RESEARCH_REFERENCE',
+          'A revised research proposal must retain a current research reference.',
+        );
+        p.research = input.research;
         p.title = input.title;
         p.content = input.content;
         p.version++;
@@ -190,6 +206,7 @@ export class TeamCollaboration {
         id: id(),
         teamId: t.id,
         author: run.conversationId,
+        research: input.research,
         authorRunId: run.id,
         title: input.title,
         content: input.content,
@@ -205,7 +222,14 @@ export class TeamCollaboration {
       return this.save(run, p, 'proposal-submitted');
     });
   }
-  review(run: Run, key: string, revision: number, verdict: Review['verdict'], reason: string) {
+  review(
+    run: Run,
+    key: string,
+    revision: number,
+    verdict: Review['verdict'],
+    reason: string,
+    focus?: ReviewFocus,
+  ) {
     return this.store.transaction(() => {
       this.team(run, true);
       const p = this.get(run, key);
@@ -224,6 +248,15 @@ export class TeamCollaboration {
         read?.revision === p.revision,
         'TEAM_REVIEW_UNREAD',
         'Use inspect_team_proposal to read the current version and responses before reviewing.',
+      );
+      assert(
+        !p.research ||
+          (focus &&
+            p.research.hypothesisIds.includes(focus.alternativeId) &&
+            focus.discriminatingObservation.trim() &&
+            focus.impact.trim()),
+        'RESEARCH_REVIEW_FOCUS',
+        'For research reviews identify a recorded alternative, the distinguishing observation, and its effect on the conclusion; agreement alone is insufficient.',
       );
       const previous = p.reviews
         .filter((r) => r.version === p.version && r.reviewer === run.conversationId)
@@ -245,6 +278,7 @@ export class TeamCollaboration {
         'This version is already accepted by you; do not add agreement messages.',
       );
       p.reviews.push({
+        focus,
         revision: p.revision + 1,
         version: p.version,
         reviewer: run.conversationId,
@@ -315,6 +349,8 @@ export class TeamCollaboration {
   }
   state(p: TeamProposal) {
     if (p.disposition) return p.disposition.state;
+    if (p.research && !researchReferenceCurrent(this.store, p.research.id, p.research.revision))
+      return 'awaiting-review';
     const current = p.reviewers.map((reviewer) =>
       p.reviews.filter((r) => r.version === p.version && r.reviewer === reviewer).at(-1),
     );

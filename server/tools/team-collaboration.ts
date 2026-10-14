@@ -1,3 +1,5 @@
+import { ResearchCases } from '../services/research-case.js';
+import { assert } from '../core/errors.js';
 import { z } from 'zod';
 import type { ToolRegistry, ToolContext } from './registry.js';
 import { TeamCollaboration, type TeamProposal } from '../services/team-collaboration.js';
@@ -39,8 +41,9 @@ export function installTeamCollaboration(registry: ToolRegistry) {
     effect: 'coordinate',
     atomic: true,
     description:
-      'Submit a concrete proposal/output requiring peer feedback, or revise your existing proposal. Assign enrolled reviewer run IDs; no self-review. Supply content and specific decision/constraint in changeNote. Revisions invalidate prior acceptance and retain reviewers/history. Do not use for independent tasks or manufacture discussion. Maximum six versions; unresolved work can be explicitly retained, never called passed.',
+      'Submit a concrete proposal/output requiring peer feedback, or revise your existing proposal. Assign enrolled reviewer run IDs; no self-review. Optionally link researchCaseId so peers compare explicit alternatives and discriminating observations. Supply content and specific decision/constraint in changeNote. Revisions invalidate prior acceptance and retain reviewers/history. Do not use for independent tasks or manufacture discussion. Maximum six versions; unresolved work can be explicitly retained, never called passed.',
     schema: z.object({
+      researchCaseId: z.string().optional(),
       id: z.string().optional(),
       revision: z.number().int().min(1).optional(),
       title: z.string().min(1).max(240),
@@ -48,7 +51,32 @@ export function installTeamCollaboration(registry: ToolRegistry) {
       reviewerRunIds: z.array(z.string()).min(1).max(31),
       changeNote: z.string().min(1).max(2000),
     }),
-    run: (a, c) => result(c, new TeamCollaboration(c.store).submit(c.run, a)),
+    run: (a, c) => {
+      const collab = new TeamCollaboration(c.store);
+      const researchId =
+        a.researchCaseId || (a.id ? collab.get(c.run, a.id).research?.id : undefined);
+      const research = researchId
+        ? new ResearchCases(c.store, c.run, c.scopes).inspect(researchId)
+        : undefined;
+      assert(
+        !research || (research.hypotheses.length >= 2 && !research.staleEvidenceIds.length),
+        'RESEARCH_REFERENCE',
+        'Research proposal needs current evidence and recorded alternatives.',
+      );
+      return result(
+        c,
+        collab.submit(c.run, {
+          ...a,
+          research: research
+            ? {
+                id: research.id,
+                revision: research.revision,
+                hypothesisIds: research.hypotheses.map((h) => h.id),
+              }
+            : undefined,
+        }),
+      );
+    },
   });
   registry.add({
     name: 'inspect_team_proposal',
@@ -64,18 +92,33 @@ export function installTeamCollaboration(registry: ToolRegistry) {
     effect: 'coordinate',
     atomic: true,
     description:
-      'After inspect_team_proposal returns the current version and responses, the assigned reviewer records acceptance of this version or a concrete requested change: identify the constraint, contradiction, dependency or alternative and why it affects the output. No token agreement messages. An objection cannot be changed to acceptance before author response/revision; no votes establish truth.',
+      'After inspect_team_proposal returns the current version and responses, the assigned reviewer records acceptance of this version or a concrete requested change: identify the constraint, contradiction, dependency or alternative and why it affects the output. For a research-linked proposal supply focus: alternativeId, discriminatingObservation and impact; inspect its research case and compare the strongest alternative. No token agreement messages. An objection cannot be changed to acceptance before author response/revision; no votes establish truth.',
     schema: z.object({
       id: z.string(),
       revision: z.number().int().min(1),
       verdict: z.enum(['accept', 'changes-requested']),
+      focus: z
+        .object({
+          alternativeId: z.string().min(1).max(80),
+          discriminatingObservation: z.string().min(1).max(1500),
+          impact: z.string().min(1).max(1500),
+        })
+        .optional(),
       reason: z.string().min(1).max(4000),
     }),
-    run: (a, c) =>
-      result(
-        c,
-        new TeamCollaboration(c.store).review(c.run, a.id, a.revision, a.verdict, a.reason),
-      ),
+    run: (a, c) => {
+      const collab = new TeamCollaboration(c.store),
+        proposal = collab.get(c.run, a.id);
+      if (proposal.research) {
+        const current = new ResearchCases(c.store, c.run, c.scopes).inspect(proposal.research.id);
+        assert(
+          current.revision === proposal.research.revision && !current.staleEvidenceIds.length,
+          'RESEARCH_CHANGED',
+          'The linked comparison changed; author must revise the proposal before this review.',
+        );
+      }
+      return result(c, collab.review(c.run, a.id, a.revision, a.verdict, a.reason, a.focus));
+    },
   });
   registry.add({
     name: 'respond_team_review',

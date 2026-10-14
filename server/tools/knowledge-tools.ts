@@ -1,3 +1,5 @@
+import { ResearchCases } from '../services/research-case.js';
+import { installResearchTools } from './research.js';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { assert } from '../core/errors.js';
@@ -7,21 +9,25 @@ const text = (value: unknown) => ({
   content: typeof value === 'string' ? value : JSON.stringify(value, null, 2),
 });
 export function installKnowledgeTools(registry: ToolRegistry) {
+  installResearchTools(registry);
   registry.add({
     name: 'read_knowledge_document',
     effect: 'read',
     description:
-      'Read indexed passages in document order, including neighboring context. Does not require source-file access or embeddings. Paginate to inspect evidence; never claim full-document coverage from one page.',
+      'Read indexed passages in document order, including neighboring context. Does not require source-file access or embeddings. Paginate to inspect evidence; during research pass caseId to share the reading budget and register evidence. Never claim full-document coverage from one page.',
     schema: z.object({
       documentId: z.string(),
       offset: z.number().int().min(0).default(0),
       limit: z.number().int().min(1).max(12).default(4),
       asOf: z.number().optional(),
+      caseId: z.string().optional(),
     }),
     run: (a, c) => {
+      const research = new ResearchCases(c.store, c.run, c.scopes);
+      const caseRecord = a.caseId ? research.get(a.caseId) : undefined;
       const doc = c.store.get<any>('document', a.documentId);
       assert(
-        c.scopes.includes(doc.scope) && documentAt(doc, a.asOf ?? Date.now()),
+        c.scopes.includes(doc.scope) && documentAt(doc, caseRecord?.asOf ?? a.asOf ?? Date.now()),
         'KNOWLEDGE_SCOPE',
         'Document is outside the current accessible version.',
       );
@@ -35,7 +41,22 @@ export function installKnowledgeTools(registry: ToolRegistry) {
           'SELECT id,ordinal,text FROM chunks WHERE document_id=? ORDER BY ordinal LIMIT ? OFFSET ?',
         )
         .all(doc.id, a.limit, a.offset);
+      if (caseRecord)
+        research.recordRead(
+          caseRecord.id,
+          'document:' +
+            doc.id +
+            ':' +
+            a.offset +
+            ':' +
+            a.limit +
+            ':' +
+            createHash('sha256').update(JSON.stringify(chunks)).digest('hex'),
+          chunks.reduce((n: number, r: any) => n + r.text.length, 0),
+          chunks.map((r: any) => r.id),
+        );
       return text({
+        caseRevision: caseRecord ? research.get(caseRecord.id).revision : undefined,
         documentId: doc.id,
         name: doc.name,
         version: doc.version,
@@ -78,7 +99,7 @@ export function installKnowledgeTools(registry: ToolRegistry) {
   registry.add({
     name: 'search_knowledge',
     description:
-      'Search only knowledge attached to this conversation or project. Cite returned document and chunk IDs.',
+      'Search only knowledge attached to this conversation or project. Auto/lookup performs one query; research broadens candidates without manufacturing query variants. Use a research case for hypothesis-driven follow-up. Cite returned document and chunk IDs.',
     effect: 'read',
     schema: z.object({
       query: z.string().min(1),
@@ -89,25 +110,12 @@ export function installKnowledgeTools(registry: ToolRegistry) {
       asOf: z.number().int().nonnegative().optional(),
     }),
     run: async (a, c) => {
-      const research =
-        a.strategy === 'research' ||
-        (a.strategy === 'auto' &&
-          /推断|推理|综合|比较|对比|证据|infer|compare|synthesize|evidence for|hypothesis/i.test(
-            a.query,
-          ));
+      const research = a.strategy === 'research';
       if (research && a.mode !== 'lexical') {
-        const chinese = /[\u3400-\u9fff]/.test(a.query);
-        const facets = chinese
-          ? ['关键事件 原文证据', '矛盾 反例 限定条件', '其他解释 不确定']
-          : [
-              'events primary evidence',
-              'contradictions counterexamples limitations',
-              'alternative explanations uncertainty',
-            ];
         return text(
           await c.knowledge.investigate(
             c.scopes,
-            [a.query, ...facets.map((f) => a.query + ' ' + f)],
+            [a.query],
             a.limit,
             c.signal,
             a.asOf,

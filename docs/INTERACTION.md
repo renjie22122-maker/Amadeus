@@ -109,3 +109,5 @@ The team panel shows proposal version, author, reviewers and whether review, res
 Structured contributions share the existing member discussion budget; each proposal allows at most six versions. The coordinator can explicitly retain an unresolved disagreement or withdraw a proposal with its impact recorded. Both remain delivery warnings, never successful review. Reading receipts prove access to a version, not comprehension; peer acceptance is not factual truth, independent evidence or artifact verification. File changes still require the existing verification path.
 
 No dependency or launcher change is required. Existing teams default to no declared review requirement. Restart the service when ready to load this update; an already-running service is not upgraded automatically.
+
+Research proposals may link a scoped research case: reviewers compare a specific alternative and discriminating observation, with its decision impact. The linked research revision must remain current. See [long-range reading and research budgets](LOCAL-RAG.md#long-range-reading-and-bounded-hypothesis-comparison).

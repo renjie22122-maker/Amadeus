@@ -884,12 +884,14 @@ export class Knowledge {
     signal?: AbortSignal,
     asOf = Date.now(),
     documentIds: string[] = [],
+    requestedBudgetMs = 60000,
   ) {
     assert(
       queries.length > 0 && queries.length <= 4,
       'RESEARCH_BUDGET',
       'Use one to four focused queries.',
     );
+    const timeBudgetMs = Math.min(300000, Math.max(1000, requestedBudgetMs));
     const results = new Map<string, any>(),
       rounds: any[] = [];
     const startedAt = Date.now();
@@ -897,7 +899,7 @@ export class Knowledge {
       duplicateRounds = 0;
     for (const query of [...new Set(queries.map((q) => q.trim()).filter(Boolean))]) {
       if (signal?.aborted) throw new Error('Retrieval cancelled');
-      if (Date.now() - startedAt >= 60000) {
+      if (Date.now() - startedAt >= timeBudgetMs) {
         stopReason = 'time-budget';
         break;
       }
@@ -909,7 +911,7 @@ export class Knowledge {
           Math.min(24, Math.max(12, limit * 3)),
           AbortSignal.any([
             ...(signal ? [signal] : []),
-            AbortSignal.timeout(Math.max(1, 60000 - (Date.now() - startedAt))),
+            AbortSignal.timeout(Math.max(1, timeBudgetMs - (Date.now() - startedAt))),
           ]),
           asOf,
           false,
@@ -917,7 +919,7 @@ export class Knowledge {
         );
       } catch (error) {
         if (signal?.aborted) throw error;
-        stopReason = Date.now() - startedAt >= 60000 ? 'time-budget' : 'retrieval-failed';
+        stopReason = Date.now() - startedAt >= timeBudgetMs ? 'time-budget' : 'retrieval-failed';
         rounds.push({ query, status: stopReason, hits: 0, newChunks: 0 });
         break;
       }
@@ -986,7 +988,7 @@ export class Knowledge {
       coverage,
       results: selected,
       rounds,
-      budget: { maxQueries: 4, maxDurationMs: 60000, stopReason, hostPlanningModelCalls: 0 },
+      budget: { maxQueries: 4, maxDurationMs: timeBudgetMs, stopReason, hostPlanningModelCalls: 0 },
       next: results.size
         ? 'Compare cited evidence; unresolved conflicts may require a focused follow-up.'
         : 'No grounded results; refine query or inspect ingestion and scope.',

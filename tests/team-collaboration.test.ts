@@ -256,3 +256,40 @@ test('host finalization refuses an open review without marking work completed', 
     f.store.close();
   }
 });
+
+test('research-linked peer review needs a distinguishing observation, not agreement', () => {
+  const f = fixture();
+  try {
+    f.store.put('research-case', { id: 'research', revision: 2, evidence: [] });
+    const p = f.service.submit(f.author, {
+      title: 'Comparison',
+      content: 'Compare competing mechanisms',
+      reviewerRunIds: ['reviewer'],
+      changeNote: 'Check interpretation',
+      research: { id: 'research', revision: 2, hypothesisIds: ['a', 'b'] },
+    });
+    f.service.read(f.reviewer, p.id);
+    assert.throws(
+      () => f.service.review(f.reviewer, p.id, p.revision, 'accept', 'Agree'),
+      /distinguishing observation/,
+    );
+    const accepted = f.service.review(
+      f.reviewer,
+      p.id,
+      p.revision,
+      'accept',
+      'A fits the observed timing',
+      {
+        alternativeId: 'b',
+        discriminatingObservation: 'B predicts the reverse ordering',
+        impact: 'Timing favors A, other mechanisms remain possible',
+      },
+    );
+    assert.equal(f.service.state(accepted), 'reviewed');
+    f.store.put('research-case', { id: 'research', revision: 3, evidence: [] });
+    assert.equal(f.service.state(accepted), 'awaiting-review');
+    assert(f.service.blockers(f.lead).length);
+  } finally {
+    f.store.close();
+  }
+});

@@ -1,3 +1,4 @@
+import type { ResearchCase } from './research-case.js';
 import { TeamCollaboration } from './team-collaboration.js';
 import { acceptanceStatus } from './task-acceptance.js';
 import type { Run } from '../../shared/types.js';
@@ -8,7 +9,7 @@ import { MemoryChecks } from './memory-checks.js';
 import { Teams } from './team-space.js';
 export interface EvidenceItem {
   id: string;
-  kind: 'task' | 'challenge' | 'memory' | 'effect' | 'recovery' | 'collaboration';
+  kind: 'task' | 'challenge' | 'memory' | 'effect' | 'recovery' | 'collaboration' | 'research';
   state: string;
   blocking: boolean;
   next: string;
@@ -48,7 +49,20 @@ export function deliveryEvidence(store: Store, run: Run) {
   const collaboration = new TeamCollaboration(store);
   const collaborationSummary = collaboration.summary(run);
   const collaborationBlockers = collaboration.blockers(run);
+  const researchWarnings = store
+    .forConversation<ResearchCase>('research-case', run.conversationId)
+    .filter((c) => c.runId === run.id && c.status !== 'concluded');
   const entries: EvidenceItem[] = [
+    ...researchWarnings.map((c) => ({
+      id: c.id,
+      kind: 'research' as const,
+      state: 'research-limits',
+      blocking: false,
+      next:
+        c.status === 'inconclusive'
+          ? 'Disclose unresolved alternatives: ' + (c.conclusion || '')
+          : 'Research comparison remains open. Report its gaps; do not continue retrieval solely to clear this warning.',
+    })),
     ...collaborationBlockers.map((next, index) => ({
       id: 'collaboration-' + index,
       kind: 'collaboration' as const,
@@ -146,8 +160,9 @@ export function deliveryEvidence(store: Store, run: Run) {
     });
   const blocking = entries.filter((e) => e.blocking);
   const gaps =
-    entries.some((e) => ['declared-done-unverified', 'retained', 'withdrawn'].includes(e.state)) ||
-    impact.some((i) => i.coverage !== 'declared-successor-checked');
+    entries.some((e) =>
+      ['declared-done-unverified', 'retained', 'withdrawn', 'research-limits'].includes(e.state),
+    ) || impact.some((i) => i.coverage !== 'declared-successor-checked');
   return {
     version: 1,
     collaboration: collaborationSummary,

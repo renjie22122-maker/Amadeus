@@ -65,3 +65,33 @@ On the next enabled folder-maintenance scan after application restart, older tex
 ### PDF, Office and OCR content quality
 
 All document extractors now validate the resulting body, not just parser exit success. Empty PDF page labels, OCR headers without recognized content, formatting-only spreadsheets and excessive replacement/control characters do not count as successful imports. PDF pages with broken text mapping are eligible for OCR when enabled; unrecovered corrupt text produces a page-specific error. Knowledge uploads request OCR, like folder imports. Blank pages may coexist with readable pages. This detects structural failures, not OCR semantic correctness: plausible but misrecognized words, layout/table order and missing image text on otherwise text-rich pages still require evidence checks. Existing PDF/Office imports are not automatically reprocessed by the text-encoding migration.
+
+## Long-range reading and bounded hypothesis comparison
+
+For ambiguous multi-source questions, the agent can discover `create_research_case`, `read_knowledge_context`, `inspect_research_case`, `update_research_case` and `investigate_research_gap`. Ordinary lookup needs none of this machinery: `search_knowledge` no longer expands a query merely because it contains “infer” or “compare”. Explicit research search broadens candidate selection for the supplied query; it does not invent three additional queries.
+
+A research case preserves alternatives, supporting/counter passages, missing observations and discriminating predictions. Reading notes can describe timelines, relationships, recurring patterns, constraints or summaries; they cite original chunk IDs and distinguish observation, reported claim and inference. Source openings provide paginated navigation, and ordinal windows restore adjacent context without embedding calls. These are not automatically inferred chapter boundaries or generated full-book summaries. Pass a case ID to context/ordinary document reads to register returned evidence. Truncated context passages are labeled and not registered as fully read; use the document reader for the complete passage.
+
+Cases are shared only within the originating conversation/task tree and compatible knowledge scopes. Document versions, content hashes and an as-of time bind evidence; changed/deleted sources are flagged. Explicitly remove stale citations from the comparison before reading replacement evidence. Repeated passage hashes are deduplicated, but distinct hashes do not prove independent authorship. Notes remain model assessments and never become confirmed long-term memory automatically.
+
+### Stop conditions
+
+These are host defaults, not user configuration chores or proof of optimal retrieval:
+
+| Bound                     | Research-case behavior                                                                                                                  |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Retrieval count           | At most 6 attempts, shared by members                                                                                                   |
+| Single-query deadline     | 180 seconds; the attempt after a timeout can use up to 300 seconds                                                                      |
+| Cumulative retrieval time | 12 minutes; the next deadline cannot exceed the remaining allowance                                                                     |
+| No additional evidence    | Stop after two successful attempts add no new passage hashes                                                                            |
+| Service failure           | Separate from evidence no-gain; two consecutive failures stop with a service diagnosis                                                  |
+| Reading                   | At most 16 registered windows/pages and 160,000 returned characters, shared by members                                                  |
+| Duplication               | Reject repeated successful queries and unchanged windows for the same member; the same question in a task tree reuses its existing case |
+
+Timeouts rely on the retrieval backend honoring cancellation; synchronous local work is not forcibly terminated by a JavaScript timer. Failed attempts consume count/time budget but do not prove missing evidence. A failed query may be explicitly retried within the same budgets; there is no automatic loop. Stopped-owner attempts are reconciled without replay, with conservative estimated elapsed time labeled as estimated. Reading and lookup outside this workflow remain available for other tasks; these limits are not a global ban on all retrieval. The agent must not bypass them by renaming the same investigation.
+
+Stop early when the needed distinctions are supported, or when available evidence cannot distinguish alternatives. Budget exhaustion requires reporting coverage gaps, not choosing a winner. New passages alone do not establish improved reasoning. Open/inconclusive research produces a nonblocking delivery warning, so the runtime does not force more searching merely to clear a gate. Exhaustive reading requires separately planned coverage; this workflow never claims that a large corpus was read in full.
+
+To request focused peer scrutiny, link `researchCaseId` in `submit_team_proposal`. Reviewers identify an alternative, a discriminating observation and its effect on the conclusion. Changes to the linked comparison/source invalidate its accepted state. Existing proposal response/revision/recheck rules apply; no extra team or messages are required for simple work. This is currently grounded in indexed knowledge passages, not an automatic universal verifier for web pages or experiments.
+
+No new model, package, reindexing or launcher change is needed. The running service loads the update only after a later restart. These regression-tested mechanisms do not establish an improvement in literary interpretation or general reasoning scores.
