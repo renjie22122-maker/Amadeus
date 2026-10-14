@@ -305,7 +305,12 @@ export class Knowledge {
   ) {
     const traceId = id(),
       startedAt = Date.now();
-    const diagnostics: Record<string, unknown> = {};
+    const diagnostics: Record<string, unknown> = {
+      requestedMode: mode,
+      semanticStatus: 'not_started',
+      embeddingModel: null,
+      embeddingDimension: null,
+    };
     const record = (extra: any) => {
       this.store.put('retrieval-trace', {
         id: traceId,
@@ -337,6 +342,14 @@ export class Knowledge {
         diagnostics,
         mode,
       );
+      Object.assign(diagnostics, {
+        returnedChannels: {
+          lexical: results.filter((r: any) => r.retrievalChannels?.lexical).length,
+          semantic: results.filter((r: any) => r.retrievalChannels?.semantic).length,
+        },
+        channelNotice:
+          'Per-hit channels describe that passage, not whether a channel ran for the query. Counts can overlap; relevance is not guaranteed.',
+      });
       record({
         status: results.length ? 'candidates' : 'no-candidates',
         hits: results.map((r) => ({
@@ -376,7 +389,11 @@ export class Knowledge {
     signal?.throwIfAborted();
     if (!query.trim() || !scopes.length) return [];
     if (mode === 'lexical') {
-      Object.assign(diagnostics, { backend: 'lexical', requestedMode: mode });
+      Object.assign(diagnostics, {
+        backend: 'lexical',
+        requestedMode: mode,
+        semanticStatus: 'disabled_by_request',
+      });
       // Explicit lexical mode has no embedding, graph, sidecar or reranker dependency.
       return this.search(scopes, query, limit, asOf, documentIds).map((hit) => ({
         ...hit,
@@ -387,7 +404,8 @@ export class Knowledge {
       !bypassPolicy &&
       scopes.length === 1 &&
       this.store.maybe<any>('retrieval-policy', scopes[0])?.mode === 'lexical'
-    )
+    ) {
+      Object.assign(diagnostics, { backend: 'lexical', semanticStatus: 'disabled_by_policy' });
       return this.finish(
         this.search(scopes, query, 60, asOf, documentIds),
         scopes,
@@ -397,9 +415,13 @@ export class Knowledge {
         signal,
         documentIds,
       );
+    }
     const lexical = this.search(scopes, query, 60, asOf, documentIds);
-    if (!this.embeddings?.enabled() || !scopes.length)
+    Object.assign(diagnostics, { lexicalCandidates: lexical.length });
+    if (!this.embeddings?.enabled() || !scopes.length) {
+      Object.assign(diagnostics, { backend: 'lexical', semanticStatus: 'not_configured' });
       return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
+    }
     let q: number[];
     try {
       [q] = await this.embeddings.encode([query], signal, 'query');
@@ -410,9 +432,14 @@ export class Knowledge {
         backend: 'lexical',
         degraded: true,
         reason: 'query_embedding_unavailable',
+        semanticStatus: 'query_embedding_failed',
       });
       return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
     }
+    Object.assign(diagnostics, {
+      embeddingModel: this.embeddings.fingerprint(),
+      embeddingDimension: q.length,
+    });
     const vectorCount = (
       this.store.db
         .prepare(
@@ -434,14 +461,19 @@ export class Knowledge {
           this.retrieval().vectors,
           signal,
         );
-        Object.assign(diagnostics, streamed.diagnostics);
+        Object.assign(diagnostics, streamed.diagnostics, {
+          semanticStatus: streamed.rows.length ? 'searched' : 'no_compatible_candidates',
+          semanticCandidates: streamed.rows.length,
+        });
         const semantic = streamed.rows.map((r) => ({
           id: r.id,
           documentId: r.document_id,
+          scope: r.scope,
           name: r.name,
           ordinal: r.ordinal,
           text: r.text,
           score: r.score,
+          embeddingDimension: q.length,
           ...this.citation(r.document_id, r.id),
         }));
         const merged = new Map<string, any>();
@@ -451,8 +483,9 @@ export class Knowledge {
         ] as const)
           hits.forEach((r, i) => {
             const old = merged.get(r.id);
-            const score = (old?.score || 0) + 1 / (60 + i);
+            const score = (old?.fusionScore || 0) + 1 / (60 + i + 1);
             merged.set(r.id, {
+              ...old,
               ...r,
               score,
               fusionScore: score,
@@ -476,7 +509,12 @@ export class Knowledge {
         if (signal?.aborted) throw error;
         // Storage failures must remain errors; only concurrent updates can safely return fresh lexical evidence.
         if (error.code !== 'INDEX_CHANGED') throw error;
-        Object.assign(diagnostics, { backend: 'lexical', degraded: true, reason: 'index_changed' });
+        Object.assign(diagnostics, {
+          backend: 'lexical',
+          degraded: true,
+          reason: 'index_changed',
+          semanticStatus: 'index_changed',
+        });
         return this.search(scopes, query, limit, asOf, documentIds);
       }
     }
@@ -520,6 +558,8 @@ export class Knowledge {
       vectorHealth,
       degraded: invalid > 0 || incompatible > 0,
       backend: 'lexical',
+      semanticStatus: 'no_compatible_candidates',
+      semanticCandidates: 0,
     });
     if (!vectors.length)
       return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
@@ -543,6 +583,7 @@ export class Knowledge {
           backend: 'lexical',
           degraded: true,
           reason: 'vector_backend_unavailable',
+          semanticStatus: 'backend_failed',
           errorCode: String(error.code || 'RETRIEVAL_SERVICE'),
         });
         return lexical
@@ -602,6 +643,7 @@ export class Knowledge {
         searchMs: result.searchMs,
       });
     }
+    Object.assign(diagnostics, { semanticStatus: 'searched', semanticCandidates: ranked.length });
     const byId = new Map(vectors.map((r) => [r.id, r]));
     const semantic = ranked
       .filter(

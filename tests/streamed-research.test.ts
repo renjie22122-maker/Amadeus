@@ -162,6 +162,40 @@ test('persistent manifests query without vector payload, invalidate on deletion,
     snapshots.clear();
     assert.equal((await run()).rows.length, 1);
     assert.equal(uploads, 2);
+    const insert = store.db.prepare(
+      'INSERT INTO chunks(id,scope,document_id,name,ordinal,text,vector,source_hash) VALUES(?,?,?,?,?,?,?,?)',
+    );
+    store.transaction(() => {
+      for (let i = 0; i < 2000; i++)
+        insert.run(
+          'padding-' + i,
+          'general',
+          doc.id,
+          'source',
+          i + 1,
+          'different wording ' + i,
+          JSON.stringify({ model: 'm', values: [1, 0] }),
+          'h' + i,
+        );
+    });
+    const hybrid = new Knowledge(
+      store,
+      { enabled: () => true, fingerprint: () => 'm', encode: async () => [[1, 0]] } as any,
+      () => ({ vectors: external, graph: false }),
+    );
+    try {
+      const first: any[] = await hybrid.hybrid(['general'], 'absent-query');
+      assert(first.length > 0);
+      assert(first.every((h) => h.scope === 'general' && h.retrievalChannels.semantic));
+      const uploadCount = uploads;
+      const cached: any[] = await hybrid.hybrid(['general'], 'absent-query');
+      assert(cached.length > 0);
+      assert(cached.every((h) => h.scope === 'general' && h.ranking.embeddingDimension === 2));
+      assert.equal(cached[0].retrievalDiagnostics.backend, 'persistent-external');
+      assert.equal(uploads, uploadCount);
+    } finally {
+      hybrid.close();
+    }
     store.put('document', { ...doc, validUntil: 1 });
     assert.equal((await run()).rows.length, 0);
   } finally {
