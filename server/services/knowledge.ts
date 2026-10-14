@@ -1,3 +1,5 @@
+import { selectEvidence } from './research-evidence.js';
+import { streamedVectors } from './streamed-vectors.js';
 import { vectorRecord, validVector } from './vector-record.js';
 import { retrievalTarget } from '../../shared/retrieval.js';
 import { knowledgeStatus } from './retrieval-status.js';
@@ -411,6 +413,73 @@ export class Knowledge {
       });
       return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
     }
+    const vectorCount = (
+      this.store.db
+        .prepare(
+          'SELECT count(*) AS n FROM chunks WHERE vector IS NOT NULL AND scope IN (' +
+            scopes.map(() => '?').join(',') +
+            ')',
+        )
+        .get(...scopes) as any
+    ).n;
+    if (vectorCount >= 2000) {
+      try {
+        const streamed = await streamedVectors(
+          this.store,
+          scopes,
+          documentIds,
+          asOf,
+          this.embeddings.fingerprint(),
+          q,
+          this.retrieval().vectors,
+          signal,
+        );
+        Object.assign(diagnostics, streamed.diagnostics);
+        const semantic = streamed.rows.map((r) => ({
+          id: r.id,
+          documentId: r.document_id,
+          name: r.name,
+          ordinal: r.ordinal,
+          text: r.text,
+          score: r.score,
+          ...this.citation(r.document_id, r.id),
+        }));
+        const merged = new Map<string, any>();
+        for (const [channel, hits] of [
+          ['lexical', lexical],
+          ['semantic', semantic],
+        ] as const)
+          hits.forEach((r, i) => {
+            const old = merged.get(r.id);
+            const score = (old?.score || 0) + 1 / (60 + i);
+            merged.set(r.id, {
+              ...r,
+              score,
+              fusionScore: score,
+              scoreKind: 'rrf',
+              retrievalChannels: {
+                ...old?.retrievalChannels,
+                [channel]: { rank: i + 1, rawScore: r.score },
+              },
+            });
+          });
+        return this.finish(
+          [...merged.values()].sort((a, b) => b.score - a.score),
+          scopes,
+          query,
+          limit,
+          asOf,
+          signal,
+          documentIds,
+        );
+      } catch (error: any) {
+        if (signal?.aborted) throw error;
+        // Storage failures must remain errors; only concurrent updates can safely return fresh lexical evidence.
+        if (error.code !== 'INDEX_CHANGED') throw error;
+        Object.assign(diagnostics, { backend: 'lexical', degraded: true, reason: 'index_changed' });
+        return this.search(scopes, query, limit, asOf, documentIds);
+      }
+    }
     const rows = this.store.db
       .prepare(
         'SELECT * FROM chunks WHERE vector IS NOT NULL AND scope IN (' +
@@ -772,6 +841,7 @@ export class Knowledge {
     limit = 6,
     signal?: AbortSignal,
     asOf = Date.now(),
+    documentIds: string[] = [],
   ) {
     assert(
       queries.length > 0 && queries.length <= 4,
@@ -794,12 +864,14 @@ export class Knowledge {
         hits = await this.hybrid(
           scopes,
           query,
-          limit,
+          Math.min(24, Math.max(12, limit * 3)),
           AbortSignal.any([
             ...(signal ? [signal] : []),
             AbortSignal.timeout(Math.max(1, 60000 - (Date.now() - startedAt))),
           ]),
           asOf,
+          false,
+          documentIds,
         );
       } catch (error) {
         if (signal?.aborted) throw error;
@@ -808,7 +880,7 @@ export class Knowledge {
         break;
       }
       let added = 0;
-      for (const hit of hits) {
+      for (const hit of selectEvidence(hits, limit)) {
         if (!results.has(hit.id)) added++;
         results.set(hit.id, hit);
       }
@@ -826,8 +898,51 @@ export class Knowledge {
         break;
       }
     }
+    const selected = selectEvidence([...results.values()], 24);
+    const eligibleDocs = this.store
+      .list<any>('document')
+      .filter(
+        (d) =>
+          scopes.includes(d.scope) &&
+          documentAt(d, asOf) &&
+          (!documentIds.length || documentIds.includes(d.id)),
+      );
+    const coverage = {
+      eligibleDocuments: eligibleDocs.length,
+      representedDocuments: new Set(selected.map((r) => r.documentId)).size,
+      independentPassages: new Set(selected.map((r) => r.evidenceGroup)).size,
+      unresolvedQueries: rounds.filter((r) => !r.newChunks).map((r) => r.query),
+      exhaustive: false,
+      notice:
+        'Coverage counts are retrieval observations, not proof that all relevant evidence has been found.',
+    };
+    const investigationId = id();
+    this.store.put('knowledge-investigation', {
+      id: investigationId,
+      scopes,
+      asOf,
+      documentIds,
+      queries,
+      rounds,
+      coverage,
+      stopReason,
+      evidence: selected.map((r) => ({
+        documentId: r.documentId,
+        chunkId: r.id,
+        evidenceGroup: r.evidenceGroup,
+        version: r.version,
+      })),
+      createdAt: Date.now(),
+    });
+    for (const old of this.store
+      .list<any>('knowledge-investigation')
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(200))
+      this.store.remove('knowledge-investigation', old.id);
     return {
-      results: [...results.values()].slice(0, 24),
+      investigationId,
+      coverage,
+      results: selected,
       rounds,
       budget: { maxQueries: 4, maxDurationMs: 60000, stopReason, hostPlanningModelCalls: 0 },
       next: results.size

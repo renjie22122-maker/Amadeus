@@ -80,11 +80,17 @@ export async function externalVectorSearch(
   );
   const size = Math.min(200000, Math.floor((16 * 1024 * 1024) / (query.length * 4)));
   const hits: { id: string; score: number }[] = [];
+  const snapshots: { generation: string; ids: string[] }[] = [];
   const indexes = new Set<string>(),
     reasons = new Set<string>();
   for (let offset = 0; offset < rows.length; offset += size) {
     signal?.throwIfAborted();
     const part = await vectorShardSearch(c, rows.slice(offset, offset + size), query, signal);
+    if (part.snapshotCached)
+      snapshots.push({
+        generation: part.generation,
+        ids: rows.slice(offset, offset + size).map((r) => r.id),
+      });
     hits.push(...part.result);
     indexes.add(part.effectiveIndex);
     if (part.fallbackReason) reasons.add(part.fallbackReason);
@@ -96,6 +102,7 @@ export async function externalVectorSearch(
     backend: c.backend,
     effectiveIndex: [...indexes].join(','),
     fallbackReason: [...reasons].join('; ') || null,
+    snapshots,
     shards: Math.ceil(rows.length / size),
   };
 }
@@ -199,6 +206,8 @@ async function vectorShardSearch(
     if (uploadedShards.size > 256) uploadedShards.delete(uploadedShards.values().next().value!);
   }
   return {
+    generation,
+    snapshotCached: !!result.snapshotCached,
     result: result.result as { id: string; score: number }[],
     backend: c.backend,
     effectiveIndex: String(result.effectiveIndex || c.index).slice(0, 80),

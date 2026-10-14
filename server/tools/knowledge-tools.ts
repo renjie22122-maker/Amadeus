@@ -8,6 +8,45 @@ const text = (value: unknown) => ({
 });
 export function installKnowledgeTools(registry: ToolRegistry) {
   registry.add({
+    name: 'read_knowledge_document',
+    effect: 'read',
+    description:
+      'Read indexed passages in document order, including neighboring context. Does not require source-file access or embeddings. Paginate to inspect evidence; never claim full-document coverage from one page.',
+    schema: z.object({
+      documentId: z.string(),
+      offset: z.number().int().min(0).default(0),
+      limit: z.number().int().min(1).max(12).default(4),
+      asOf: z.number().optional(),
+    }),
+    run: (a, c) => {
+      const doc = c.store.get<any>('document', a.documentId);
+      assert(
+        c.scopes.includes(doc.scope) && documentAt(doc, a.asOf ?? Date.now()),
+        'KNOWLEDGE_SCOPE',
+        'Document is outside the current accessible version.',
+      );
+      const total = (
+        c.store.db
+          .prepare('SELECT count(*) AS n FROM chunks WHERE document_id=?')
+          .get(doc.id) as any
+      ).n;
+      const chunks = c.store.db
+        .prepare(
+          'SELECT id,ordinal,text FROM chunks WHERE document_id=? ORDER BY ordinal LIMIT ? OFFSET ?',
+        )
+        .all(doc.id, a.limit, a.offset);
+      return text({
+        documentId: doc.id,
+        name: doc.name,
+        version: doc.version,
+        total,
+        chunks,
+        nextOffset: a.offset + a.limit < total ? a.offset + a.limit : null,
+        notice: 'Source passages, not a verification verdict.',
+      });
+    },
+  });
+  registry.add({
     name: 'list_knowledge_documents',
     effect: 'read',
     description:
@@ -43,12 +82,39 @@ export function installKnowledgeTools(registry: ToolRegistry) {
     effect: 'read',
     schema: z.object({
       query: z.string().min(1),
+      strategy: z.enum(['auto', 'lookup', 'research']).default('auto'),
       mode: z.enum(['hybrid', 'lexical']).default('hybrid'),
       documentIds: z.array(z.string()).max(20).default([]),
       limit: z.number().int().min(1).max(12).default(6),
       asOf: z.number().int().nonnegative().optional(),
     }),
     run: async (a, c) => {
+      const research =
+        a.strategy === 'research' ||
+        (a.strategy === 'auto' &&
+          /推断|推理|综合|比较|对比|证据|infer|compare|synthesize|evidence for|hypothesis/i.test(
+            a.query,
+          ));
+      if (research && a.mode !== 'lexical') {
+        const chinese = /[\u3400-\u9fff]/.test(a.query);
+        const facets = chinese
+          ? ['关键事件 原文证据', '矛盾 反例 限定条件', '其他解释 不确定']
+          : [
+              'events primary evidence',
+              'contradictions counterexamples limitations',
+              'alternative explanations uncertainty',
+            ];
+        return text(
+          await c.knowledge.investigate(
+            c.scopes,
+            [a.query, ...facets.map((f) => a.query + ' ' + f)],
+            a.limit,
+            c.signal,
+            a.asOf,
+            a.documentIds,
+          ),
+        );
+      }
       const results = await c.knowledge.hybrid(
         c.scopes,
         a.query,
@@ -76,12 +142,22 @@ export function installKnowledgeTools(registry: ToolRegistry) {
     description:
       'Bounded agentic RAG: supply up to four focused query variants or counterqueries. Inspect trace and citations, then decide whether another investigation is needed. No automatic truth verdict.',
     schema: z.object({
+      documentIds: z.array(z.string()).max(20).default([]),
       queries: z.array(z.string().trim().min(1).max(1000)).min(1).max(4),
       limit: z.number().int().min(1).max(6).default(6),
       asOf: z.number().int().nonnegative().optional(),
     }),
     run: async (a, c) =>
-      text(await c.knowledge.investigate(c.scopes, a.queries, a.limit, c.signal, a.asOf)),
+      text(
+        await c.knowledge.investigate(
+          c.scopes,
+          a.queries,
+          a.limit,
+          c.signal,
+          a.asOf,
+          a.documentIds,
+        ),
+      ),
   });
   registry.add({
     name: 'inspect_retrieval_trace',
