@@ -41,6 +41,7 @@ export interface ConversationDetail {
     revision: number;
     maxMessages: number;
     autoEnroll?: boolean;
+    selection?: { by: 'agent' | 'user'; reason: string };
     discussionBudget?: { limit: number; used: number; remaining: number; unit: string };
     roles: Record<string, string>;
     blockers: string[];

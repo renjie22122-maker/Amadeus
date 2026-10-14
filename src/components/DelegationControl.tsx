@@ -9,7 +9,7 @@ export function DelegationControl({
   depth,
   total,
   parallel,
-  mode = 'hierarchy',
+  mode = 'auto',
   onModeChange,
   management,
 }: {
@@ -141,6 +141,9 @@ export function DelegationControl({
               value={mode}
               onChange={(e) => onModeChange?.(e.target.value)}
             >
+              <option value="auto">
+                {zh ? '自动选择 · 按任务组织' : 'Automatic · task-based organization'}
+              </option>
               <option value="hierarchy">{zh ? '主 Agent + 子 Agent' : 'Lead + workers'}</option>
               <option value="host">{zh ? '宿主调度 · 平级协作' : 'Host scheduling · peers'}</option>
               <option value="creative">

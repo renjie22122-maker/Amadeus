@@ -1,3 +1,4 @@
+import { rootRun } from '../services/task-board.js';
 import { installScheduledTools } from './scheduled-tools.js';
 import type { SourcePolicy } from '../services/source-policy.js';
 import { researchProgress, type ResearchProgress } from '../services/research-progress.js';
@@ -189,7 +190,27 @@ export class ToolRegistry {
     const selected = relatedToolNames(
       ctx.store.maybe<{ names: string[] }>('tool-selection', ctx.run.id)?.names || [],
     );
-    return all.filter((t) => coreTools.has(t.name) || selected.includes(t.name));
+    const collaboration = ctx.conversation.teamStrategy !== 'off';
+    const team = collaboration && ctx.store.maybe<any>('team-space', rootRun(ctx.store, ctx.run));
+    const teamTools = new Set(
+      team
+        ? [
+            'inspect_team',
+            'team_discuss',
+            'await_team_message',
+            'message_agent',
+            'configure_team_scheduler',
+            'await_team_task',
+            'update_team_discussion_limits',
+          ]
+        : ['configure_team', 'message_agent'],
+    );
+    return all.filter(
+      (t) =>
+        coreTools.has(t.name) ||
+        selected.includes(t.name) ||
+        (collaboration && teamTools.has(t.name)),
+    );
   }
   async invoke(name: string, args: Record<string, unknown>, ctx: ToolContext) {
     const admittedConversation =

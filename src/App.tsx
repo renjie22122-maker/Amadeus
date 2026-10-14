@@ -1002,6 +1002,12 @@ export function App() {
                         {language === 'zh' ? '团队运行状态' : 'Team lifecycle'} ·{' '}
                         {detail.teamSpace.mode} · {detail.teamSpace.status}
                       </summary>
+                      {detail.teamSpace.selection && (
+                        <p>
+                          {language === 'zh' ? '组织方式选择：' : 'Organization choice: '}
+                          {detail.teamSpace.selection.reason}
+                        </p>
+                      )}
                       {detail.teamSpace.status === 'active' && (
                         <button
                           onClick={() =>

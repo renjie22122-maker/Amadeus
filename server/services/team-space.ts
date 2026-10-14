@@ -13,6 +13,7 @@ export interface TeamSpace {
   closed: Record<string, string>;
   maxMessages: number;
   autoEnroll?: boolean;
+  selection?: { by: 'agent' | 'user'; reason: string };
 }
 export class Teams {
   constructor(private store: Store) {}
@@ -29,13 +30,14 @@ export class Teams {
     members: string[],
     maxMessages: number,
     autoEnroll = false,
+    reason = '',
   ) {
     assert(this.authority(run), 'TEAM_ROLE', 'Only current coordinator configures the team.');
     const root = rootRun(this.store, run),
       origin = this.store.get<Run>('run', root);
     const c = this.store.get<Conversation>('conversation', origin.conversationId);
     assert(
-      c.teamStrategy !== 'off' && c.teamMode === mode,
+      c.teamStrategy !== 'off' && ((c.teamMode || 'auto') === 'auto' || c.teamMode === mode),
       'TEAM_MODE',
       'Select this team mode in conversation controls first.',
     );
@@ -84,12 +86,16 @@ export class Teams {
       closed: {},
       maxMessages,
       autoEnroll,
+      selection: {
+        by: (c.teamMode || 'auto') === 'auto' ? 'agent' : 'user',
+        reason: reason.trim() || 'Selected for the current task',
+      },
     };
     this.store.put('team-space', team);
     const defaults = this.store.maybe<any>('team-automation-default', origin.conversationId);
     if (defaults && !this.store.maybe('team-automation', root))
       this.store.put('team-automation', { ...defaults, id: root });
-    this.audit(run, 'created', { mode, members, maxMessages });
+    this.audit(run, 'created', { mode, members, maxMessages, selection: team.selection });
     return team;
   }
   checkEnrollment(parent: Run, conversationId: string) {

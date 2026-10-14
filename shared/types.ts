@@ -155,7 +155,7 @@ export interface Conversation {
   specialistId?: string;
   execution?: { backend: Settings['commandBackend']; network: 'host' | 'deny' } | null;
   isolationId?: string;
-  teamMode?: 'hierarchy' | 'host' | 'creative';
+  teamMode?: 'auto' | 'hierarchy' | 'host' | 'creative';
   teamStrategy?: 'off' | 'auto' | 'prefer';
   id: string;
   title: string;

@@ -123,7 +123,7 @@ export class RunEnvironment {
         depth: run.depth,
         maxDepth: this.config.get().maxAgentDepth,
         teamStrategy: ctx.conversation.teamStrategy || 'auto',
-        teamMode: ctx.conversation.teamMode || 'hierarchy',
+        teamMode: ctx.conversation.teamMode || 'auto',
         isolatedCopy: !!ctx.conversation.isolationId,
         selectedSkills: skills.slice(0, 20),
         selectedSkillCount: skills.length,

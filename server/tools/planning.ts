@@ -215,16 +215,24 @@ export function installPlanning(registry: ToolRegistry) {
     effect: 'coordinate',
     atomic: true,
     description:
-      'Create a persistent peer team in the user-selected host or creative mode. Use autoEnroll=true with just your current run ID to create the team BEFORE spawning; new children and continuations then join automatically. Otherwise enroll existing active members including yourself. Host completion is computed, never voted into truth. Discussion limit is explicit per member.',
+      'Create a peer team. In auto mode choose host for artifact/dependency scheduling or creative for evidence challenge/discussion; explain the task-based choice with reason. Explicit user modes and off remain binding. Use autoEnroll=true with just your current run ID to create the team BEFORE spawning; new children and continuations then join automatically. Otherwise enroll existing active members including yourself. Host completion is computed, never voted into truth. Discussion limit is explicit per member.',
     schema: z.object({
       mode: z.enum(['host', 'creative']),
       members: z.array(z.string()).min(1).max(32),
       autoEnroll: z.boolean().default(false),
+      reason: z.string().min(1).max(1000).optional(),
       maxMessages: z.number().int().min(1).max(1000).default(12),
     }),
     run: (a, c) => ({
       content: JSON.stringify(
-        new Teams(c.store).configure(c.run, a.mode, a.members, a.maxMessages, a.autoEnroll),
+        new Teams(c.store).configure(
+          c.run,
+          a.mode,
+          a.members,
+          a.maxMessages,
+          a.autoEnroll,
+          a.reason,
+        ),
       ),
     }),
   });

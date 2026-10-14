@@ -109,3 +109,48 @@ test('discussion and assignment waits accept new input without requiring a team 
     f.store.close();
   }
 });
+
+test('automatic organization accepts either team kind while explicit hierarchy and off remain binding', () => {
+  for (const preference of [undefined, 'auto', 'hierarchy', 'host', 'creative']) {
+    for (const mode of ['host', 'creative'] as const) {
+      const f = fixture();
+      try {
+        f.store.put('conversation', { id: 'lead', teamMode: preference, teamStrategy: 'auto' });
+        if (
+          preference === 'hierarchy' ||
+          (preference === 'host' && mode === 'creative') ||
+          (preference === 'creative' && mode === 'host')
+        ) {
+          assert.throws(
+            () =>
+              f.teams.configure(f.lead, mode, ['lead'], 12, true, 'Task-specific evidence review'),
+            /Select this team mode/,
+          );
+        } else {
+          const t = f.teams.configure(
+            f.lead,
+            mode,
+            ['lead'],
+            12,
+            true,
+            'Task-specific evidence review',
+          );
+          assert.equal(t.selection?.reason, 'Task-specific evidence review');
+          assert.equal(t.selection?.by, !preference || preference === 'auto' ? 'agent' : 'user');
+        }
+      } finally {
+        f.store.close();
+      }
+    }
+  }
+  const f = fixture();
+  try {
+    f.store.put('conversation', { id: 'lead', teamMode: 'auto', teamStrategy: 'off' });
+    assert.throws(
+      () => f.teams.configure(f.lead, 'creative', ['lead'], 12, true),
+      /Select this team mode/,
+    );
+  } finally {
+    f.store.close();
+  }
+});

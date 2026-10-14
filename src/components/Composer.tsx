@@ -295,7 +295,7 @@ export function Composer({
                     onChange={(reasoning) => void action(() => update({ reasoning }))}
                   />
                   <DelegationControl
-                    mode={conversation.teamMode || 'hierarchy'}
+                    mode={conversation.teamMode || 'auto'}
                     onModeChange={(teamMode) => void action(() => update({ teamMode }))}
                     management={
                       detail?.teamSpace ? (
@@ -328,16 +328,13 @@ export function Composer({
               )}
             </div>
             <div className="row">
-              {running &&
-                run &&
-                conversation?.teamMode &&
-                conversation.teamMode !== 'hierarchy' && (
-                  <button
-                    onClick={() => void action(() => api('/runs/' + run.id + '/stop-member', {}))}
-                  >
-                    {t('settings') !== 'Settings' ? '仅停止当前成员' : 'Stop this member only'}
-                  </button>
-                )}
+              {running && run && detail?.teamSpace && (
+                <button
+                  onClick={() => void action(() => api('/runs/' + run.id + '/stop-member', {}))}
+                >
+                  {t('settings') !== 'Settings' ? '仅停止当前成员' : 'Stop this member only'}
+                </button>
+              )}
               {running && run && (
                 <button
                   className="stop-button"

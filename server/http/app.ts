@@ -278,7 +278,7 @@ export async function createApp(options: { directory: string; dist?: string; run
           })
           .nullable()
           .optional(),
-        teamMode: z.enum(['hierarchy', 'host', 'creative']).optional(),
+        teamMode: z.enum(['auto', 'hierarchy', 'host', 'creative']).optional(),
         teamStrategy: z.enum(['off', 'auto', 'prefer']).optional(),
         skillIds: z
           .array(z.string())
