@@ -5,6 +5,7 @@ import { BackgroundPage } from './pages/Background';
 import { conversationMarkdown } from './conversation-copy';
 import { mediaTimeline } from './media-timeline';
 import { MediaGallery } from './components/MediaGallery';
+import { TeamManagement } from './components/TeamManagement';
 import { TeamChat } from './components/TeamChat';
 import { ConversationStatus } from './components/ConversationStatus';
 import { DisplaySettings } from './components/DisplaySettings';
@@ -1061,72 +1062,20 @@ export function App() {
                           {language === 'zh' ? '停止整个团队' : 'Stop entire team'}
                         </button>
                       )}
-                      <p>
-                        {language === 'zh'
-                          ? '以下是团队职责，不是四个独立成员；同一 Agent 可以兼任。团队是否完成由任务与验收状态决定。'
-                          : 'An individual final answer does not complete the team.'}
-                      </p>
-                      {Object.entries(detail.teamSpace.roles).map(([role, member]) => (
-                        <div className="team-role-row" key={role}>
-                          <span>
-                            {language === 'zh'
-                              ? (
-                                  {
-                                    coordinator: '协调',
-                                    planner: '规划',
-                                    reviewer: '复核',
-                                    summarizer: '汇总',
-                                  } as Record<string, string>
-                                )[role] || role
-                              : role}
-                          </span>
-                          <span title={member}>
-                            {detail.teamMembers?.find((m) => m.runId === member)?.name ||
-                              (member === detail.teamSpace?.id
-                                ? language === 'zh'
-                                  ? '主 Agent'
-                                  : 'Lead agent'
-                                : member.slice(0, 8))}
-                            {Object.values(detail.teamSpace!.roles).filter((id) => id === member)
-                              .length > 1 && (
-                              <small>
-                                {language === 'zh'
-                                  ? ' · 兼任多个职责'
-                                  : ' · multiple responsibilities'}
-                              </small>
-                            )}
-                          </span>
-                          <select
-                            aria-label={'Transfer ' + role}
-                            value=""
-                            onChange={(e) => {
-                              if (e.target.value)
-                                void action(() =>
-                                  api('/runs/' + detail.teamSpace!.id + '/team-role', {
-                                    role,
-                                    targetRunId: e.target.value,
-                                    revision: detail.teamSpace!.revision,
-                                  }),
-                                );
-                            }}
-                          >
-                            <option value="">
-                              {language === 'zh' ? '改由其他成员负责…' : 'Assign another member…'}
-                            </option>
-                            {detail.teamMembers
-                              ?.filter(
-                                (m) =>
-                                  !['completed', 'failed', 'interrupted'].includes(m.status) &&
-                                  !detail.teamSpace!.closed[m.runId],
-                              )
-                              .map((m) => (
-                                <option key={m.runId} value={m.runId}>
-                                  {m.name || m.runId.slice(0, 8)}
-                                </option>
-                              ))}
-                          </select>
-                        </div>
-                      ))}
+                      <TeamManagement
+                        team={detail.teamSpace}
+                        members={detail.teamMembers}
+                        zh={language === 'zh'}
+                        onTransfer={(role, targetRunId) =>
+                          void action(() =>
+                            api('/runs/' + detail.teamSpace!.id + '/team-role', {
+                              role,
+                              targetRunId,
+                              revision: detail.teamSpace!.revision,
+                            }),
+                          )
+                        }
+                      />
                       {detail.teamScheduling?.enabled && (
                         <div className="notice">
                           Scheduling 路 max load {detail.teamScheduling.maxLoad}

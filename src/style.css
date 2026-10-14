@@ -4141,3 +4141,38 @@ input.team-switch:checked::after {
   width: 100%;
   overflow-wrap: anywhere;
 }
+
+.team-management {
+  margin-block: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-width: 0;
+}
+.team-management-owner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-block: 10px;
+}
+.team-management-owner > strong {
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.team-management-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.team-management-transfer {
+  margin-top: 8px;
+}
+.team-management-transfer summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.team-management .team-role-row select {
+  min-width: 0;
+  width: min(100%, 260px);
+}
