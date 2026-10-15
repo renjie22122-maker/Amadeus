@@ -358,7 +358,7 @@ export class TaskBoard {
           'Stop or wait for the current owner before handoff.',
         );
         assert(
-          !this.store.runs().some((r) => {
+          !this.store.runMetadata().some((r) => {
             let p: Run | undefined = r;
             while (p) {
               if (p.id === owner.id)

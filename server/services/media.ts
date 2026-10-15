@@ -63,8 +63,7 @@ export class MediaService {
   }
   list(conversationId: string) {
     return this.store
-      .list<MediaJob>('media-job')
-      .filter((j) => j.conversationId === conversationId)
+      .forConversation<MediaJob>('media-job', conversationId)
       .map((j) => this.public(j));
   }
   public(j: MediaJob) {

@@ -81,7 +81,7 @@ export class ScheduledWorkService {
       try {
         // Settle dispatched work even while paused; never dispatch again while paused.
         if (task.runId) {
-          const run = this.store.maybe<any>('run', task.runId);
+          const run = this.store.maybeRunHeader(task.runId);
           if (run && !terminal(run.status)) continue;
           if (run) {
             this.record(task, run.status, now);

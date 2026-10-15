@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { Attachment, Conversation } from '../../shared/types.js';
+import type { Conversation } from '../../shared/types.js';
 import type { Runtime } from '../core/runtime.js';
 import { assert } from '../core/errors.js';
 import { Teams } from '../services/team-space.js';
@@ -48,9 +48,7 @@ export function conversationViewRoutes(app: FastifyInstance, runtime: Runtime) {
           : e,
       ),
       inputs: store.forConversation<any>('input', c.id),
-      attachments: store
-        .forConversation<Attachment>('attachment', c.id)
-        .map(({ path, text, ...a }) => a),
+      attachments: store.attachmentMetadata(c.id),
       teamAutomation:
         (latest ? store.maybe('team-automation', rootRun(store, latest!)) : null) ||
         store.maybe('team-automation-default', c.id),

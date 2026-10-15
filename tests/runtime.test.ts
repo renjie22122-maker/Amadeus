@@ -2153,3 +2153,30 @@ test('strict final format repairs representation without rerunning the completed
     f.store.close();
   }
 });
+
+test('plain reply and provider failure never hydrate unrelated historical runs at finalization', async () => {
+  for (const fail of [false, true]) {
+    const f = await setup({
+      complete: async () => {
+        if (fail) throw new AppError('TEST_FAILURE', 'non-retryable test failure');
+        return result('Hello');
+      },
+    });
+    let bulkReads = 0;
+    f.store.runs = (() => {
+      bulkReads++;
+      throw Error('Historical checkpoint bulk load forbidden');
+    }) as typeof f.store.runs;
+    try {
+      const r = f.runtime.start('chat', 'Hi');
+      await until(() =>
+        ['completed', 'failed', 'interrupted'].includes(f.store.runHeader(r.id).status),
+      );
+      assert.equal(f.store.runHeader(r.id).status, fail ? 'failed' : 'completed');
+      assert.equal(bulkReads, 0);
+    } finally {
+      await f.runtime.shutdown();
+      f.store.close();
+    }
+  }
+});

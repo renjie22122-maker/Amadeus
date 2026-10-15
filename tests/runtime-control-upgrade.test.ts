@@ -331,3 +331,33 @@ test('controller records completed strategy advice once without claiming a diffe
   controller.reset(r);
   assert.equal(controller.snapshot(r), undefined);
 });
+
+test('restart recovery never hydrates checkpoints, including active runs and orphan inputs', (t) => {
+  const s = new Store(fixture());
+  t.after(() => {
+    s.close();
+    rmSync(dirname(s.path), { recursive: true, force: true });
+  });
+  for (const [id, status] of [
+    ['old', 'completed'],
+    ['active', 'waiting_approval'],
+  ]) {
+    s.put('run', { ...run(id, status), checkpoints: [{ payload: 'preserve this context' }] });
+  }
+  s.put('input', { id: 'q', runId: 'active', status: 'pending', payload: {} });
+  s.put('input', { id: 'orphan', runId: 'missing', status: 'pending', payload: {} });
+  const before = s.db.prepare('SELECT * FROM run_checkpoints ORDER BY id').all();
+  const original = s.get.bind(s);
+  s.get = ((kind: string, key: string) => {
+    if (kind === 'run') throw Error('checkpoint hydration is forbidden during recovery');
+    return original(kind, key);
+  }) as typeof s.get;
+  s.recover();
+  assert.equal(s.runHeader('active').status, 'interrupted');
+  assert.equal(s.runHeader('old').status, 'completed');
+  assert.equal(s.get<any>('input', 'orphan').status, 'cancelled');
+  assert.deepEqual(s.db.prepare('SELECT * FROM run_checkpoints ORDER BY id').all(), before);
+  assert.equal(s.events('active').length, 1);
+  s.recover();
+  assert.equal(s.events('active').length, 1);
+});

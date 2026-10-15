@@ -25,8 +25,17 @@ export async function api<T = any>(
   if (!response.ok) throw new Error(value.error || 'Request failed');
   return value;
 }
-export async function bootstrap() {
-  const value = await api('/bootstrap');
-  csrf = value.csrf;
-  return value;
+let bootstrapping: Promise<any> | undefined;
+export function bootstrap() {
+  if (!bootstrapping) {
+    bootstrapping = api('/bootstrap')
+      .then((value) => {
+        csrf = value.csrf;
+        return value;
+      })
+      .finally(() => {
+        bootstrapping = undefined;
+      });
+  }
+  return bootstrapping;
 }

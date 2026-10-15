@@ -50,7 +50,7 @@ export class DelegationManager {
     );
     const root = this.root(parent);
     assert(
-      this.store.runs().filter((r) => r.parentRunId && this.root(r) === root).length +
+      this.store.runMetadata().filter((r) => r.parentRunId && this.root(r) === root).length +
         (this.pendingSpawns.get(root) || 0) <
         configuredLimit(settings.maxChildren),
       'CHILD_LIMIT',
@@ -135,7 +135,7 @@ export class DelegationManager {
     const targetRun = this.store.maybe<Run>('run', key);
     const child = this.store.get<Conversation>('conversation', targetRun?.conversationId || key);
     // parentId alone also describes user-created forks; require delegation provenance.
-    const runs = this.store.runs(child.id);
+    const runs = this.store.runMetadata(child.id);
     assert(
       child.parentId === parent.conversationId &&
         runs.some(
@@ -182,7 +182,7 @@ export class DelegationManager {
       'Member is active. Send a message to its current run or wait.',
     );
     const owned = new Set(runs.map((r) => r.id)),
-      all = this.store.runs();
+      all = this.store.runMetadata();
     let changed = true;
     while (changed) {
       changed = false;
@@ -252,7 +252,7 @@ export class DelegationManager {
     );
     const root = this.root(parent);
     assert(
-      this.store.runs().filter((r) => r.parentRunId && this.root(r) === root).length +
+      this.store.runMetadata().filter((r) => r.parentRunId && this.root(r) === root).length +
         (this.pendingSpawns.get(root) || 0) <
         configuredLimit(settings.maxChildren),
       'CHILD_LIMIT',
@@ -298,7 +298,7 @@ export class DelegationManager {
         'Parent was cancelled before continuation.',
       );
       // No await between the final liveness check and registration.
-      this.assertIdle(this.store.runs(child.id));
+      this.assertIdle(this.store.runMetadata(child.id));
       const run = this.store.transaction(() => {
         if (isolation) this.store.put('isolation', { ...isolation, parentRunId: parent.id });
         this.store.put('conversation', {
@@ -355,7 +355,7 @@ export class DelegationManager {
       'Only a completed direct child can be integrated.',
     );
     assert(
-      !this.store.runs().some((r) => r.parentRunId === child.id && !terminal(r.status)),
+      !this.store.runMetadata().some((r) => r.parentRunId === child.id && !terminal(r.status)),
       'CHILD_ACTIVE',
       'Child has active descendants.',
     );
@@ -379,7 +379,7 @@ export class DelegationManager {
   }
   private root(run: Run): string {
     let r = run;
-    while (r.parentRunId) r = this.store.get<Run>('run', r.parentRunId);
+    while (r.parentRunId) r = this.store.runHeader(r.parentRunId);
     return r.id;
   }
   async wait(parent: Run, keys: string[], signal: AbortSignal) {
@@ -399,7 +399,7 @@ export class DelegationManager {
       let ancestor = parent.parentRunId;
       while (ancestor) {
         assert(ancestor !== key, 'WAIT_CYCLE', 'A child cannot wait on its ancestor.');
-        ancestor = this.store.get<Run>('run', ancestor).parentRunId;
+        ancestor = this.store.runHeader(ancestor).parentRunId;
       }
       assert(!reaches(key, parent.id), 'WAIT_CYCLE', 'Delegation wait would create a cycle.');
     }
@@ -419,7 +419,7 @@ export class DelegationManager {
           const pending = this.store
             .list<any>('user-inbox')
             .some((x) => x.runId === parent.id && x.state === 'pending');
-          if (pending || keys.every((key) => terminal(this.store.get<Run>('run', key).status))) {
+          if (pending || keys.every((key) => terminal(this.store.runHeader(key).status))) {
             waitReason = pending ? 'input_pending' : 'completed';
             cleanup();
             resolve();
@@ -453,10 +453,8 @@ export class DelegationManager {
         status: r.status,
         error: r.error,
         answer:
-          this.store
-            .events(r.conversationId)
-            .filter((e) => e.type === 'assistant.message')
-            .at(-1)?.data.text || '',
+          this.store.selectedEvents(r.conversationId, ['assistant.message'], 1).at(-1)?.data.text ||
+          '',
         usage: { input: r.inputTokens, output: r.outputTokens, cost: r.estimatedUsd },
       };
     });

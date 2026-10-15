@@ -235,18 +235,27 @@ export class Knowledge {
     assert(this.embeddings?.enabled(), 'EMBEDDING_DISABLED', 'Configure embeddings first.');
     const fingerprint = this.embeddings!.fingerprint();
     const rows = this.store.db
-      .prepare('SELECT id,text,vector FROM chunks WHERE document_id=? ORDER BY ordinal')
+      .prepare('SELECT id FROM chunks WHERE document_id=? ORDER BY ordinal')
       .all(key) as any[];
     assert(rows.length, 'NOT_FOUND', 'Document not found');
     onProgress?.({ completed: 0, total: rows.length });
     for (let i = 0; i < rows.length; i += 16) {
-      const batch = rows.slice(i, i + 16).filter((r) => {
-        try {
-          return !vectorRecord(r.vector, fingerprint);
-        } catch {
-          return true;
-        }
-      });
+      const batch = rows
+        .slice(i, i + 16)
+        .map(
+          (r) =>
+            this.store.db
+              .prepare('SELECT id,text,vector FROM chunks WHERE document_id=? AND id=?')
+              .get(key, r.id) as any,
+        )
+        .filter(Boolean)
+        .filter((r) => {
+          try {
+            return !vectorRecord(r.vector, fingerprint);
+          } catch {
+            return true;
+          }
+        });
       if (!batch.length) {
         onProgress?.({ completed: Math.min(i + 16, rows.length), total: rows.length });
         continue;
@@ -708,9 +717,7 @@ export class Knowledge {
       const id = createHash('sha256').update(target).digest('hex');
       const previous = this.store.maybe<any>('lightrag-sync', id);
       const rows = this.store.db
-        .prepare(
-          'SELECT id,document_id,text FROM chunks WHERE scope=? ORDER BY document_id,ordinal',
-        )
+        .prepare('SELECT id,document_id FROM chunks WHERE scope=? ORDER BY document_id,ordinal')
         .all(c.scope)
         .filter((r: any) =>
           documentAt(this.store.maybe('document', r.document_id), Date.now()),
@@ -746,7 +753,14 @@ export class Knowledge {
             !completed.has(r.id) &&
             documentAt(this.store.maybe('document', r.document_id), Date.now()),
         )
-        .slice(0, 16);
+        .slice(0, 16)
+        .map(
+          (r) =>
+            this.store.db
+              .prepare('SELECT id,document_id,text FROM chunks WHERE scope=? AND id=?')
+              .get(c.scope, r.id) as any,
+        )
+        .filter(Boolean);
       if (!batch.length) return { status: 'synced', completed: completed.size, total: rows.length };
       // Save intent before sending; an unknown submission is never blindly replayed.
       this.store.put('lightrag-sync', { id, completed: [...completed], status: 'unknown' });

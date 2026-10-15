@@ -324,7 +324,7 @@ export class Runtime implements TeamPort {
       });
     if (cascade)
       for (const child of this.store
-        .runs()
+        .runMetadata()
         .filter((c) => c.parentRunId === key && !terminal(c.status)))
         this.stop(child.id, true, manual);
     if (!this.execution.cancel(key)) {
@@ -347,8 +347,7 @@ export class Runtime implements TeamPort {
   }
   private history(conversationId: string): ModelMessage[] {
     return this.store
-      .events(conversationId)
-      .filter((e) => e.type === 'user.message' || e.type === 'assistant.message')
+      .selectedEvents(conversationId, ['user.message', 'assistant.message'])
       .map((e) => ({
         role: e.type === 'user.message' ? 'user' : 'assistant',
         content: e.data.text,
@@ -708,7 +707,7 @@ export class Runtime implements TeamPort {
             continue;
           // Finish children before reporting the task terminal; never abandon live descendants.
           const children = this.store
-            .runs()
+            .runMetadata()
             .filter(
               (r) =>
                 r.parentRunId === key && !terminal(r.status) && !new Teams(this.store).get(run),
@@ -820,7 +819,7 @@ export class Runtime implements TeamPort {
       }
       if (!new Teams(this.store).get(current))
         for (const child of this.store
-          .runs()
+          .runMetadata()
           .filter((c) => c.parentRunId === key && !terminal(c.status)))
           this.stop(child.id);
     }

@@ -42,9 +42,9 @@ export class KnowledgeGraph {
         d.scope === scope &&
         (d.validFrom ?? d.createdAt) <= at &&
         (!d.validUntil || at < d.validUntil) &&
-        (
-          this.store.db.prepare('SELECT text FROM chunks WHERE document_id=?').all(e.id) as any[]
-        ).some((c) => c.text.includes(e.quote))
+        !!this.store.db
+          .prepare('SELECT 1 FROM chunks WHERE document_id=? AND instr(text,?)>0 LIMIT 1')
+          .get(e.id, e.quote)
       );
     }
     const c = this.store.maybe<any>('conversation', e.conversationId || '');

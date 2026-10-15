@@ -100,9 +100,7 @@ export class RunEnvironment {
           : 'No project. Only a private conversation artifact directory.',
         permission: ctx.conversation.permission,
         authorizedRetries: this.store
-          .events(run.conversationId)
-          .filter((e) => e.type === 'effect.retry-authorized')
-          .slice(-5)
+          .selectedEvents(run.conversationId, ['effect.retry-authorized'], 5)
           .map((e) => e.data),
         recoveryOnly: !!run.recoveryOnly,
         recoveryInstructions: run.recoveryOnly

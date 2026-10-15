@@ -73,6 +73,46 @@ export class Store {
     assert(row, 'NOT_FOUND', 'run not found', 404);
     return { ...JSON.parse(row.data), checkpoints: [] };
   }
+  maybeRunHeader(key: string): Run | undefined {
+    const row = this.db.prepare('SELECT data FROM run_metadata WHERE id=?').get(key) as
+      { data: string } | undefined;
+    return row ? { ...parseStored(row.data, 'run', key), checkpoints: [] } : undefined;
+  }
+  /** Filter before decoding payloads; optional tail stays chronological. */
+  selectedEvents(conversationId: string, types: string[], limit?: number): AgentEvent[] {
+    if (!types.length) return [];
+    assert(
+      limit === undefined || (Number.isSafeInteger(limit) && limit > 0),
+      'EVENT_LIMIT',
+      'Invalid event limit.',
+    );
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM events WHERE conversation_id=? AND type IN (' +
+          types.map(() => '?').join(',') +
+          ') ORDER BY id ' +
+          (limit === undefined ? 'ASC' : 'DESC LIMIT ?'),
+      )
+      .all(conversationId, ...types, ...(limit === undefined ? [] : [limit])) as any[];
+    if (limit !== undefined) rows.reverse();
+    return rows.map((r) => ({
+      id: r.id,
+      conversationId: r.conversation_id,
+      runId: r.run_id,
+      type: r.type,
+      data: parseStored(r.data, 'event', String(r.id)),
+      createdAt: r.created_at,
+    }));
+  }
+  attachmentMetadata(conversationId: string) {
+    return (
+      this.db
+        .prepare(
+          "SELECT id,json_remove(data,'$.path','$.text') AS data FROM records WHERE kind='attachment' AND json_extract(data,'$.conversationId')=?",
+        )
+        .all(conversationId) as { id: string; data: string }[]
+    ).map((r) => parseStored(r.data, 'attachment', r.id));
+  }
   close() {
     this.db.close();
   }
@@ -288,11 +328,22 @@ export class Store {
     this.event(run.conversationId, run.id, 'run.status', { status, error });
     return next;
   }
+  /** Change lifecycle state without loading or rewriting historical model context. */
+  private transitionHeader(runId: string, status: Run['status'], error: string | null) {
+    const run = this.runHeader(runId);
+    checkTransition(run.status, status);
+    const { checkpoints: _checkpoints, ...metadata } = run;
+    const next = JSON.stringify({ ...metadata, status, error, updatedAt: Date.now() });
+    this.db.prepare("UPDATE records SET data=? WHERE kind='run' AND id=?").run(next, runId);
+    this.db.prepare('UPDATE run_metadata SET data=? WHERE id=?').run(next, runId);
+    this.runRevisions.set(runId, this.runRevision(runId) + 1);
+    this.event(run.conversationId, runId, 'run.status', { status, error });
+  }
   recover() {
     // Status and approval cancellation commit together. Unknown effects remain untouched.
     this.transaction(() => {
-      for (const run of this.runs().filter((r) => !terminal(r.status))) {
-        this.transition(
+      for (const run of this.runMetadata().filter((r) => !terminal(r.status))) {
+        this.transitionHeader(
           run.id,
           'interrupted',
           run.status === 'waiting_approval'
@@ -302,7 +353,9 @@ export class Store {
       }
       // Also repair approvals orphaned by older non-atomic recovery implementations.
       for (const q of this.list<PendingInput>('input').filter((q) => q.status === 'pending')) {
-        const run = this.maybe<Run>('run', q.runId);
+        const row = this.db.prepare('SELECT data FROM run_metadata WHERE id=?').get(q.runId) as
+          { data: string } | undefined;
+        const run = row ? (parseStored(row.data, 'run', q.runId) as Run) : undefined;
         if (!run || terminal(run.status))
           this.put('input', {
             ...q,
@@ -331,7 +384,9 @@ export class Store {
   }
   reconcileKnownEffects(conversationId: string): string[] {
     const unresolved = this.unknownEffects(conversationId),
-      events = this.events(conversationId),
+      events = unresolved.length
+        ? this.selectedEvents(conversationId, ['effect.unknown', 'input.answered'])
+        : [],
       resolved: string[] = [];
     for (const e of unresolved) {
       const failure = events.find((v) => v.type === 'effect.unknown' && v.data.effectId === e.id)
@@ -357,7 +412,7 @@ export class Store {
         const q = this.list<PendingInput>('input')
           .filter((q) => q.runId === e.run_id && q.kind === 'approval')
           .at(-1);
-        const run = this.get<Run>('run', e.run_id);
+        const run = this.runHeader(e.run_id);
         if (
           q?.status === 'cancelled' &&
           q.answer === null &&

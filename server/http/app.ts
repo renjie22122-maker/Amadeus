@@ -362,7 +362,7 @@ export async function createApp(options: { directory: string; dist?: string; run
         content: e.data.text,
       });
     }
-    const template = store.runs(c.id).at(-1);
+    const template = store.latestRun(c.id);
     if (template)
       store.put('run', {
         ...template,
@@ -907,7 +907,7 @@ export async function createApp(options: { directory: string; dist?: string; run
   app.get('/api/settings', async () => config.public());
   app.put('/api/settings', async (req) => {
     assert(
-      !store.runs().some((r) => !terminal(r.status)),
+      !store.runMetadata().some((r) => !terminal(r.status)),
       'RUN_ACTIVE',
       'Stop running tasks before changing model settings.',
     );
@@ -946,7 +946,7 @@ export async function createApp(options: { directory: string; dist?: string; run
   );
   app.post('/api/models/import', async (req) => {
     assert(
-      !store.runs().some((r) => !terminal(r.status)),
+      !store.runMetadata().some((r) => !terminal(r.status)),
       'RUN_ACTIVE',
       'Stop running tasks before changing model settings.',
     );
@@ -958,7 +958,7 @@ export async function createApp(options: { directory: string; dist?: string; run
       settings = config.get();
     // The lookup is asynchronous: check again before committing configuration.
     assert(
-      !store.runs().some((r) => !terminal(r.status)),
+      !store.runMetadata().some((r) => !terminal(r.status)),
       'RUN_ACTIVE',
       'A task started during discovery; settings were not changed.',
     );

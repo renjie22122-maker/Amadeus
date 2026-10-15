@@ -149,7 +149,7 @@ export function learningOutcomes(store: Store, run: Run) {
   const conversation = store.get<any>('conversation', run.conversationId);
   if (!conversation.memory) return { enabled: false };
   const runs = store
-    .runs(run.conversationId)
+    .runMetadata(run.conversationId)
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 100);
   const rows = runs.flatMap((r) => new MemoryChecks(store).list(r));

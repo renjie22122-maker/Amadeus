@@ -1,7 +1,9 @@
 import { useScheduleNotifications } from './useScheduleNotifications';
 import { AttachmentPreview } from './components/AttachmentPreview';
 import { mergeConversationEvents } from './conversation-events';
-import { BackgroundPage } from './pages/Background';
+const BackgroundPage = lazy(() =>
+  import('./pages/Background').then((m) => ({ default: m.BackgroundPage })),
+);
 import { conversationMarkdown } from './conversation-copy';
 import { mediaTimeline } from './media-timeline';
 import { MediaGallery } from './components/MediaGallery';
@@ -25,7 +27,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentEvent, Conversation, Project } from '../shared/types';
 import { api, bootstrap } from './api';
 import { Composer } from './components/Composer';
@@ -35,8 +37,10 @@ import { Activity, InputCard, Message } from './components/Message';
 import { ProjectDialog } from './components/ProjectDialog';
 import { Sidebar } from './components/Sidebar';
 import { translator, type Language } from './i18n';
-import { Library } from './pages/Library';
-import { SettingsPage } from './pages/Settings';
+const Library = lazy(() => import('./pages/Library').then((m) => ({ default: m.Library })));
+const SettingsPage = lazy(() =>
+  import('./pages/Settings').then((m) => ({ default: m.SettingsPage })),
+);
 import type { ConversationDetail, UiState } from './types';
 const ended = (s: string) => ['completed', 'failed', 'interrupted'].includes(s);
 export function App() {
@@ -942,31 +946,43 @@ export function App() {
         )}
         {page === 'background' ? (
           <div className="page-scroll">
-            <BackgroundPage
-              state={state}
-              zh={language === 'zh'}
-              notify={notify}
-              openConversation={(id: string) => {
-                setSelected(id);
-                setPage('chat');
-                void refresh();
-              }}
-            />
+            <Suspense
+              fallback={<p role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</p>}
+            >
+              <BackgroundPage
+                state={state}
+                zh={language === 'zh'}
+                notify={notify}
+                openConversation={(id: string) => {
+                  setSelected(id);
+                  setPage('chat');
+                  void refresh();
+                }}
+              />
+            </Suspense>
           </div>
         ) : page === 'settings' ? (
           <div className="page-scroll">
-            <SettingsPage settings={state.settings} t={t} refresh={refresh} notify={notify} />
+            <Suspense
+              fallback={<p role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</p>}
+            >
+              <SettingsPage settings={state.settings} t={t} refresh={refresh} notify={notify} />
+            </Suspense>
           </div>
         ) : page !== 'chat' ? (
           <div className="page-scroll">
-            <Library
-              page={page}
-              state={state}
-              selected={selected}
-              t={t}
-              refresh={refresh}
-              notify={notify}
-            />
+            <Suspense
+              fallback={<p role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</p>}
+            >
+              <Library
+                page={page}
+                state={state}
+                selected={selected}
+                t={t}
+                refresh={refresh}
+                notify={notify}
+              />
+            </Suspense>
           </div>
         ) : (
           <div className="chat-layout">

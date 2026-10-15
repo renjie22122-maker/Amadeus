@@ -72,7 +72,7 @@ export class MemoryLearning {
     return this.task;
   }
   private ready(c: Conversation, now: number) {
-    const runs = this.store.runs(c.id);
+    const runs = this.store.runMetadata(c.id);
     if (c.projectId && this.store.maybe<Project>('project', c.projectId)?.removedAt) return false;
     return (
       c.generateMemory === true &&

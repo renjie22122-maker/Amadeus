@@ -59,7 +59,8 @@ export function KnowledgeAutomation({
     setPaths('');
     setLoadError('');
     const load = async () => {
-      if (!scope || loading || controller.signal.aborted) return;
+      if (!scope || loading || controller.signal.aborted || (initialized && document.hidden))
+        return;
       loading = true;
       const revision = mutation.current;
       try {
@@ -85,7 +86,7 @@ export function KnowledgeAutomation({
       }
     };
     const stats = async () => {
-      if (!scope || statsLoading || controller.signal.aborted) return;
+      if (!scope || statsLoading || controller.signal.aborted || document.hidden) return;
       statsLoading = true;
       try {
         const v = await api(
@@ -102,12 +103,20 @@ export function KnowledgeAutomation({
         statsLoading = false;
       }
     };
+    const visible = () => {
+      if (!document.hidden) {
+        void load();
+        void stats();
+      }
+    };
+    document.addEventListener('visibilitychange', visible);
     void load();
     void stats();
     const timer = setInterval(load, 1000),
       statTimer = setInterval(stats, 10000);
     return () => {
       controller.abort();
+      document.removeEventListener('visibilitychange', visible);
       clearInterval(timer);
       clearInterval(statTimer);
     };

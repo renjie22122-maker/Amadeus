@@ -38,17 +38,23 @@ if (-not (Test-Path -LiteralPath (Join-Path $taskRoot 'build/server/main.js')) -
         Set-Content -LiteralPath (Join-Path $taskRoot 'dist/.agentdemo-build') -Value (Get-AgentDemoFingerprint $taskRoot)
     } finally { Pop-Location }
 }
-$taskLogs = Join-Path $taskRoot '.data\logs'
+$taskData = if ($env:AGENTDEMO_DATA_DIR) { $env:AGENTDEMO_DATA_DIR } else { Join-Path $taskRoot '.data' }
+$taskLogs = Join-Path $taskData 'logs'
 New-Item -ItemType Directory -Force -Path $taskLogs | Out-Null
 $taskLogStamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
-Start-Process -FilePath $taskNode -ArgumentList @('scripts/supervisor.mjs') -WorkingDirectory $taskRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $taskLogs "supervisor-$taskLogStamp.stdout.log") -RedirectStandardError (Join-Path $taskLogs "supervisor-$taskLogStamp.stderr.log") | Out-Null
+$taskSupervisor = Start-Process -PassThru -FilePath $taskNode -ArgumentList @('scripts/supervisor.mjs') -WorkingDirectory $taskRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $taskLogs "supervisor-$taskLogStamp.stdout.log") -RedirectStandardError (Join-Path $taskLogs "supervisor-$taskLogStamp.stderr.log")
 $taskReady = $false
-for ($taskAttempt = 0; $taskAttempt -lt 40; $taskAttempt++) {
+$taskWait = [Diagnostics.Stopwatch]::StartNew()
+while ($taskWait.Elapsed.TotalSeconds -lt 90) {
     Start-Sleep -Milliseconds 250
     try {
         $taskHealth = Invoke-RestMethod "$taskUrl/api/health" -TimeoutSec 1
         if ($taskHealth.application -in @('Amadeus', 'AgentDemo')) { $taskReady = $true; break }
     } catch {}
+    if ($taskSupervisor.HasExited) {
+        $taskFailure = Get-Content -LiteralPath (Join-Path $taskLogs "supervisor-$taskLogStamp.stderr.log") -Tail 8 -ErrorAction SilentlyContinue
+        throw ("Amadeus supervisor exited. " + ($taskFailure -join "`n") + "`nCheck $taskLogs")
+    }
 }
 if (-not $taskReady) { throw "Amadeus did not become ready. Check $taskLogs" }
 if (-not $NoBrowser) { Start-Process $taskUrl }
