@@ -1,3 +1,4 @@
+import { ConversationTitles, shortTitle } from '../services/conversation-titles.js';
 import { taskSkills } from '../services/skill-discovery.js';
 import { providerFailureDiagnostic } from '../providers/failure.js';
 import { completeModel, accountModelUsage } from './model-session.js';
@@ -49,6 +50,7 @@ import { terminal } from './lifecycle.js';
 import { ModelPool } from './pool.js';
 export class Runtime implements TeamPort {
   readonly teamAutomation: TeamAutomation;
+  private titles: ConversationTitles;
   private maintenanceTimer?: ReturnType<typeof setInterval>;
   private maintenanceTask: Promise<void> | null = null;
   readonly mcp: McpHub;
@@ -78,6 +80,7 @@ export class Runtime implements TeamPort {
     readonly directory: string,
     private resolveProvider: (p: Profile) => ModelProvider = providerFor,
   ) {
+    this.titles = new ConversationTitles(store, (key) => config.profile(key), this.resolveProvider);
     this.execution = new RunPump({
       scope: (key) => this.executionScope(store.get<Run>('run', key)),
       status: (key) => store.get<Run>('run', key).status,
@@ -87,6 +90,7 @@ export class Runtime implements TeamPort {
         this.steering.delete(key);
         this.streams.delete(key);
         this.bus.emit('finished', key);
+        if (!this.shuttingDown) this.titles.finish(key);
       },
     });
     this.teamCoordinator = new TeamCoordinator(store, {
@@ -236,7 +240,14 @@ export class Runtime implements TeamPort {
       run.contextSample = undefined;
     this.store.put('conversation', {
       ...c,
-      title: c.title === 'New chat' ? message.slice(0, 70) : c.title,
+      title: c.title === 'New chat' && !c.titleGeneration ? shortTitle(message) : c.title,
+      ...(!previous &&
+      !c.parentId &&
+      !options.parentRunId &&
+      c.title === 'New chat' &&
+      !c.titleGeneration
+        ? { titleGeneration: { runId: run.id, state: 'pending' as const } }
+        : {}),
       updatedAt: now,
     });
     this.store.put('run', run);
@@ -896,6 +907,7 @@ export class Runtime implements TeamPort {
     for (const key of this.execution.keys()) this.stop(key, true, false);
     await this.execution.drained();
     await this.schedulingTask;
+    await this.titles.close();
     await this.background.shutdown();
     this.knowledge.close();
     await this.mcp.close();

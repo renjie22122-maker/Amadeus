@@ -151,6 +151,7 @@ export interface Project {
   createdAt: number;
 }
 export interface Conversation {
+  titleGeneration?: { runId: string; state: 'pending' | 'attempted' | 'done' | 'manual' };
   allowedTools?: string[];
   specialistId?: string;
   execution?: { backend: Settings['commandBackend']; network: 'host' | 'deny' } | null;

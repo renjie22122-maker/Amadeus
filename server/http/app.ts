@@ -319,6 +319,9 @@ export async function createApp(options: { directory: string; dist?: string; run
       ...c,
       ...data,
       memoryGenerationTarget,
+      ...(data.title !== undefined
+        ? { titleGeneration: { runId: c.titleGeneration?.runId || '', state: 'manual' as const } }
+        : {}),
       updatedAt: Date.now(),
     });
   });

@@ -253,6 +253,11 @@ export function App() {
       {
         agent: (event) => {
           const e = JSON.parse((event as MessageEvent).data) as AgentEvent;
+          if (e.type === 'conversation.title' && e.conversationId === selectedRef.current) {
+            setDetail((d: any) =>
+              d ? { ...d, conversation: { ...d.conversation, title: e.data.title } } : d,
+            );
+          }
           if (e.conversationId === selectedRef.current) {
             setDetail((d: any) =>
               d
@@ -312,6 +317,7 @@ export function App() {
               'input.answered',
               'run.status',
               'usage',
+              'conversation.title',
               'child.started',
               'user.message',
             ].includes(e.type)
