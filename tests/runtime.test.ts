@@ -28,7 +28,7 @@ async function setup(provider: ModelProvider) {
   });
   store.put('conversation', {
     id: 'chat',
-    title: 'New chat',
+    title: 'Runtime test',
     projectId: null,
     profileId: 'test',
     reasoning: 'auto',
@@ -404,6 +404,15 @@ test('inspection shows request usage separately from totals and enforces file/ru
       host: '127.0.0.1:8810',
       cookie: String(boot.headers['set-cookie']).split(';')[0],
     };
+    const saved = f.store.get<any>('run', second.id);
+    const { sampleContext } = await import('../server/core/context-budget.js');
+    const selectedProfile = {
+      ...f.runtime.config.profile(saved.profileId),
+      reasoning: 'max' as const,
+    };
+    saved.reasoning = 'max';
+    saved.contextSample = sampleContext(saved.checkpoints, [], selectedProfile, 10);
+    f.store.put('run', saved);
     let contextBuilds = 0;
     const originalContext = f.runtime.context.bind(f.runtime);
     f.runtime.context = async (...args: Parameters<typeof originalContext>) => {
@@ -414,13 +423,19 @@ test('inspection shows request usage separately from totals and enforces file/ru
     f.store.runs = () => {
       throw Error('Context inspection must not scan all full runs');
     };
+    f.store.event('chat', first.id, 'context.compacted', { beforeTokens: 100, afterTokens: 20 });
     const response = await app.inject({ url: '/api/conversations/chat/context', headers });
     assert.equal(response.statusCode, 200);
     const view = response.json();
+    assert.equal(view.compactionCount, 1);
+    assert.equal(view.compactions.length, 0);
     assert.equal(view.measuredInput, 10);
+    assert.notEqual(view.budget.method, 'estimated');
     assert.ok(view.messages.some((m: any) => m.role === 'system'));
     assert.ok(view.characters > 0);
     assert.equal(view.capacity, 65536);
+    assert.ok(view.lastCompactionCheck.checkedAt > 0);
+    assert.equal(view.lastCompactionCheck.required, false);
     const summary = await app.inject({ url: '/api/conversations/chat/context?summary=1', headers });
     assert.equal(summary.json().messages.length, 0);
     assert.equal(summary.json().total, view.total);

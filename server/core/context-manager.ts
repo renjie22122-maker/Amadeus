@@ -35,6 +35,15 @@ export class ContextManager {
       'CONTEXT_CONFIGURATION',
       'Output reservation leaves no usable input context. Reduce maximum output tokens.',
     );
+    this.store.put('context-check', {
+      id: run.id,
+      conversationId: run.conversationId,
+      checkedAt: Date.now(),
+      tokens: before.tokens,
+      threshold: before.threshold,
+      method: before.method,
+      required: before.tokens >= before.threshold,
+    });
     if (before.tokens < before.threshold) return before;
     const lastUser = run.checkpoints.findLastIndex((m) => m.role === 'user' && !m.contextKind);
     const runtimeFacts = run.checkpoints.findLastIndex((m) => m.contextKind === 'runtime-snapshot');

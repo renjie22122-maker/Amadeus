@@ -51,7 +51,7 @@ export function ConversationStatus({
         ' / ' +
         capacity.toLocaleString() +
         ' tokens；压缩 ' +
-        (data?.compactions.length || 0) +
+        (data?.compactionCount ?? data?.compactions.length ?? 0) +
         ' 次；当前压缩触发阈值为 ' +
         (data?.compressionThresholdTokens?.toLocaleString() || '—') +
         ' tokens。'
@@ -62,7 +62,7 @@ export function ConversationStatus({
         ' / ' +
         capacity.toLocaleString() +
         ' tokens; ' +
-        (data?.compactions.length || 0) +
+        (data?.compactionCount ?? data?.compactions.length ?? 0) +
         ' compactions. Compression uses the same token estimate.');
   return (
     <div className="conversation-status">

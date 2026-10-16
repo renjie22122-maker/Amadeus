@@ -46,6 +46,33 @@ export function ContextUsage({ data, zh }: { data: any; zh: boolean }) {
           : 'New content, tool definitions and images are estimated. Compression is attempted before the next request at the red marker. Estimates are not exact tokenizer counts.'}
       </small>
 
+      <p className="inspection-note">
+        {zh ? '当前保存快照：' : 'Saved snapshot: '}
+        {tokens >= threshold && threshold > 0
+          ? zh
+            ? '已达到阈值；下一次模型请求前检查压缩，不会中断正在生成的回复。'
+            : 'At threshold; checked before the next model request, not during an in-flight response.'
+          : zh
+            ? '尚未达到压缩阈值。'
+            : 'Below the compaction threshold.'}
+        {data.lastCompactionCheck && (
+          <>
+            <br />
+            {zh ? '后台最近检查：' : 'Latest runtime check: '}
+            {new Date(data.lastCompactionCheck.checkedAt).toLocaleTimeString()} ·{' '}
+            {data.lastCompactionCheck.tokens.toLocaleString()} /{' '}
+            {data.lastCompactionCheck.threshold.toLocaleString()} tokens ·{' '}
+            {data.lastCompactionCheck.required
+              ? zh
+                ? '达到阈值（不代表压缩已成功）'
+                : 'Threshold reached (not proof of successful compaction)'
+              : zh
+                ? '未达阈值'
+                : 'Below threshold'}
+          </>
+        )}
+      </p>
+
       {(data.cache || data.cognitive) && (
         <details>
           <summary>{zh ? '缓存与运行观察' : 'Cache and runtime observations'}</summary>

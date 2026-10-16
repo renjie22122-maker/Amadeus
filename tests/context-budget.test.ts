@@ -54,3 +54,25 @@ test('output reservation and safety margin bound trigger; multilingual summary c
   assert.ok(chunks.every((c) => textUnits(c) <= 500));
   assert.ok(chunks.length > 2);
 });
+
+test('compaction event history survives reopening storage and remains conversation scoped', async () => {
+  const { Store } = await import('../server/storage/store.js');
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'compaction-history-'));
+  let store = new Store(join(dir, 'db'));
+  try {
+    store.event('chat', 'old-run', 'context.compacted', { beforeTokens: 900, afterTokens: 100 });
+    store.event('other-chat', 'other-run', 'context.compacted', {});
+    store.close();
+    store = new Store(join(dir, 'db'));
+    const history = store.events('chat', 0, 'context.compacted');
+    assert.equal(history.length, 1);
+    assert.equal(history.filter((e) => e.runId === 'new-run').length, 0);
+    assert.equal(history[0].data.afterTokens, 100);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

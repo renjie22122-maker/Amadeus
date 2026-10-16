@@ -277,3 +277,7 @@ Additional bounded reads: typed event queries filter in SQLite, child reports fe
 ### Automatic conversation titles
 
 New unnamed root conversations show a short provisional title immediately. After their first successful run, a bounded background request to the same configured model summarizes the first user message and final reply. It has no tools, a 15-second deadline, bounded input and a short output budget; usage is recorded against that run. It does not block the answer. Failed title generation retains the provisional title without automatic retry. Manual renames (including during generation), branches, children and existing named conversations are preserved. The sidebar receives a title event. This is a small additional model request, not free local summarization.
+
+Context inspection uses the run’s effective reasoning setting, matching runtime calibration. It shows the current saved snapshot separately from the latest pre-request compaction check. Reaching the threshold after a response does not interrupt that response; compression is checked before the next request. A threshold check is not proof of successful compression.
+
+Compaction counts distinguish persisted conversation-wide history from the selected run, so a new run does not reset the displayed lifetime count.

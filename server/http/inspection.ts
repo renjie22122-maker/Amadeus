@@ -28,7 +28,11 @@ export function inspectionRoutes(app: FastifyInstance, runtime: Runtime) {
       'Run belongs to another conversation.',
       403,
     );
-    const profile = config.get().profiles.find((p) => p.id === (run?.profileId || c.profileId));
+    const configured = config.get().profiles.find((p) => p.id === (run?.profileId || c.profileId));
+    // Match the effective per-run reasoning used by Runtime.execute and sampleContext.
+    const profile = configured
+      ? { ...configured, reasoning: run?.reasoning ?? c.reasoning }
+      : undefined;
     const currentConfig = JSON.stringify(config.public());
     if (previousConfig !== currentConfig) {
       snapshots.clear();
@@ -58,8 +62,11 @@ export function inspectionRoutes(app: FastifyInstance, runtime: Runtime) {
     }
     const { messages, budget, characters } = await pending;
     if (characters > 6_000_000) snapshots.delete(key);
+    const compactionEvents = store.events(c.id, 0, 'context.compacted');
     return {
+      compactionCount: compactionEvents.length,
       budget,
+      lastCompactionCheck: run ? store.maybe('context-check', run.id) : null,
       runId: run?.id || null,
       runs: runs.map((r) => ({ id: r.id, createdAt: r.createdAt, status: r.status })),
       model: profile?.model || '',
@@ -79,8 +86,7 @@ export function inspectionRoutes(app: FastifyInstance, runtime: Runtime) {
       compressionThresholdTokens: budget?.threshold ?? null,
       characters,
       offset: q.offset,
-      compactions: store
-        .events(c.id, 0, 'context.compacted')
+      compactions: compactionEvents
         .filter((e) => e.type === 'context.compacted' && (!run || e.runId === run.id))
         .map((e) => ({ at: e.createdAt, ...e.data })),
       messages: (q.summary ? [] : messages.slice(q.offset, q.offset + 10)).map(

@@ -105,8 +105,11 @@ export function ContextPanel({ id, zh, live }: { id: string; zh: boolean; live: 
               {zh ? '序列化字符' : 'serialized chars'}
             </span>
             <span>
-              <b>{data.compactions.length}</b>
-              {zh ? '次压缩' : 'compactions'}
+              <b>{data.compactionCount ?? data.compactions.length}</b>
+              {zh ? '次压缩（本对话累计）' : 'compactions in this conversation'}
+              {' · '}
+              {data.compactions.length}
+              {zh ? ' 次（所选轮次）' : ' in selected run'}
             </span>
           </div>
           <p className="muted">
