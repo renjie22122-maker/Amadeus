@@ -144,7 +144,7 @@ test('HNSW 15k vectors: held-out recall and generation replacement', async () =>
   }
 });
 
-test('HNSW knowledge scope, deletion and embedding model changes invalidate generations', async () => {
+test('streamed knowledge retrieval preserves scope, deletion and embedding model compatibility', async () => {
   const { Knowledge } = await import('../server/services/knowledge.js');
   const f = await fixture();
   let model = 'model-a';
@@ -184,7 +184,8 @@ test('HNSW knowledge scope, deletion and embedding model changes invalidate gene
       );
     });
     let result = await kb.hybrid(['project:a'], 'unmatchedquery', 6);
-    assert.equal(kb.lastRetrieval.backend, 'hnsw');
+    assert.equal(kb.lastRetrieval.backend, 'streamed-exact');
+    assert.equal(kb.lastRetrieval.semanticStatus, 'searched');
     assert.ok(result.length);
     assert.ok(result.every((r) => r.scope === 'project:a'));
     const removed = result[0].id;

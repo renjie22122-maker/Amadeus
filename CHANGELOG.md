@@ -173,3 +173,7 @@ Document-scoped follow-up search, narrow passage reranking, automatic conservati
 ## 2026-10-16 — Skill discovery and responsive waits
 
 Task-ranked skill metadata, on-demand bodies, current-reference read checks, and steering-aware command/batch/workflow waits without process replay. See TOOL-ECOSYSTEM for boundaries. No new dependencies or launcher migration.
+
+## 2026-10-16 — CI fixture repair
+
+Align the large-knowledge regression with the streamed retrieval path while preserving scope, deletion and model-compatibility checks. Exercise child-count limits against a real Store rather than an outdated mock. OS matrix jobs now finish independently (`fail-fast: false`).

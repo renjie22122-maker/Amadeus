@@ -3,6 +3,7 @@ on: [push, pull_request]
 jobs:
   check:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -18,7 +19,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
       - run: python -m py_compile scripts/retrieval_service.py scripts/prepare_retrieval_models.py
       - run: python tests/model-preparation.test.py
       - run: pnpm check:docs

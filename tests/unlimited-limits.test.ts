@@ -1,3 +1,4 @@
+import { Store } from '../server/storage/store.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ModelPool } from '../server/core/pool.js';
@@ -70,18 +71,18 @@ test('zero run-pump limit dispatches all queued work instead of blocking', async
   assert.deepEqual(pump.keys(), []);
 });
 
-test('zero child limit passes the real spawn gate above 32, finite limits still reject', async () => {
+test('zero child limit passes the real spawn gate above 32, finite limits still reject', async (t) => {
   const root: any = { id: 'root', depth: 0, conversationId: 'chat' };
   const runs = [
     root,
     ...Array.from({ length: 40 }, (_, i) => ({ id: String(i), parentRunId: 'root' })),
   ];
   let maxChildren = 0;
-  const store: any = {
-    runs: () => runs,
-    get: (kind: string, id: string) =>
-      kind === 'run' ? runs.find((r) => r.id === id) : { teamStrategy: 'auto' },
-  };
+  const directory = await mkdtemp(join(tmpdir(), 'child-gate-'));
+  const store = new Store(join(directory, 'state.sqlite'));
+  t.after(() => store.close());
+  for (const run of runs) store.put('run', run);
+  store.put('conversation', { id: 'chat', teamStrategy: 'auto' });
   const config: any = { get: () => ({ maxAgentDepth: 3, maxChildren }) };
   const host: any = {
     context: async () => {
