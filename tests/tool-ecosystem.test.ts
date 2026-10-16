@@ -1383,7 +1383,11 @@ test('real tool admission permits open team spawning and can repair a fixed rost
       .content,
   );
   await assert.rejects(
-    f.registry.invoke('spawn_agent', { task: 'Investigate another independent question', deliverable: 'Evidence report' }, f.ctx),
+    f.registry.invoke(
+      'spawn_agent',
+      { task: 'Investigate another independent question', deliverable: 'Evidence report' },
+      f.ctx,
+    ),
     (e: any) => e.code === 'TEAM_ROSTER_FIXED',
   );
   assert.equal(spawned, 1);
@@ -1439,4 +1443,30 @@ test('retrieval assessments cannot label testimony as direct observation or cite
     (e: any) => e.code === 'RETRIEVAL_EVIDENCE',
   );
   assert.equal(f.store.list('retrieval-assessment').length, 0);
+});
+
+test('document delivery is available in ordinary chats, preserves write permissions and never overwrites', async (t) => {
+  const f = fixture(t);
+  f.conversation.projectId = null;
+  f.conversation.permission = 'trusted';
+  f.store.put('conversation', f.conversation);
+  const input = {
+    path: 'report.docx',
+    format: 'docx',
+    title: 'Report',
+    blocks: [{ type: 'paragraph', text: 'Hello' }],
+  };
+  assert.ok(f.registry.modelSpecs(f.ctx).some((x) => x.name === 'create_document'));
+  assert.ok(f.registry.modelSpecs(f.ctx).some((x) => x.name === 'register_artifact'));
+  const output = JSON.parse((await f.registry.invoke('create_document', input, f.ctx)).content);
+  assert.equal(output.verified, false);
+  assert.match(output.delivery.downloadUrl, /^\/api\/attachments\//);
+  assert.equal(f.store.events('c').filter((e) => e.type === 'file.attached').length, 1);
+  await assert.rejects(
+    f.registry.invoke('create_document', input, f.ctx),
+    /existing documents|output path/,
+  );
+  const ro = { ...f.ctx, conversation: { ...f.conversation, permission: 'read-only' } };
+  assert.ok(!f.registry.modelSpecs(ro).some((x) => x.name === 'create_document'));
+  await assert.rejects(f.registry.invoke('create_document', { ...input, path: 'other.docx' }, ro));
 });

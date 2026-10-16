@@ -1,3 +1,4 @@
+import { deliverFile, documentMime } from '../services/file-delivery.js';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -77,34 +78,34 @@ export function installArtifacts(registry: ToolRegistry) {
     name: 'register_artifact',
     effect: 'read',
     description:
-      'Record a scoped existing file as an artifact with hash, size, MIME hint and producing run. Does not upload, modify, execute or prove correctness. File must remain unchanged during hashing.',
-    schema: z.object({ path: z.string().min(1).max(2048), taskId: z.string().max(80).optional() }),
+      'Publish an existing scoped file as a downloadable chat card and register its hash. Supports PDF, DOCX, PPTX, XLSX, text, ZIP and other files. The download is an immutable local snapshot; no external upload or shell needed. Use after creating deliverables; does not prove content correctness. Set attach=false for internal artifacts.',
+    schema: z.object({
+      path: z.string().min(1).max(2048),
+      taskId: z.string().max(80).optional(),
+      attach: z.boolean().default(true),
+    }),
     run: async (a, c) => {
-      const file = await c.files.resolve(a.path),
-        before = await stat(file);
-      assert(before.isFile(), 'ARTIFACT_FILE', 'Choose a regular file.');
-      const hash = createHash('sha256'),
-        deadline = Date.now() + 30000;
+      const file = await c.files.resolve(a.path);
+      const hash = createHash('sha256');
       let size = 0;
-      for await (const chunk of createReadStream(file)) {
-        c.signal.throwIfAborted();
-        assert(
-          Date.now() < deadline,
-          'ARTIFACT_TIMEOUT',
-          'Hashing deadline reached; artifact was not registered.',
+      // The scope's pinned streaming reader validates identity and detects concurrent changes.
+      let delivery;
+      if (a.attach) {
+        delivery = await deliverFile(
+          c.store,
+          c.run.conversationId,
+          c.run.id,
+          a.path,
+          c.files.readChunks(a.path, c.signal),
+          c.signal,
         );
-        hash.update(chunk);
-        size += chunk.length;
+        size = delivery.bytes;
+      } else {
+        for await (const chunk of c.files.readChunks(a.path, c.signal)) {
+          hash.update(chunk);
+          size += chunk.length;
+        }
       }
-      const after = await stat(await c.files.resolve(a.path));
-      assert(
-        size === before.size &&
-          after.size === before.size &&
-          after.mtimeMs === before.mtimeMs &&
-          after.ctimeMs === before.ctimeMs,
-        'ARTIFACT_CHANGED',
-        'File changed during hashing.',
-      );
       const mime: Record<string, string> = {
         '.pdf': 'application/pdf',
         '.png': 'image/png',
@@ -125,9 +126,14 @@ export function installArtifacts(registry: ToolRegistry) {
         runId: c.run.id,
         taskId: a.taskId || null,
         path: a.path,
-        mime: mime[extname(file).toLowerCase()] || 'application/octet-stream',
+        mime:
+          documentMime[extname(file).toLowerCase()] ||
+          mime[extname(file).toLowerCase()] ||
+          'application/octet-stream',
         bytes: size,
-        sha256: hash.digest('hex'),
+        sha256: delivery?.sha256 ?? hash.digest('hex'),
+        delivery,
+        downloadUrl: delivery?.downloadUrl,
         createdAt: Date.now(),
         verified: false,
       };
@@ -151,8 +157,7 @@ export function installArtifacts(registry: ToolRegistry) {
     }),
     run: (a, c) => {
       const all = c.store
-        .list<any>('tool-artifact')
-        .filter((x) => x.conversationId === c.run.conversationId)
+        .forConversation<any>('tool-artifact', c.run.conversationId)
         .sort((a, b) => b.createdAt - a.createdAt);
       return {
         content: JSON.stringify({

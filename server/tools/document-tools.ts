@@ -1,13 +1,80 @@
+import { documentInput, generateDocument } from '../services/document-generation.js';
+import { deliverFile } from '../services/file-delivery.js';
 import { createHash } from 'node:crypto';
 import { approvalSnapshot } from './approval-snapshot.js';
 import { z } from 'zod';
-import { mkdtemp, open, rm } from 'node:fs/promises';
+import { mkdtemp, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, extname } from 'node:path';
 import { extractIsolated } from '../services/document-parser.js';
 import { NotStartedError } from '../core/errors.js';
 import type { ToolRegistry } from './registry.js';
 export function installDocumentTools(registry: ToolRegistry) {
+  registry.add({
+    name: 'create_document',
+    effect: 'write',
+    description:
+      'Generate a real DOCX/PDF from structured blocks, PPTX from slides, or XLSX from sheets of literal cells; save a NEW file in the authorized workspace and attach a download card. Existing files are never overwritten. Basic layout, not arbitrary conversion or visual QA. PDF uses a fixed local browser renderer with networking/scripts disabled and may require approval. For Markdown, HTML, CSV, JSON, LaTeX source or custom formats use write_file or approved tools, then register_artifact; never just rename an extension. TeX compilation requires an available approved compiler. File creation is not proof of content/layout quality.',
+    schema: documentInput,
+    run: async (a, c) => {
+      const revalidate = approvalSnapshot(c);
+      const destination = await c.files.resolve(a.path, true);
+      try {
+        await stat(destination);
+        throw new NotStartedError(
+          'DOCUMENT_EXISTS',
+          'Choose a new output path; existing documents are never overwritten.',
+        );
+      } catch (error: any) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      if (a.format === 'pdf') {
+        if (c.conversation.permission !== 'trusted')
+          await c.inputs.request(
+            c.run,
+            'approval',
+            {
+              command: 'Render structured document to PDF using a fixed local browser',
+              path: a.path,
+              backend: 'document-renderer',
+              reason:
+                'No scripts, external assets or network. Writes only the requested output through FileScope.',
+            },
+            c.signal,
+          );
+        revalidate();
+      }
+      c.beforeExecution?.();
+      const bytes = await generateDocument(a, c.signal);
+      c.signal.throwIfAborted();
+      revalidate();
+      await c.files.writeChunks(
+        a.path,
+        (async function* () {
+          c.signal.throwIfAborted();
+          yield bytes;
+        })(),
+      );
+      const delivery = await deliverFile(
+        c.store,
+        c.run.conversationId,
+        c.run.id,
+        a.path,
+        c.files.readChunks(a.path, c.signal),
+        c.signal,
+      );
+      return {
+        content: JSON.stringify({
+          path: a.path,
+          format: a.format,
+          delivery,
+          verified: false,
+          notice:
+            'Generated and attached. Content and rendered layout have not been independently verified.',
+        }),
+      };
+    },
+  });
   registry.add({
     name: 'read_document',
     effect: 'execute',

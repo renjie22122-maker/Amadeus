@@ -712,7 +712,7 @@ export function App() {
           if (timing)
             nodes.push(<Elapsed key={'elapsed-' + e.id} run={timing} zh={language === 'zh'} />);
         }
-      } else if (e.type === 'media.attached' && e.data.attachment) {
+      } else if (['media.attached', 'file.attached'].includes(e.type) && e.data.attachment) {
         flush();
         nodes.push(
           <div key={e.id} className="message-attachments">

@@ -88,3 +88,22 @@ File selection and drag-and-drop also accept supported media. Images render inli
 Both paths return/use `attachment:<id>`: `inspect_media` checks metadata, `read_image({mediaRef})` supplies actual image pixels to a vision-capable model, `export_media` saves bytes without overwriting workspace files, and `generate_media.references` can reuse the attachment subject to the configured provider and normal approval. References are conversation-scoped and new attachments are hash-checked. Audio/video playback does not mean the model has heard or seen its contents: transcription and frame extraction are separate, authorized processing steps. Audio/video are not imported into the knowledge base as pretend text transcripts.
 
 Fit-content iframe previews reserve scrollbar space, coalesce height reports over 100 ms, and ignore changes of at most 2 CSS pixels to reduce layout feedback jitter. Genuine larger growth/shrink still applies. Browser regressions cover long bilingual tables at multiple widths and zoom levels; this is not proof against every user-authored responsive layout.
+
+## Downloadable documents and files
+
+`register_artifact(path)` now attaches an immutable file snapshot to the current conversation by default and returns its authenticated `downloadUrl`. The file card shows its name, type, byte size, download action and SHA-256. Any scoped regular file is supported, including PDF, DOCX, PPTX, XLSX, Markdown, CSV, JSON, HTML, LaTeX source and ZIP. No external upload or command/network permission is needed just to deliver an existing authorized file. `attach=false` keeps registration internal. Workspace changes do not change an already delivered copy; registration of a new version creates a new download. Attachment storage is removed through conversation deletion, subject to retained fork references.
+
+`create_document` saves a new workspace file and attaches it automatically:
+
+| Format | Structured input                                                  | Renderer                                                   |
+| ------ | ----------------------------------------------------------------- | ---------------------------------------------------------- |
+| DOCX   | title and paragraph/heading/bullet/code/page-break blocks         | docx                                                       |
+| PDF    | the same blocks, A4 layout                                        | installed Edge on Windows or Playwright Chromium elsewhere |
+| PPTX   | slides with title, body and optional speaker notes                | PptxGenJS, widescreen                                      |
+| XLSX   | named sheets with literal text, numbers, booleans and empty cells | ExcelJS                                                    |
+
+These are basic document renderers, not full Microsoft Office automation or arbitrary format conversion. XLSX strings are not interpreted as formulas. Complex styling, formulas, charts, images and specialized formats can be produced with separately authorized tools, then delivered using `register_artifact`. For LaTeX, create and deliver `.tex` sources; compiled PDF additionally requires an available approved TeX toolchain. Never rename extensions to pretend conversion succeeded. Generation does not certify content correctness or visually verified layout.
+
+PDF rendering uses escaped structured content in a fresh headless browser with scripts and resource requests disabled. It does not use the user's browser profile. Outside trusted mode this fixed process needs approval; no fallback disables browser sandboxing. Missing browser installations report an actionable error. The tool input budget is one million characters, with bounded slides, blocks and sheet cells; this is separate from downloads, which stream without a fixed single-file size cap. Failed snapshots are removed, but available disk space still matters.
+
+The standard launchers install locked dependencies when needed. No Microsoft Office installation is required for DOCX/PPTX/XLSX. Existing running services must be restarted after tasks finish to load updated tools and UI.

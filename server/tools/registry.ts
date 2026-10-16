@@ -578,7 +578,7 @@ export function tools() {
   registry.add({
     name: 'write_file',
     description:
-      'Create or replace a UTF-8 file in an authorized folder. Read existing files before changing them.',
+      'Create or replace a UTF-8 file in an authorized folder. Read existing files before changing them. For user deliverables call register_artifact afterward to show a download card; write_file alone does not attach the file.',
     effect: 'write',
     schema: z.object({ path, content: z.string().max(1000000) }),
     run: async (a, c) => {

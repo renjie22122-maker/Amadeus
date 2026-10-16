@@ -1,8 +1,16 @@
 import { useState } from 'react';
+import { Download, FileText } from 'lucide-react';
 export function AttachmentPreview({
   attachment: a,
 }: {
-  attachment: { id: string; name: string; mime: string };
+  attachment: {
+    id: string;
+    name: string;
+    mime: string;
+    bytes?: number;
+    size?: number;
+    sha256?: string;
+  };
 }) {
   const [failed, setFailed] = useState(false);
   const url = '/api/attachments/' + encodeURIComponent(a.id);
@@ -31,9 +39,26 @@ export function AttachmentPreview({
         </a>
       ) : null}
       {failed && <small>无法预览，可下载查看 / Preview unavailable; download below.</small>}
-      <a href={url} download={a.name}>
-        {a.name}
+      <a className="file-download-card" href={url} download={a.name}>
+        <FileText size={22} aria-hidden="true" />
+        <span className="file-download-info">
+          <strong>{a.name}</strong>
+          <small>
+            {a.name.split('.').pop()?.toUpperCase() || 'FILE'}
+            {typeof (a.bytes ?? a.size) === 'number'
+              ? ' · ' + new Intl.NumberFormat().format(a.bytes ?? a.size ?? 0) + ' B'
+              : ''}
+            {' · 下载 / Download'}
+          </small>
+        </span>
+        <Download size={18} aria-hidden="true" />
       </a>
+      {a.sha256 && (
+        <details className="file-download-details">
+          <summary>文件校验 / Checksum</summary>
+          <code>SHA-256 {a.sha256}</code>
+        </details>
+      )}
     </div>
   );
 }
