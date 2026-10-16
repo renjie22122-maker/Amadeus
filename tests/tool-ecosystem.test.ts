@@ -1470,3 +1470,75 @@ test('document delivery is available in ordinary chats, preserves write permissi
   assert.ok(!f.registry.modelSpecs(ro).some((x) => x.name === 'create_document'));
   await assert.rejects(f.registry.invoke('create_document', { ...input, path: 'other.docx' }, ro));
 });
+
+test('a yielded batch defers remaining calls and preserves all tool responses', async (t) => {
+  const f = fixture(t);
+  let starts = 0;
+  f.registry.add({
+    name: 'fixture_yield',
+    effect: 'read',
+    schema: z.object({}),
+    description: 'fixture',
+    run: async () => {
+      starts++;
+      return {
+        content: JSON.stringify({ id: 'job', status: 'running' }),
+        outcome: { status: 'succeeded', code: 'COMMAND_SCHEDULED' },
+      };
+    },
+  });
+  const calls = [
+    { id: 'one', name: 'fixture_yield', arguments: {} },
+    { id: 'two', name: 'fixture_yield', arguments: {} },
+  ];
+  const executor = new ToolExecutor(f.store, f.registry, f.dir);
+  const results = await executor.batch(f.run, calls, f.ctx);
+  assert.equal(starts, 1);
+  assert.equal(results.length, 2);
+  assert.equal(JSON.parse(results[1]).notStarted, true);
+  assert.equal(f.run.checkpoints.filter((m: any) => m.role === 'tool').length, 2);
+});
+
+test('workflow pauses at a running command without executing dependent steps', async (t) => {
+  const f = fixture(t);
+  let starts = 0;
+  const out = await f.registry.invoke(
+    'tool_workflow',
+    {
+      steps: [
+        { name: 'run_command', arguments: {} },
+        { name: 'write_file', arguments: { path: 'never', content: 'no' } },
+      ],
+    },
+    {
+      ...f.ctx,
+      invokeTool: async () => {
+        starts++;
+        return {
+          content: JSON.stringify({ id: 'live-job' }),
+          outcome: { status: 'succeeded', code: 'COMMAND_SCHEDULED' },
+        };
+      },
+    },
+  );
+  assert.equal(starts, 1);
+  assert.equal(out.outcome?.code, 'COMMAND_SCHEDULED');
+  assert.equal(JSON.parse(out.content).notStarted, 1);
+  assert.equal(JSON.parse(out.content).replayed, false);
+});
+
+test('reading a skill exposes supporting tools without forcing skill use on other tasks', async (t) => {
+  const f = fixture(t);
+  f.store.put('skill', {
+    id: 's',
+    name: 'fixture',
+    description: 'fixture',
+    content: 'read mode',
+    source: 'unused',
+    enabled: true,
+  });
+  assert(!f.registry.modelSpecs(f.ctx).some((x) => x.name === 'inspect_skill_readiness'));
+  await f.registry.invoke('read_skill', { id: 's' }, f.ctx);
+  assert(f.registry.modelSpecs(f.ctx).some((x) => x.name === 'inspect_skill_readiness'));
+  assert(f.registry.modelSpecs(f.ctx).some((x) => x.name === 'read_skill_file'));
+});

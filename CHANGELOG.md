@@ -169,3 +169,7 @@ Document-scoped follow-up search, narrow passage reranking, automatic conservati
 
 - Shared scrolling with progressive See more / See less for projects, ordinary conversations and project chats; recent activity ordering, pinned and selected retention, project-name search.
 - 项目和普通对话共用滚动条，默认少量展示，展开不增加嵌套滚动区。
+
+## 2026-10-16 — Skill discovery and responsive waits
+
+Task-ranked skill metadata, on-demand bodies, current-reference read checks, and steering-aware command/batch/workflow waits without process replay. See TOOL-ECOSYSTEM for boundaries. No new dependencies or launcher migration.

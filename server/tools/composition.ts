@@ -75,6 +75,19 @@ export function installComposition(registry: ToolRegistry) {
               step: index,
               totalSteps: a.steps.length,
             });
+            if (result.outcome?.code === 'COMMAND_SCHEDULED')
+              return {
+                content: JSON.stringify({
+                  results: [...results, { index, name: step.name, ...result }],
+                  pausedStep: index,
+                  members,
+                  notStarted: a.steps.length - index - 1,
+                  replayed: false,
+                  instruction:
+                    'The command is still running. Handle user input, then wait for this job and reconsider only unstarted steps. Never replay completed steps.',
+                }),
+                outcome: { status: 'succeeded', code: 'COMMAND_SCHEDULED' },
+              };
             if (result.outcome?.status !== 'succeeded')
               return {
                 content: JSON.stringify({

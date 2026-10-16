@@ -29,18 +29,35 @@ export class ToolExecutor {
     const observations = new Map<string, unknown>();
     const outcomes = new Map<string, ToolOutcome>();
     const images = new Map<string, string[]>();
+    let deferred = false;
+    const pendingInput = () =>
+      !!this.store.db
+        .prepare(
+          "SELECT 1 FROM records WHERE kind='user-inbox' AND json_extract(data,'$.conversationId')=? AND json_extract(data,'$.state')='pending' LIMIT 1",
+        )
+        .get(run.conversationId);
     const results = await executeBatch(
       calls,
       (name) => this.registry.parallelSafe(name),
       async (call) => {
+        if (deferred || pendingInput()) {
+          const outcome: ToolOutcome = {
+            status: 'not_started',
+            code: 'BATCH_DEFERRED',
+            executionStarted: false,
+          };
+          outcomes.set(call.id, outcome);
+          return JSON.stringify({
+            notStarted: true,
+            reason:
+              'Process new user input or wait for the running command before reconsidering this call. It was not executed; do not replay the whole batch.',
+          });
+        }
         const paths = new TaskBoard(this.store).get(run).tasks.flatMap(verificationPaths);
         const observe = paths.length && ['read_file', 'run_command'].includes(call.name);
         const before = observe ? await stamp(ctx.files, paths) : undefined;
-        const executionCall =
-          calls.length > 1 && call.name === 'run_command' && !call.arguments.background
-            ? { ...call, arguments: { ...call.arguments, yieldAfterSeconds: 0 } }
-            : call;
-        const output = await this.invoke(run, executionCall, ctx, images, outcomes);
+        const output = await this.invoke(run, call, ctx, images, outcomes);
+        if (outcomes.get(call.id)?.code === 'COMMAND_SCHEDULED') deferred = true;
         const after = observe ? await stamp(ctx.files, paths) : undefined;
         let passed = call.name === 'read_file' && outcomes.get(call.id)?.status === 'succeeded';
         if (call.name === 'run_command')
@@ -189,7 +206,7 @@ export class ToolExecutor {
             outcome,
             hookId,
           });
-          if (outcome?.status !== 'succeeded')
+          if (outcome?.status !== 'succeeded' || outcome.code === 'COMMAND_SCHEDULED')
             throw new Error(
               'Hook command did not succeed: ' +
                 hookId +
@@ -234,17 +251,23 @@ export class ToolExecutor {
           return { content, outcome, eventId: event.id };
         },
         invokeTool: async (name, args, index) => {
+          if (
+            this.store.db
+              .prepare(
+                "SELECT 1 FROM records WHERE kind='user-inbox' AND json_extract(data,'$.conversationId')=? AND json_extract(data,'$.state')='pending' LIMIT 1",
+              )
+              .get(run.conversationId)
+          )
+            throw new NotStartedError(
+              'STEERING_PENDING',
+              'New user input is pending. Remaining workflow calls were not started.',
+            );
           if (['tool_workflow', 'batch_read_tools', 'search_capabilities'].includes(name))
             throw new NotStartedError('WORKFLOW_RECURSION', 'Nested composition is not allowed.');
           const nested = {
             id: call.id + ':step:' + index,
             name,
-            arguments:
-              name === 'run_command' &&
-              !args.background &&
-              !['execute_recovery_action', 'run_python'].includes(call.name)
-                ? { ...args, yieldAfterSeconds: 0 }
-                : args,
+            arguments: args,
           };
           const childImages = new Map<string, string[]>(),
             childOutcomes = new Map<string, ToolOutcome>();

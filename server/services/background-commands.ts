@@ -220,6 +220,14 @@ export class BackgroundCommands {
     const done = () =>
       !['running', 'waiting_approval'].includes(job.status) || (untilReady && job.readyObserved);
     if (done()) return this.view(job);
+    const pending = () =>
+      !!this.store.db
+        .prepare(
+          "SELECT 1 FROM records WHERE kind='user-inbox' AND json_extract(data,'$.conversationId')=? AND json_extract(data,'$.state')='pending' LIMIT 1",
+        )
+        .get(conversationId);
+    if (pending()) return { ...this.view(job), waitReason: 'user-input' };
+    let steered = false;
     await new Promise<void>((resolve, reject) => {
       const finish = (error?: Error) => {
         clearTimeout(timer);
@@ -234,15 +242,22 @@ export class BackgroundCommands {
         if (done()) finish();
       };
       const abort = () => finish(abortError());
-      const wake = () => finish();
+      const wake = () => {
+        steered = true;
+        finish();
+      };
       const timer = seconds > 0 ? setTimeout(() => finish(), seconds * 1000) : undefined;
       this.events.on(key, changed);
       this.events.once('steering:' + conversationId, wake);
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) abort();
+      else if (pending()) wake();
       else changed();
     });
-    return this.view(this.get(conversationId, key));
+    return {
+      ...this.view(this.get(conversationId, key)),
+      waitReason: steered ? 'user-input' : 'status-or-timeout',
+    };
   }
   async cancel(conversationId: string, key: string) {
     const job = this.get(conversationId, key),

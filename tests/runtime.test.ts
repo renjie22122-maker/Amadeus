@@ -2180,3 +2180,74 @@ test('plain reply and provider failure never hydrate unrelated historical runs a
     }
   }
 });
+
+test(
+  'explicit foreground wait yields to steering without restarting the process',
+  { timeout: 15000 },
+  async () => {
+    let calls = 0,
+      jobId = '',
+      received = false;
+    const f = await setup({
+      complete: async (req) => {
+        calls++;
+        if (calls === 1)
+          return result('', [
+            {
+              id: 'long',
+              name: 'run_command',
+              arguments: {
+                command:
+                  '"' +
+                  process.execPath +
+                  '" -e "console.log(123);setTimeout(()=>console.log(456),2500)"',
+                folder: 0,
+                yieldAfterSeconds: 0,
+                timeoutSeconds: 10,
+                reason: 'steering regression',
+              },
+            },
+          ]);
+        if (calls === 2) {
+          received = req.messages.some(
+            (m) => m.role === 'user' && m.content === 'keep current work; change next step',
+          );
+          jobId = JSON.parse(
+            req.messages.find((m) => m.role === 'tool' && m.callId === 'long')!.content,
+          ).id;
+          assert.equal(f.runtime.background.get('chat', jobId).status, 'running');
+          return result('', [
+            { id: 'wait', name: 'wait_background_command', arguments: { id: jobId } },
+          ]);
+        }
+        return result('Done');
+      },
+    });
+    f.store.put('project', {
+      id: 'p',
+      name: 'fixture',
+      folders: [await mkdtemp(join(tmpdir(), 'explicit-wait-'))],
+      createdAt: 1,
+    });
+    f.store.put('conversation', {
+      ...f.store.get<any>('conversation', 'chat'),
+      projectId: 'p',
+      permission: 'trusted',
+    });
+    try {
+      const r = f.runtime.start('chat', 'Run bounded work');
+      await until(() => f.runtime.background.list('chat').some((j) => j.status === 'running'));
+      f.runtime.steer('chat', 'keep current work; change next step');
+      await until(() => received, 2000);
+      await until(() => f.store.get<any>('run', r.id).status === 'completed', 7000);
+      assert.equal(f.runtime.background.list('chat').length, 1);
+      assert.equal(
+        f.runtime.background.get('chat', jobId).result?.stdout.replaceAll('\r', '').trim(),
+        '123\n456',
+      );
+    } finally {
+      await f.runtime.shutdown();
+      f.store.close();
+    }
+  },
+);

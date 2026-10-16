@@ -1,3 +1,4 @@
+import { rankSkills } from '../services/skill-discovery.js';
 import { diagnoseFailure } from '../services/failure-diagnosis.js';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -53,6 +54,15 @@ export async function materializeSkill(
     reused,
     note: 'Exact resource copy only. Dependencies and execution are not verified; command permissions still apply.',
   };
+}
+function recordRead(c: any, skillId: string, resource: string, content: string) {
+  c.store.put('skill-read', {
+    id: c.run.id + ':' + skillId + ':' + resource,
+    runId: c.run.id,
+    skillId,
+    resource,
+    sha256: createHash('sha256').update(content).digest('hex'),
+  });
 }
 export function installSkills(registry: ToolRegistry) {
   registry.add({
@@ -169,25 +179,17 @@ export function installSkills(registry: ToolRegistry) {
       limit: z.number().int().min(1).max(30).default(10),
     }),
     run: (a, c) => {
-      const words: string[] = a.query.toLowerCase().split(/\s+/).filter(Boolean);
-      const matches = c.store
-        .list<Skill>('skill')
-        .filter((s) => s.enabled)
-        .map((s) => ({
-          id: s.id,
-          name: s.name,
-          description: s.description,
-          selected: c.conversation.skillIds.includes(s.id),
-          score: words.filter((w) => (s.name + ' ' + s.description).toLowerCase().includes(w))
-            .length,
-        }))
-        .filter((s) => !words.length || s.score > 0)
-        .sort(
-          (a, b) =>
-            b.score - a.score ||
-            Number(b.selected) - Number(a.selected) ||
-            a.id.localeCompare(b.id),
-        );
+      const matches = rankSkills(
+        c.store.list<Skill>('skill'),
+        c.conversation.skillIds,
+        a.query,
+      ).map(({ id, name, description, selected, score }) => ({
+        id,
+        name,
+        description,
+        selected,
+        score,
+      }));
       return text({
         total: matches.length,
         skills: matches.slice(a.offset, a.offset + a.limit),
@@ -204,6 +206,7 @@ export function installSkills(registry: ToolRegistry) {
     schema: z.object({ id: z.string() }),
     run: (a, c) => {
       const skill = enabled(c.store, a.id);
+      recordRead(c, a.id, 'SKILL.md', skill.content);
       return text(
         skill.content +
           (skill.manifest
@@ -229,8 +232,53 @@ export function installSkills(registry: ToolRegistry) {
     description:
       'Read a UTF-8 resource from an enabled skill. For exact binary or executable copies use materialize_skill_file.',
     schema: z.object({ id: z.string(), path: z.string() }),
-    run: async (a, c) =>
-      text(await new FileScope([dirname(enabled(c.store, a.id).source)]).read(a.path)),
+    run: async (a, c) => {
+      const content = await new FileScope([dirname(enabled(c.store, a.id).source)]).read(a.path);
+      recordRead(c, a.id, a.path, content);
+      return text(content);
+    },
+  });
+  registry.add({
+    name: 'inspect_skill_readiness',
+    effect: 'read',
+    parallelSafe: true,
+    description:
+      'Before a skill-assisted operation, check that its current instructions and the supporting references required for this operation were read in this run. Does not prove compliance, dependency availability or grant permission. Unrelated tasks do not need this check.',
+    schema: z.object({ id: z.string(), references: z.array(z.string()).max(20).default([]) }),
+    run: async (a, c) => {
+      const skill = enabled(c.store, a.id);
+      const files = new FileScope([dirname(skill.source)]);
+      const resources = [];
+      for (const resource of [
+        'SKILL.md',
+        ...new Set<string>((a.references as string[]).filter((x) => x !== 'SKILL.md')),
+      ]) {
+        try {
+          const content = resource === 'SKILL.md' ? skill.content : await files.read(resource);
+          const hash = createHash('sha256').update(content).digest('hex');
+          const previous = c.store.maybe<any>('skill-read', c.run.id + ':' + a.id + ':' + resource);
+          resources.push({
+            resource,
+            state:
+              previous?.sha256 === hash
+                ? 'read_current'
+                : previous
+                  ? 'changed_since_read'
+                  : 'not_read',
+          });
+        } catch {
+          resources.push({ resource, state: 'unavailable' });
+        }
+      }
+      return text({
+        resources,
+        readingComplete: resources.every((x) => x.state === 'read_current'),
+        declaredChecks: skill.manifest,
+        permissionsGranted: false,
+        notice:
+          'Read coverage only for the references supplied. Verify actual workflow/API inputs, dependencies, user constraints and output separately. This is not proof of skill compliance.',
+      });
+    },
   });
   registry.add({
     name: 'materialize_skill_file',

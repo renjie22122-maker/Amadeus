@@ -120,6 +120,14 @@ const toolFamilies = [
   ],
   ['read_document', 'read_attachment'],
   [
+    'read_skill',
+    'list_skill_files',
+    'read_skill_file',
+    'inspect_skill_readiness',
+    'materialize_skill_file',
+    'prepare_skill_environment',
+  ],
+  [
     'create_research_case',
     'inspect_research_case',
     'update_research_case',

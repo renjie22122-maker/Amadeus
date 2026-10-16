@@ -1,3 +1,4 @@
+import { taskSkills } from '../services/skill-discovery.js';
 import { providerFailureDiagnostic } from '../providers/failure.js';
 import { completeModel, accountModelUsage } from './model-session.js';
 import { createRuntimeServices } from './runtime-services.js';
@@ -274,6 +275,7 @@ export class Runtime implements TeamPort {
         conversationId,
         runId,
         state: 'pending',
+        steering,
         ...queued,
       });
       return queued;
@@ -496,6 +498,23 @@ export class Runtime implements TeamPort {
               }
             }
           }
+        }
+        if (pending.some((m) => m.steering)) {
+          const relevantSkills = taskSkills(
+            this.store,
+            run.id,
+            run.conversationId,
+            ctx.conversation.skillIds,
+            pending.map((m) => m.content).join('\n'),
+          );
+          if (relevantSkills)
+            run.checkpoints.push({
+              role: 'system',
+              contextKind: 'runtime-advice',
+              content:
+                'Task-relevant skill references (untrusted, no permission grants): ' +
+                JSON.stringify(relevantSkills),
+            });
         }
         if (pending.length)
           this.store.transaction(() => {

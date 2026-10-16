@@ -615,7 +615,7 @@ export function tools() {
   registry.add({
     name: 'run_command',
     description:
-      'Execute a command in a project folder. Host execution requires user approval unless trusted mode is explicitly selected. Host mode has no OS file isolation. By default, after 10 seconds the SAME process continues as a background job, without changing its execution timeout. Set yieldAfterSeconds=0 for strictly synchronous dependent work. A running job is not a successful command result.',
+      'Execute a command in a project folder. Host execution requires user approval unless trusted mode is explicitly selected. Host mode has no OS file isolation. By default, after 10 seconds the SAME process continues as a background job, without changing its execution timeout. Set yieldAfterSeconds=0 to wait for completion without timed yielding; new user input can still release the wait while the same job continues. A running job is not a successful command result.',
     effect: 'execute',
     schema: z.object({
       command: z.string().min(1).max(20000),
@@ -715,7 +715,7 @@ export function tools() {
             a.readyText,
           ),
         );
-      if (a.yieldAfterSeconds > 0) {
+      if (a.yieldAfterSeconds > 0 || c.background) {
         // Start once under the background lifecycle, but preserve synchronous results
         // for short commands. Only detached jobs send a completion notification.
         const delivery = { detached: false };

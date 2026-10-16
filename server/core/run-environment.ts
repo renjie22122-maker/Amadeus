@@ -1,3 +1,4 @@
+import { taskSkills } from '../services/skill-discovery.js';
 import { MemoryChecks } from '../services/memory-checks.js';
 import { planningPolicy } from '../services/planning-policy.js';
 import { executionSettings } from '../../shared/execution.js';
@@ -123,10 +124,18 @@ export class RunEnvironment {
         teamStrategy: ctx.conversation.teamStrategy || 'auto',
         teamMode: ctx.conversation.teamMode || 'auto',
         isolatedCopy: !!ctx.conversation.isolationId,
-        selectedSkills: skills.slice(0, 20),
+        selectedSkills: skills.slice(0, 100).map(({ id, name }) => ({ id, name })),
+        selectedSkillsOmitted: Math.max(0, skills.length - 100),
+        taskSkills: taskSkills(
+          this.store,
+          run.id,
+          run.conversationId,
+          ctx.conversation.skillIds,
+          query,
+        ),
         selectedSkillCount: skills.length,
         skillDiscovery:
-          'Use find_skills for the complete enabled catalog; only the first 20 selected descriptions are included here.',
+          'Selected names are listed; relevant enabled skill descriptions are ranked within a budget; bodies load only through read_skill. Unselected does not mean library-disabled. Use find_skills to discover others.',
         knowledgeScopes: ctx.scopes,
         confirmedMemories: memories,
       }) +
