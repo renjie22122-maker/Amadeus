@@ -132,7 +132,20 @@ export async function generateDocument(v: DocumentInput, signal: AbortSignal): P
     return Buffer.from(await book.xlsx.writeBuffer());
   }
   if (v.format === 'pptx') {
-    const { default: PptxGenJS } = await import('pptxgenjs');
+    // Upstream publishes ESM JavaScript with CJS-classified declarations. Keep the
+    // interop boundary explicit so both Bundler and NodeNext builds agree.
+    const { default: exported } = await import('pptxgenjs');
+    assert(typeof exported === 'function', 'DOCUMENT_PPTX', 'PPTX renderer is not a constructor.');
+    const PptxGenJS = exported as unknown as new () => {
+      layout: string;
+      title: string;
+      addSlide(): {
+        background: { color: string };
+        addText(text: string, options: Record<string, unknown>): void;
+        addNotes(text: string): void;
+      };
+      write(options: { outputType: 'nodebuffer' }): Promise<Uint8Array>;
+    };
     const deck = new PptxGenJS();
     deck.layout = 'LAYOUT_WIDE';
     deck.title = v.title;
