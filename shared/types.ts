@@ -150,7 +150,12 @@ export interface Project {
   folders: string[];
   createdAt: number;
 }
+export interface SubagentModels {
+  defaultProfileId: string | null;
+  allowedProfileIds: string[];
+}
 export interface Conversation {
+  subagentModels?: SubagentModels | null;
   titleGeneration?: { runId: string; state: 'pending' | 'attempted' | 'done' | 'manual' };
   allowedTools?: string[];
   specialistId?: string;

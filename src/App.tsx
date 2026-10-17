@@ -402,8 +402,8 @@ export function App() {
     : undefined;
   const project = state?.projects.find((p: any) => p.id === conversation?.projectId),
     profile = state?.settings.profiles.find((p: any) => p.id === conversation?.profileId);
-  const update = async (data: any) => {
-    const key = selected;
+  const update = async (data: any, targetId = selected) => {
+    const key = targetId;
     if (!key) return;
     const pending = { ...patches.current.get(key), ...data };
     patches.current.set(key, pending);
@@ -1303,6 +1303,7 @@ export function App() {
               </div>
               <>
                 <Composer
+                  onConfigureModels={() => setPage('settings')}
                   ensureConversation={async () => selected || (await newChat())}
                   {...{
                     run,

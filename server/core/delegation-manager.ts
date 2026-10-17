@@ -1,3 +1,4 @@
+import { selectDelegationModel } from '../services/delegation-models.js';
 import { Teams } from '../services/team-space.js';
 import { configuredLimit } from './limits.js';
 import { Isolations } from '../services/isolation.js';
@@ -37,6 +38,7 @@ export class DelegationManager {
     mode: 'read-only' | 'isolated' = 'read-only',
     controlTicket?: string,
     specialistId?: string,
+    profileId?: string,
   ) {
     const settings = this.config.get();
     const specialist = specialistId
@@ -66,6 +68,7 @@ export class DelegationManager {
         'DELEGATION_PERMISSION',
         'Writable delegation requires a writable project task.',
       );
+      const modelSelection = selectDelegationModel(c, settings.profiles, profileId);
       const source = (await this.host.context(parent)).files;
       const isolation =
         mode === 'isolated'
@@ -73,6 +76,7 @@ export class DelegationManager {
           : null;
       const child = {
         ...c,
+        ...modelSelection,
         isolationId: isolation?.id || c.isolationId,
         id: id(),
         title: task.slice(0, 65),
@@ -123,6 +127,7 @@ export class DelegationManager {
       this.store.event(c.id, parent.id, 'child.started', {
         runId: run.id,
         conversationId: child.id,
+        profileId: child.profileId,
         task,
         deliverable,
       });
@@ -168,6 +173,7 @@ export class DelegationManager {
                   : 'idle',
               lastOutcome: latest?.status,
               permission: c.permission,
+              profileId: c.profileId,
             },
           ];
         } catch {
@@ -220,7 +226,13 @@ export class DelegationManager {
     this.store.event(parent.conversationId, parent.id, 'agent.closed', { agentId: child.id });
     return { agentId: child.id, status: 'closed', historyRetained: true };
   }
-  async continueMember(parent: Run, key: string, message: string, controlTicket?: string) {
+  async continueMember(
+    parent: Run,
+    key: string,
+    message: string,
+    controlTicket?: string,
+    profileId?: string,
+  ) {
     const { child, runs } = this.member(parent, key);
     const c = this.store.get<Conversation>('conversation', parent.conversationId),
       settings = this.config.get();
@@ -240,6 +252,7 @@ export class DelegationManager {
       'Configured delegation depth reached.',
     );
     this.assertIdle(runs);
+    const modelSelection = selectDelegationModel(c, settings.profiles, profileId);
     assert(
       child.projectId === c.projectId,
       'AGENT_SCOPE_CHANGED',
@@ -312,8 +325,8 @@ export class DelegationManager {
                 : c.permission === 'read-only'
                   ? 'read-only'
                   : 'ask',
-          profileId: c.profileId,
-          reasoning: c.reasoning,
+          ...modelSelection,
+          subagentModels: c.subagentModels,
           execution: c.execution,
           knowledge: c.knowledge,
           memory: c.memory,
@@ -342,7 +355,7 @@ export class DelegationManager {
         });
         return next;
       });
-      return { agentId: child.id, runId: run.id, status: run.status };
+      return { agentId: child.id, runId: run.id, status: run.status, profileId: run.profileId };
     } finally {
       this.pendingSpawns.set(root, Math.max(0, (this.pendingSpawns.get(root) || 1) - 1));
     }

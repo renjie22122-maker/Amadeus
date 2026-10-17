@@ -69,9 +69,16 @@ export interface TeamPort {
     mode?: 'read-only' | 'isolated',
     controlTicket?: string,
     specialistId?: string,
+    profileId?: string,
   ): Promise<string>;
   members?(parent: Run): unknown;
-  continueMember?(parent: Run, key: string, message: string, ticket?: string): Promise<unknown>;
+  continueMember?(
+    parent: Run,
+    key: string,
+    message: string,
+    ticket?: string,
+    profileId?: string,
+  ): Promise<unknown>;
   closeMember?(parent: Run, key: string): unknown;
   inspectChanges?(parent: Run, key: string): Promise<any>;
   mergeChanges?(parent: Run, key: string, version: string): Promise<any>;
@@ -1213,6 +1220,13 @@ export function tools() {
       deliverable: z.string().min(10).max(2000),
       mode: z.enum(['read-only', 'isolated']).default('read-only'),
       specialistId: z.string().optional(),
+      profileId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          'Optional model connection ID from runtime subagentModels.available; omit to follow the configured subagent default.',
+        ),
     }),
     run: async (a, c) => {
       const runId = await c.team.spawn(
@@ -1222,8 +1236,10 @@ export function tools() {
         a.mode,
         c.callId ? c.run.id + ':' + c.callId : undefined,
         a.specialistId,
+        a.profileId,
       );
-      return text({ runId, agentId: c.store.get<Run>('run', runId).conversationId });
+      const child = c.store.get<Run>('run', runId);
+      return text({ runId, agentId: child.conversationId, profileId: child.profileId });
     },
   });
   registry.add({
@@ -1240,7 +1256,11 @@ export function tools() {
     effect: 'coordinate',
     description:
       'Continue an idle direct member in its original private conversation with retained context, across user turns. Pass its stable agentId (a previous runId also works). Returns a NEW runId for wait_agents/configure_team. No automatic replay of old tools. Continue before configuring a fixed team roster; active members use message_agent.',
-    schema: z.object({ agentId: z.string(), message: z.string().min(1).max(12000) }),
+    schema: z.object({
+      agentId: z.string(),
+      message: z.string().min(1).max(12000),
+      profileId: z.string().min(1).optional(),
+    }),
     run: async (a, c) =>
       text(
         await c.team.continueMember!(
@@ -1248,6 +1268,7 @@ export function tools() {
           a.agentId,
           a.message,
           c.callId ? c.run.id + ':' + c.callId : undefined,
+          a.profileId,
         ),
       ),
   });

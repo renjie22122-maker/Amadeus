@@ -1,3 +1,4 @@
+import { ModelControl } from './ModelControl';
 import { AttachmentPreview } from './AttachmentPreview';
 import { useState, useRef, useEffect } from 'react';
 import { DraftPreview } from './DraftPreview';
@@ -32,7 +33,8 @@ interface ComposerProps {
   profile: PublicProfile | undefined;
   state: UiState;
   conversation: Conversation | undefined;
-  update: (data: Record<string, unknown>) => Promise<void>;
+  update: (data: Record<string, unknown>, id?: string) => Promise<void>;
+  onConfigureModels: () => void;
   project: Project | undefined;
   t: (key: string) => string;
   stick: RefObject<boolean>;
@@ -41,6 +43,7 @@ interface ComposerProps {
 }
 export function Composer({
   ensureConversation,
+  onConfigureModels,
   run,
   running,
   detail,
@@ -64,6 +67,8 @@ export function Composer({
   bottom,
   sending,
 }: ComposerProps) {
+  const modelBusy = useRef(false);
+  const [modelSaving, setModelSaving] = useState(false);
   const zh = t('settings') !== 'Settings';
   const [preview, setPreview] = useState(false);
   const [pasting, setPasting] = useState(false);
@@ -92,7 +97,7 @@ export function Composer({
     }
   }
   const sendReady = (text?: string) => {
-    if (!pasteBusy.current) void send(text);
+    if (!pasteBusy.current && !modelBusy.current) void send(text);
   };
   return (
     <div className="composer-area">
@@ -118,7 +123,7 @@ export function Composer({
         {run && ['interrupted', 'failed'].includes(run.status) && (
           <button
             className="resume-button"
-            disabled={sending || pasting}
+            disabled={sending || pasting || modelSaving}
             onClick={() =>
               void send(
                 'Continue the unfinished task. Inspect existing results first. Do not replay completed or unknown side effects.',
@@ -155,7 +160,7 @@ export function Composer({
                     <AttachmentPreview attachment={a} />
                     <button
                       type="button"
-                      disabled={sending || pasting}
+                      disabled={sending || pasting || modelSaving}
                       aria-label={
                         (t('settings') === 'Settings' ? 'Remove attachment: ' : '删除附件：') +
                         a.name
@@ -278,12 +283,23 @@ export function Composer({
                 }}
               />
 
-              <span className="composer-model">
-                {profile?.model ||
-                  state.settings.profiles.find((p: any) => p.id === state.settings.defaultProfileId)
-                    ?.model ||
-                  t('noModel')}
-              </span>
+              <ModelControl
+                key={conversation?.id || 'new'}
+                profiles={state.settings.profiles}
+                profileId={conversation?.profileId || state.settings.defaultProfileId}
+                policy={conversation?.subagentModels}
+                locked={!!running || sending}
+                zh={zh}
+                onConfigure={onConfigureModels}
+                onBusy={(busy) => {
+                  modelBusy.current = busy;
+                  setModelSaving(busy);
+                }}
+                onSave={async (patch) => {
+                  const id = await ensureConversation();
+                  await update(patch, id);
+                }}
+              />
               {conversation && (
                 <>
                   <ReasoningSlider
@@ -365,6 +381,7 @@ export function Composer({
                   sending ||
                   pasting ||
                   (!draft.trim() && !detail?.attachments.some((a) => !a.messageEventId)) ||
+                  modelSaving ||
                   !state.settings.profiles.length
                 }
                 onClick={() => sendReady()}

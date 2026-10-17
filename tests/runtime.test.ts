@@ -2266,3 +2266,117 @@ test(
     }
   },
 );
+
+test('subagent model defaults and explicit allowlists apply to spawn and continuation', async () => {
+  const f = await setup({ complete: async () => result('Done') });
+  f.config.save({
+    ...f.config.get(),
+    profiles: [
+      ...f.config.get().profiles,
+      { ...f.config.profile('test'), id: 'second', name: 'Second', model: 'second' },
+      { ...f.config.profile('test'), id: 'third', name: 'Third', model: 'third' },
+    ],
+  });
+  try {
+    const parent = f.runtime.start('chat', 'Parent task');
+    await until(() => f.store.runHeader(parent.id).status === 'completed');
+    await assert.rejects(
+      f.runtime.spawn(
+        parent,
+        'Independent investigation task',
+        'Return verified observations',
+        'read-only',
+        undefined,
+        undefined,
+        'second',
+      ),
+      /not allowed/,
+    );
+    assert.equal(f.store.runMetadata().length, 1);
+    f.store.put('conversation', {
+      ...f.store.get<any>('conversation', 'chat'),
+      subagentModels: { defaultProfileId: 'second', allowedProfileIds: ['third'] },
+    });
+    const id = await f.runtime.spawn(
+      parent,
+      'Independent investigation task',
+      'Return verified observations',
+    );
+    await until(() => f.store.runHeader(id).status === 'completed');
+    assert.equal(f.store.runHeader(id).profileId, 'second');
+    assert.equal(
+      f.store.get<any>('conversation', f.store.runHeader(id).conversationId).permission,
+      'read-only',
+    );
+    const next: any = await f.runtime.continueMember(
+      parent,
+      id,
+      'Review the result',
+      undefined,
+      'third',
+    );
+    await until(() => f.store.runHeader(next.runId).status === 'completed');
+    assert.equal(f.store.runHeader(next.runId).profileId, 'third');
+    assert.equal(next.agentId, f.store.runHeader(id).conversationId);
+    f.store.put('conversation', {
+      ...f.store.get<any>('conversation', 'chat'),
+      subagentModels: null,
+    });
+    await assert.rejects(
+      f.runtime.continueMember(parent, id, 'Try a removed choice', undefined, 'third'),
+      /not allowed/,
+    );
+    const inherited: any = await f.runtime.continueMember(parent, id, 'Follow parent model');
+    await until(() => f.store.runHeader(inherited.runId).status === 'completed');
+    assert.equal(f.store.runHeader(inherited.runId).profileId, 'test');
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});
+
+test('conversation model settings validate connections and remain locked during active runs', async () => {
+  const f = await setup({
+    complete: async () =>
+      result('', [
+        { id: 'q', name: 'ask_user', arguments: { question: 'Wait here', options: ['Yes', 'No'] } },
+      ]),
+  });
+  f.config.save({
+    ...f.config.get(),
+    profiles: [
+      ...f.config.get().profiles,
+      { ...f.config.profile('test'), id: 'second', model: 'second' },
+    ],
+  });
+  const { app } = await createApp({ directory: f.dir, runtime: f.runtime });
+  try {
+    const boot = await app.inject({ url: '/api/bootstrap', headers: { host: '127.0.0.1:8810' } });
+    const headers = {
+      host: '127.0.0.1:8810',
+      cookie: String(boot.headers['set-cookie']).split(';')[0],
+      'x-csrf-token': boot.json().csrf,
+    };
+    const patch = (payload: any) =>
+      app.inject({ method: 'PATCH', url: '/api/conversations/chat', headers, payload });
+    assert.equal(
+      (await patch({ subagentModels: { defaultProfileId: 'missing', allowedProfileIds: [] } }))
+        .statusCode,
+      409,
+    );
+    const saved = await patch({
+      profileId: 'second',
+      subagentModels: { defaultProfileId: null, allowedProfileIds: ['test', 'test'] },
+    });
+    assert.equal(saved.statusCode, 200);
+    assert.deepEqual(saved.json().subagentModels.allowedProfileIds, ['test']);
+    assert.equal(saved.json().reasoning, 'auto');
+    const run = f.runtime.start('chat', 'Wait');
+    await until(() => f.store.runHeader(run.id).status === 'waiting_user');
+    assert.equal((await patch({ profileId: 'test' })).statusCode, 409);
+    assert.equal((await patch({ subagentModels: null })).statusCode, 409);
+    assert.equal(f.store.runHeader(run.id).profileId, 'second');
+  } finally {
+    await app.close();
+  }
+});

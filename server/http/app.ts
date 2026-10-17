@@ -268,7 +268,17 @@ export async function createApp(options: { directory: string; dist?: string; run
         title: z.string().min(1).max(120).optional(),
         pinned: z.boolean().optional(),
         archived: z.boolean().optional(),
-        profileId: z.string().optional(),
+        profileId: z.string().min(1).optional(),
+        subagentModels: z
+          .object({
+            defaultProfileId: z.string().min(1).nullable(),
+            allowedProfileIds: z
+              .array(z.string().min(1))
+              .max(100)
+              .transform((ids) => [...new Set(ids)]),
+          })
+          .nullable()
+          .optional(),
         reasoning: z.enum(['auto', 'none', 'low', 'medium', 'high', 'max']).optional(),
         permission: z.enum(['read-only', 'ask', 'auto', 'trusted']).optional(),
         execution: z
@@ -299,7 +309,15 @@ export async function createApp(options: { directory: string; dist?: string; run
         'Stop the current run before changing its configuration.',
         409,
       );
-    if (data.profileId) config.profile(data.profileId);
+    if (data.profileId) {
+      config.profile(data.profileId);
+      if (data.profileId !== c.profileId && data.reasoning === undefined) data.reasoning = 'auto';
+    }
+    if (data.subagentModels) {
+      if (data.subagentModels.defaultProfileId)
+        config.profile(data.subagentModels.defaultProfileId);
+      for (const id of data.subagentModels.allowedProfileIds) config.profile(id);
+    }
     if (data.skillIds) for (const key of data.skillIds) store.get('skill', key);
     if (data.memoryPolicy === 'inherit')
       Object.assign(data, inheritedMemory(store, config, { ...c, ...data }));

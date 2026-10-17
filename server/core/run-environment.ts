@@ -1,3 +1,4 @@
+import { delegationModels } from '../services/delegation-models.js';
 import { knowledgeDiscovery } from '../services/knowledge-discovery.js';
 import { taskSkills } from '../services/skill-discovery.js';
 import { MemoryChecks } from '../services/memory-checks.js';
@@ -123,6 +124,13 @@ export class RunEnvironment {
         depth: run.depth,
         maxDepth: this.config.get().maxAgentDepth,
         teamStrategy: ctx.conversation.teamStrategy || 'auto',
+        subagentModels: {
+          defaultProfileId:
+            ctx.conversation.subagentModels?.defaultProfileId || ctx.conversation.profileId,
+          available: delegationModels(ctx.conversation, this.config.get().profiles),
+          guidance:
+            'Omit profileId to use the configured subagent default. Use another listed connection only when useful for the task; do not create agents just to use different models. Applies to spawn_agent and continue_agent. Different models may have different costs and context/vision limits. Never invent connection IDs.',
+        },
         teamMode: ctx.conversation.teamMode || 'auto',
         isolatedCopy: !!ctx.conversation.isolationId,
         selectedSkills: skills.slice(0, 100).map(({ id, name }) => ({ id, name })),
