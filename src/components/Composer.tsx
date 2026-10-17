@@ -1,8 +1,9 @@
+import { useComposerHeight } from '../use-composer-height';
 import { ModelControl } from './ModelControl';
 import { AttachmentPreview } from './AttachmentPreview';
 import { useState, useRef, useEffect } from 'react';
 import { DraftPreview } from './DraftPreview';
-import { shouldAttachPaste, hasMarkdown, insertPaste } from '../composer-paste';
+import { shouldAttachPaste, hasMarkdown, insertPaste, pastedTextFilename } from '../composer-paste';
 import { TaskProgress } from './TaskProgress';
 import { SecurityControl } from './SecurityControl';
 import { VoiceInput } from './VoiceInput';
@@ -71,6 +72,7 @@ export function Composer({
   const [modelSaving, setModelSaving] = useState(false);
   const zh = t('settings') !== 'Settings';
   const [preview, setPreview] = useState(false);
+  useComposerHeight(draftRef, draft, preview);
   const [pasting, setPasting] = useState(false);
   useEffect(() => {
     if (!draft) setPreview(false);
@@ -85,9 +87,7 @@ export function Composer({
     setPasteError('');
     setPasteFailure('');
     try {
-      await addFiles([
-        new File([text], 'Pasted-text-' + Date.now() + '.md', { type: 'text/markdown' }),
-      ]);
+      await addFiles([new File([text], pastedTextFilename(text), { type: 'text/markdown' })]);
     } catch (error) {
       setPasteFailure(text);
       setPasteError(error instanceof Error ? error.message : String(error));

@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-17 — Adaptive composer height
+
+Draft input expands and shrinks with content, with a viewport-aware cap and internal scrolling. Width changes, restored drafts, preview toggles and font loading recalculate layout without height-observer loops. No dependency or launcher changes.
+
 ## 2026-10-17 — Composer model and delegated model controls
 
 The model chip now opens searchable main-chat and subagent connection settings. Users can keep inheritance, choose a child default, or authorize additional per-task model choices. Spawn and continuation enforce that list, retain normal permissions and report the selected profile; active runs cannot be reconfigured. Save feedback, API-settings navigation and narrow-screen layout are included. No dependency or launcher changes; restart required to load the update.

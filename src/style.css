@@ -608,7 +608,10 @@ kbd {
   padding: 19px 20px 8px;
   resize: none;
   height: 82px;
-  max-height: 200px;
+  min-height: 82px;
+  max-height: var(--composer-input-max-height, min(320px, 40dvh));
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   font-size: 1rem;
   box-shadow: none;
   outline: none;
