@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-17 — Resumable PDF OCR and scoped source discovery
+
+Large pages use bounded overlapping OCR tiles without whole-page downscaling. Folder imports persist checksummed page/tile checkpoints bound to source bytes, resume interrupted attempts, and remove checkpoints after successful import. Page/tile progress renews inactivity timeouts within a fixed attempt budget; incomplete documents never enter retrieval. Source discovery adds bounded authorized title metadata to model context, with guidance to distinguish current rules, historical examples and uncertain OCR. No new dependencies or launcher changes; restart to load the code. Windows OCR was tested with a synthetic wide scanned page and interrupted-tile recovery; this is not a claim that all user PDFs now parse successfully.
+
 ## 2026-10-15 — Bounded source-grounded research
 
 Added ordered source navigation, version-bound reading notes and alternative explanations with targeted peer scrutiny. Research shares retrieval/read budgets, distinguishes slow-service failures from no new evidence, exposes stopping reasons and reconciles interrupted attempts without replay. Removed keyword-triggered automatic query multiplication. Open research is a delivery limitation, not a reason to keep searching. No new dependencies, reindexing or launcher changes; no service restart performed.

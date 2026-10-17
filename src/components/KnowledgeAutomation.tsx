@@ -380,8 +380,8 @@ export function KnowledgeAutomation({
       )}
       <small>
         {zh
-          ? '每 30 秒检查；无固定文件数量或目录项上限，无固定单文件大小上限；逐文件独立解析，解析时限 120 秒、V8 堆上限 768 MB、提取文本最多 500 万字符。支持 TXT、Markdown、CSV、JSON、DOCX、XLSX、文本 PDF 等；跳过隐藏文件与构建目录；图片与扫描 PDF 使用本机 Windows OCR。临时网络故障退避重试；配置错误 3 次后暂停，移除源文件会使当前版本退出检索。'
-          : 'Checks every 30 seconds; no fixed file-count, entry-count or per-file byte limit. Parsing is isolated per file: 120 seconds, 768 MB V8 heap, 5 million extracted characters. Text, Markdown, CSV, JSON, DOCX, XLSX and text PDFs. Hidden/build folders excluded; Windows OCR handles images/scanned PDFs. Transient network errors retry with backoff; configuration errors pause after three attempts; removed files leave current retrieval.'}
+          ? '每 30 秒检查；无固定文件数量或目录项上限，无固定单文件大小上限；逐文件独立解析，页面／OCR 分块无进展时限 120 秒（PDF 每次最多 30 分钟，大页面分块识别，重试复用已完成页和分块）、V8 堆上限 768 MB、提取文本最多 500 万字符。支持 TXT、Markdown、CSV、JSON、DOCX、XLSX、文本 PDF 等；跳过隐藏文件与构建目录；图片与扫描 PDF 使用本机 Windows OCR。临时网络故障退避重试；配置错误 3 次后暂停，移除源文件会使当前版本退出检索。'
+          : 'Checks every 30 seconds; no fixed file-count, entry-count or per-file byte limit. Parsing is isolated per file: 120 seconds without page/tile progress (30-minute PDF attempt budget; tiled OCR and resumable pages/tiles), 768 MB V8 heap, 5 million extracted characters. Text, Markdown, CSV, JSON, DOCX, XLSX and text PDFs. Hidden/build folders excluded; Windows OCR handles images/scanned PDFs. Transient network errors retry with backoff; configuration errors pause after three attempts; removed files leave current retrieval.'}
       </small>
     </section>
   );

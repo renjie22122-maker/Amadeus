@@ -160,6 +160,10 @@ test('PDF over 25 MB and 500 pages includes the final page; parser timeout retur
     const result = await extractIsolated(path);
     assert.match(result, /Verified page 501 sentinel/);
     await assert.rejects(extractIsolated(path, 1), /timed out/);
+    const controller = new AbortController();
+    const parsing = extractIsolated(path, 120000, controller.signal);
+    controller.abort();
+    await assert.rejects(parsing, /cancelled/);
   } finally {
     await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }

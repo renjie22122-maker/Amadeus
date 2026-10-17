@@ -4,7 +4,7 @@ import { evaluateRetrieval } from './retrieval-evaluation.js';
 import { Configuration } from './settings.js';
 import { GraphLearning } from './graph-learning.js';
 import { createHash } from 'node:crypto';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { Store } from '../storage/store.js';
 import { Knowledge } from './knowledge.js';
@@ -81,13 +81,14 @@ export class KnowledgeMaintenance {
   private timer?: ReturnType<typeof setInterval>;
   private task?: Promise<void>;
   private stopped = false;
+  private parserAbort = new AbortController();
   constructor(
     private store: Store,
     private knowledge: Knowledge,
     private embeddings: Embeddings,
     private directory: string,
     private config?: Configuration,
-    private parse: (path: string) => Promise<string> = extractIsolated,
+    private parse?: (path: string) => Promise<string>,
   ) {}
   start() {
     this.timer = setInterval(() => void this.tick(), 30000);
@@ -95,6 +96,7 @@ export class KnowledgeMaintenance {
   }
   async close() {
     this.stopped = true;
+    this.parserAbort.abort();
     clearInterval(this.timer);
     await this.task;
   }
@@ -456,7 +458,12 @@ export class KnowledgeMaintenance {
               continue;
             }
             publish({ phase: 'parsing', currentFile: path }, true);
-            const text = await this.parse(path);
+            const checkpointDirectory = join(this.directory, 'pdf-checkpoints', key);
+            const text = this.parse
+              ? await this.parse(path)
+              : await extractIsolated(path, 120_000, this.parserAbort.signal, {
+                  checkpointDirectory,
+                });
             if ((await fileHash(path)) !== hash)
               throw Error('Source changed during parsing; retry on the next scan.');
             if (!this.current(w)) return;
@@ -464,6 +471,8 @@ export class KnowledgeMaintenance {
               source: path,
               revisionOf: old?.removed ? undefined : old?.documentId,
             });
+            // Scope/path-derived private checkpoint folder; source files are never removed.
+            await rm(checkpointDirectory, { recursive: true, force: true }).catch(() => {});
             updated++;
             this.store.put('knowledge-source', {
               id: key,
@@ -475,6 +484,7 @@ export class KnowledgeMaintenance {
               parserRevision,
             });
           } catch (e) {
+            if (this.stopped) return;
             issue(path, 'parse', e, hash);
             // A failed replacement must not leave stale facts searchable.
             if (old && hash && (old.hash !== hash || needsRepair)) {
