@@ -1,6 +1,6 @@
 import { AppError } from '../server/core/errors.js';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -1173,6 +1173,11 @@ test(
         if (calls === 4) {
           assert(req.messages.some((m) => m.role === 'user' && m.content === 'status please'));
           assert.equal(f.runtime.background.get('chat', jobId).status, 'running');
+          // Release only after steering was delivered: wall-clock sleeps race slow CI hosts.
+          await writeFile(
+            join(f.store.get<any>('project', 'p').folders[0], 'release-command'),
+            'go',
+          );
           return result('', [
             { id: 'wait-again', name: 'wait_background_command', arguments: { id: jobId } },
           ]);
@@ -1890,7 +1895,7 @@ test(
                 command:
                   '"' +
                   process.execPath +
-                  '" -e "console.log(123);setTimeout(()=>console.log(456),2500)"',
+                  "\" -e \"const fs=require('fs');console.log(123);const timer=setInterval(()=>{if(fs.existsSync('release-command')){clearInterval(timer);console.log(456)}},25)\"",
                 folder: 0,
                 yieldAfterSeconds: 0.15,
                 timeoutSeconds: 10,
@@ -1918,6 +1923,11 @@ test(
         if (calls === 4) {
           assert(req.messages.some((m) => m.role === 'user' && m.content === 'status please'));
           assert.equal(f.runtime.background.get('chat', jobId).status, 'running');
+          // Release only after steering was delivered: wall-clock sleeps race slow CI hosts.
+          await writeFile(
+            join(f.store.get<any>('project', 'p').folders[0], 'release-command'),
+            'go',
+          );
           return result('', [
             { id: 'wait-again', name: 'wait_background_command', arguments: { id: jobId } },
           ]);
