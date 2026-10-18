@@ -134,3 +134,5 @@ For review-before-production workflows, bind the generation command then inspect
 
 Scheduled tasks are also available in the source conversation, with the same editable cards and scoped run results as Background work. The chat panel refreshes without navigating away; new-chat run results link back to their execution conversation. Automatic launches are labelled “Scheduled task”, not “You”. They do not consume unsent attachments or supply new user statements to automatic memory learning. Model input still uses the normal task execution channel, with persisted trigger provenance; this is not simulated keyboard input.
 Unsent text and interactive results stay in the browser draft; scheduled triggers neither submit nor clear that draft.
+
+Conversation follow-ups use compact two-line cards by default. Pause and run navigation stay inline; Manage opens full prompts, history and settings.
