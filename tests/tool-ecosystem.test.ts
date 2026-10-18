@@ -632,7 +632,14 @@ test('command hooks preserve audited execution and suppress self-recursion', asy
     name: 'run_command',
     description: 'fixture command',
     effect: 'read',
-    schema: z.object({ command: z.string() }),
+    schema: z.object({
+      command: z.string(),
+      timeoutSeconds: z.number(),
+      folder: z.literal(0),
+      background: z.literal(false),
+      yieldAfterSeconds: z.literal(0),
+      reason: z.string(),
+    }),
     run: () => {
       calls++;
       return { content: 'fixture command result' };
@@ -1554,4 +1561,29 @@ test('reading a skill exposes supporting tools without forcing skill use on othe
   await f.registry.invoke('read_skill', { id: 's' }, f.ctx);
   assert(f.registry.modelSpecs(f.ctx).some((x) => x.name === 'inspect_skill_readiness'));
   assert(f.registry.modelSpecs(f.ctx).some((x) => x.name === 'read_skill_file'));
+});
+
+test('execution rejects unknown parameters consistently with preflight, before running tool', async (t) => {
+  const f = fixture(t);
+  let invoked = 0;
+  const registry = new ToolRegistry();
+  registry.add({
+    name: 'contract_probe',
+    description: 'test',
+    effect: 'read',
+    schema: z.object({ value: z.string(), options: z.record(z.string(), z.string()).optional() }),
+    run: async () => {
+      invoked++;
+      return { content: 'ok' };
+    },
+  });
+  const args = { value: 'x', invented: 'ignored?' };
+  assert.equal(registry.checkCall('contract_probe', args, f.ctx).valid, false);
+  await assert.rejects(
+    () => registry.invoke('contract_probe', args, f.ctx),
+    (e: any) => e.code === 'TOOL_ARGUMENTS',
+  );
+  assert.equal(invoked, 0);
+  await registry.invoke('contract_probe', { value: 'x', options: { custom: 'allowed' } }, f.ctx);
+  assert.equal(invoked, 1);
 });

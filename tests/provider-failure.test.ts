@@ -83,3 +83,28 @@ test('TLS/configuration errors, programming bugs and caller cancellation are not
   cyclic.cause = cyclic;
   assert.equal(transientModelFailure(cyclic), false);
 });
+
+test('generation diagnostics preserve safe limits and distinguish empty responses', () => {
+  const details = providerFailureDiagnostic({
+    code: 'MODEL_INCOMPLETE',
+    finishReason: 'length',
+    outputLimit: 4096,
+    outputTokens: 4096,
+    pendingToolCalls: 1,
+    message: 'private prompt',
+    answer: 'secret',
+  });
+  assert.equal(details.finishReason, 'length');
+  assert.equal((details as any).outputLimit, 4096);
+  assert(!JSON.stringify(details).includes('secret'));
+  assert.equal(providerFailureDiagnostic({ code: 'EMPTY_RESPONSE' }).code, 'EMPTY_RESPONSE');
+  assert(
+    !JSON.stringify(
+      providerFailureDiagnostic({
+        code: 'MODEL_INCOMPLETE',
+        outputLimit: 'secret',
+        finishReason: 'secret',
+      }),
+    ).includes('secret'),
+  );
+});

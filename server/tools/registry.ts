@@ -261,7 +261,7 @@ export class ToolRegistry {
         'PARTICIPATION_ENDED',
         'Participation ended; only inspection and a final answer remain.',
       );
-    const validation = def.schema.safeParse(args);
+    const validation = def.schema.strict().safeParse(args);
     if (!validation.success) throw new NotStartedError('TOOL_ARGUMENTS', validation.error.message);
     const parsed = validation.data;
     await enforceActionPolicy(ctx, name, parsed);

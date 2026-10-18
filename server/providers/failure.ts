@@ -70,9 +70,15 @@ export function providerFailureDiagnostic(error: unknown, phase: FailurePhase = 
     phase?: FailurePhase;
     transportCode?: string;
     name?: string;
+    finishReason?: string;
+    outputLimit?: number;
+    outputTokens?: number;
+    pendingToolCalls?: number;
   };
   const code =
-    e?.code && /^MODEL_[A-Z0-9_]+$/.test(e.code)
+    e?.code &&
+    (/^MODEL_[A-Z0-9_]+$/.test(e.code) ||
+      ['EMPTY_RESPONSE', 'INVALID_ARGUMENTS', 'INVALID_STREAM'].includes(e.code))
       ? e.code
       : e?.name === 'AbortError'
         ? 'CANCELLED'
@@ -95,5 +101,22 @@ export function providerFailureDiagnostic(error: unknown, phase: FailurePhase = 
     phase: e?.phase || phase,
     transportCode: e?.transportCode,
     retryable: ['network', 'timeout'].includes(category),
+    ...(code === 'MODEL_INCOMPLETE'
+      ? {
+          finishReason: ['length', 'stop', 'tool_calls', 'max_tokens'].includes(
+            e.finishReason || '',
+          )
+            ? e.finishReason
+            : undefined,
+          ...Object.fromEntries(
+            ['outputLimit', 'outputTokens', 'pendingToolCalls'].flatMap((key) => {
+              const value = (e as Record<string, unknown>)[key];
+              return typeof value === 'number' && Number.isFinite(value) && value >= 0
+                ? [[key, value]]
+                : [];
+            }),
+          ),
+        }
+      : {}),
   };
 }

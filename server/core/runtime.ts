@@ -1,3 +1,4 @@
+import { modelStepBudget } from '../services/model-step-budget.js';
 import { ConversationTitles, shortTitle } from '../services/conversation-titles.js';
 import { taskSkills } from '../services/skill-discovery.js';
 import { providerFailureDiagnostic } from '../providers/failure.js';
@@ -570,7 +571,7 @@ export class Runtime implements TeamPort {
             () =>
               this.complete(run, {
                 profile,
-                messages: run.checkpoints,
+                messages: [...run.checkpoints, ...modelStepBudget(run.maxSteps, steps - 1)],
                 tools: this.registry.modelSpecs(ctx),
                 signal,
                 onText: (text) => {

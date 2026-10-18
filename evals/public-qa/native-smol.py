@@ -1,12 +1,18 @@
 """Native smolagents tools/loops in an offline container; host RPC only enforces egress/model boundaries."""
-import json,sys,pathlib,base64,io
+import json,sys,pathlib,base64,io,threading
 # Protocol streams are independent of model-code print capture.
 protocol_out=sys.stdout
 protocol_in=sys.stdin
 from smolagents import Tool,ToolCallingAgent,CodeAgent,Model,ChatMessage
 from smolagents.default_tools import PythonInterpreterTool,DuckDuckGoSearchTool,VisitWebpageTool
 
+# Native tool calls may run on multiple threads. The line protocol has no request IDs:
+# serialize each entire exchange, not just writes, to prevent crossed replies.
+rpc_lock=threading.Lock()
 def rpc(kind,**payload):
+ with rpc_lock:
+  return rpc_exchange(kind,**payload)
+def rpc_exchange(kind,**payload):
  print(json.dumps({'kind':kind,**payload}),file=protocol_out,flush=True)
  r=json.loads(protocol_in.readline())
  if 'error' in r:raise RuntimeError(r['error'])
@@ -75,4 +81,10 @@ else:
 try:
  result=agent.run(job['prompt'])
  print(json.dumps({'kind':'final','answer':str(result)}),flush=True)
-except Exception as e:print(json.dumps({'kind':'failed','error':type(e).__name__}),flush=True)
+except Exception as e:
+ # Preserve wrapper vs underlying type without logging credentials or full prompts.
+ chain=[];current=e
+ while current is not None and len(chain)<4:
+  chain.append(type(current).__name__)
+  current=current.__cause__ or current.__context__
+ print(json.dumps({'kind':'failed','error':type(e).__name__,'exceptionTypes':chain}),flush=True)

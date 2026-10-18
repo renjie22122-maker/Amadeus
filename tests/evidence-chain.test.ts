@@ -124,3 +124,21 @@ test('shared catalog contains only schema-backed tools, never an answer reader',
   assert(sharedSpecs.some((s) => s.name === 'calculate'));
   assert(!sharedSpecs.some((s) => /grade|reference_answer/.test(s.name)));
 });
+
+test('failed pages never increase evidence coverage; mirrored bodies are repeated', () => {
+  const initial = researchProgress(undefined, {
+    status: 200,
+    text: 'useful',
+    url: 'https://a.test',
+  });
+  const failed = researchProgress(initial, { status: 404, text: 'missing', url: 'https://b.test' });
+  assert.deepEqual(failed.hashes, initial.hashes);
+  assert.equal(failed.usable, false);
+  const mirrored = researchProgress(initial, {
+    status: 200,
+    text: 'useful',
+    url: 'https://b.test',
+  });
+  assert.equal(mirrored.repeated, 1);
+  assert.deepEqual(researchProgress(initial, []).hashes, initial.hashes);
+});

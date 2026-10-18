@@ -514,6 +514,7 @@ try {
           }
           if (item.kind === 'failed') {
             error = item.error;
+            auxiliary.push({ kind: 'native-failure', exceptionTypes: item.exceptionTypes });
             return;
           }
           let result: any;

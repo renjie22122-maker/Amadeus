@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-18 — Failure diagnosis and bounded completion
+
+Added late-budget completion guidance, safe generation-failure details, strict execution/preflight parameter parity, and history-aggregation/tool-selection guidance. Empty/failed retrievals no longer increase evidence coverage. Serialized the native baseline RPC exchange and retained exception types. Existing frozen benchmarks, limits and results remain unchanged; no launcher or dependency changes.
+
 ## 2026-10-18 — Research delegation diagnostics and CI fixtures
 
 Auto collaboration now evaluates bounded source investigations proactively. Runtime/plan facts expose policy, model, depth and task-tree budget blockers and dependency/resource-ready work without automatically spawning agents. Updated delegation tests to configure valid model profiles, retaining fail-closed model selection. Added detached benchmark start/resume/stop/report scripts; running frozen evaluations are unchanged. No dependency or launcher changes.

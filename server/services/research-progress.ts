@@ -4,7 +4,26 @@ export interface ResearchProgress {
   repeated: number;
 }
 export function researchProgress(previous: ResearchProgress | undefined, evidence: unknown) {
-  const hash = createHash('sha256').update(JSON.stringify(evidence)).digest('hex');
+  const page =
+    evidence && typeof evidence === 'object' && 'status' in evidence
+      ? (evidence as { status: number; text?: string })
+      : undefined;
+  const usable = page
+    ? page.status >= 200 && page.status < 300 && Boolean(page.text?.trim())
+    : Array.isArray(evidence)
+      ? evidence.length > 0
+      : Boolean(evidence);
+  if (!usable)
+    return {
+      hashes: previous?.hashes || [],
+      repeated: (previous?.repeated || 0) + 1,
+      usable: false,
+      advice:
+        'No usable evidence in this response. An HTTP error or empty result is not corroboration or proof of absence. Change source or method, or report the unresolved gap.',
+    };
+  // Identical page bodies on different URLs are not independent corroboration.
+  const content = page ? page.text!.trim() : evidence;
+  const hash = createHash('sha256').update(JSON.stringify(content)).digest('hex');
   const repeated = previous?.hashes.includes(hash) ? previous.repeated + 1 : 0;
   return {
     hashes: [...(previous?.hashes || []).filter((h) => h !== hash), hash].slice(-32),
