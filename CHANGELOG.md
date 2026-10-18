@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-18 — Research delegation diagnostics and CI fixtures
+
+Auto collaboration now evaluates bounded source investigations proactively. Runtime/plan facts expose policy, model, depth and task-tree budget blockers and dependency/resource-ready work without automatically spawning agents. Updated delegation tests to configure valid model profiles, retaining fail-closed model selection. Added detached benchmark start/resume/stop/report scripts; running frozen evaluations are unchanged. No dependency or launcher changes.
+
 ## 2026-10-17 — Adaptive composer height
 
 Draft input expands and shrinks with content, with a viewport-aware cap and internal scrolling. Width changes, restored drafts, preview toggles and font loading recalculate layout without height-observer loops. No dependency or launcher changes.

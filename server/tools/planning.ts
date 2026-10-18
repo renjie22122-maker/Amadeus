@@ -1,3 +1,4 @@
+import { collaborationPolicy } from '../services/collaboration-policy.js';
 import { installTeamCollaboration } from './team-collaboration.js';
 import {
   recoveryContract,
@@ -459,6 +460,7 @@ export function installPlanning(registry: ToolRegistry) {
     run: async (_a, c) => ({
       content: JSON.stringify({
         board: await new Verification(c.store).refresh(c.run, c.files),
+        collaboration: collaborationPolicy(c),
         recentEvidence: c.store
           .events(c.run.conversationId)
           .filter((e) => e.runId === c.run.id && e.type === 'tool.completed')
@@ -537,7 +539,10 @@ export function installPlanning(registry: ToolRegistry) {
       tasks: z.array(taskInput).min(1).max(50),
     }),
     run: (a, c) => ({
-      content: JSON.stringify(new TaskBoard(c.store).create(c.run, a.tasks, a.revision)),
+      content: JSON.stringify({
+        ...new TaskBoard(c.store).create(c.run, a.tasks, a.revision),
+        collaboration: collaborationPolicy(c),
+      }),
     }),
   });
   registry.add({

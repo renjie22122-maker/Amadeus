@@ -1213,7 +1213,7 @@ export function tools() {
     name: 'spawn_agent',
     coordination: 'spawn',
     description:
-      'Delegate a bounded independent task. Default read-only; isolated mode writes a separate project copy, reviewed and explicitly merged by the parent. Specify a concrete deliverable. Avoid delegation for simple searches or counting.',
+      'Delegate a bounded independent task. Default read-only; isolated mode writes a separate project copy, reviewed and explicitly merged by the parent. Specify a concrete deliverable. Suitable for independent source investigations, literature comparisons and verification as well as coding. Include scope, citations, exclusions and stop conditions. Avoid delegation for a single lookup or counting; no team is required for independent workers.',
     effect: 'coordinate',
     schema: z.object({
       task: z.string().min(20).max(12000),

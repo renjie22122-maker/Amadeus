@@ -121,3 +121,5 @@ Settings apply to this conversation and future spawns/continuations. Existing ru
 The message composer grows with typed, wrapped or restored draft content, up to 320 px or 40% of the visible viewport. Longer drafts scroll inside the input; clearing shrinks it. Resizing the window and returning from preview recalculate the height. Enter/Shift+Enter, IME and attachment paste behavior are unchanged.
 
 Long pasted-text attachments use a bounded Markdown heading or opening line as the filename, sanitized locally. This is a display label, not a generated summary; attachment IDs distinguish repeated names.
+
+Subagent selection in Auto now explicitly considers bounded independent source investigations and verification before serial research. Runtime and plan inspection expose delegation blockers, remaining task-tree execution budget and independent ready tasks based on declared dependencies/resources. This is advisory, not automatic keyword-based spawning or evidence of faster/better results. Simple lookups stay local; source overlap is not independent corroboration. Configured model allowlists remain enforced.

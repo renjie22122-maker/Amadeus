@@ -1,6 +1,6 @@
 """Durable paired batch runner. No ambiguous started attempt is automatically replayed."""
 import argparse,concurrent.futures,datetime,json,os,pathlib,subprocess,threading,time,hashlib,sys
-p=argparse.ArgumentParser();p.add_argument('output');p.add_argument('runtime');p.add_argument('python');p.add_argument('settings');p.add_argument('--analysis-image');p.add_argument('--concurrency',type=int,default=4);p.add_argument('--limit',type=int);p.add_argument('--prepare-python',default=sys.executable);p.add_argument('--download',required=True);a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('output');p.add_argument('runtime');p.add_argument('python');p.add_argument('settings');p.add_argument('--profile-id');p.add_argument('--analysis-image');p.add_argument('--concurrency',type=int,default=4);p.add_argument('--limit',type=int);p.add_argument('--prepare-python',default=sys.executable);p.add_argument('--download',required=True);a=p.parse_args()
 out=pathlib.Path(a.output).resolve();runtime=pathlib.Path(a.runtime).resolve();queue=json.loads((out/'queue.json').read_text(encoding='utf8'));queue=queue[:a.limit] if a.limit else queue
 clean=any(json.loads(pathlib.Path(i['job']).read_text(encoding='utf8')).get('protocol') in ['shared-evidence-v2','native-evidence-v1'] for i in queue if i['track']=='gaia')
 if clean:
@@ -15,7 +15,7 @@ lock=out/'runner.lock'
 with lock.open('x') as f:json.dump({'pid':os.getpid(),'at':time.time()},f)
 selected_tracks={i['track'] for i in queue}
 mutex=threading.Lock();active={};finished=0;errors=0;skipped=0;started=time.time();flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
-settings=json.loads(pathlib.Path(a.settings).read_text(encoding='utf8'));profile_id=settings['defaultProfileId'];profile=next(p for p in settings['profiles'] if p['id']==profile_id)
+settings=json.loads(pathlib.Path(a.settings).read_text(encoding='utf8'));profile_id=a.profile_id or settings['defaultProfileId'];profile=next(p for p in settings['profiles'] if p['id']==profile_id)
 def now():return datetime.datetime.now(datetime.timezone.utc).isoformat()
 def save(path,value):
  tmp=path.with_suffix(path.suffix+'.tmp');tmp.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf8')
@@ -53,10 +53,12 @@ def run_one(item):
   active.pop(str(jobpath),None);finished+=1;errors+=bool(data.get('error'));progress()
  print(item['track'],item['id'],item['arm'],data.get('error','delivered'),flush=True)
 def command(args):
+ if (out/'STOP').exists():raise InterruptedError('Stop requested between grading stages')
  with (out/'grading.log').open('a',encoding='utf8') as f:
   r=subprocess.run(args,cwd=runtime,stdout=f,stderr=f,creationflags=flags)
   if r.returncode:raise RuntimeError('Grading command failed: '+args[1])
 def judge_one(item):
+ if (out/'STOP').exists():return
  folder,index=item
  command(['node','--import','tsx','evals/public-qa/judge.ts',str(folder),str(index),str(pathlib.Path(a.settings).resolve()),profile_id])
 try:
@@ -78,6 +80,8 @@ try:
  with concurrent.futures.ThreadPoolExecutor(max_workers=a.concurrency) as pool:list(pool.map(judge_one,judges))
  command([a.python,'-X','utf8','evals/full-suite/report.py',str(out)])
  progress('paused' if (out/'STOP').exists() else 'finished')
+except InterruptedError:
+ progress('paused')
 except Exception as e:
  save(out/'runner-error.json',{'type':type(e).__name__,'message':str(e),'at':now()});progress('failed');raise
 finally:lock.unlink(missing_ok=True)

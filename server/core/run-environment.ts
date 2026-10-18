@@ -1,3 +1,4 @@
+import { collaborationPolicy } from '../services/collaboration-policy.js';
 import { delegationModels } from '../services/delegation-models.js';
 import { knowledgeDiscovery } from '../services/knowledge-discovery.js';
 import { taskSkills } from '../services/skill-discovery.js';
@@ -124,6 +125,7 @@ export class RunEnvironment {
         depth: run.depth,
         maxDepth: this.config.get().maxAgentDepth,
         teamStrategy: ctx.conversation.teamStrategy || 'auto',
+        collaboration: collaborationPolicy(ctx),
         subagentModels: {
           defaultProfileId:
             ctx.conversation.subagentModels?.defaultProfileId || ctx.conversation.profileId,

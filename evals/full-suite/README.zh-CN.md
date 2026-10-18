@@ -43,3 +43,11 @@ progress.json 显示当前尝试及计数；逐题保存输入、启动收据、
 慢速网络可用 `Setup-Evaluation.ps1 -PipIndexUrl https://mirrors.aliyun.com/pypi/simple/ -DownloadTimeout 120 -DownloadRetries 10` 指定 HTTPS 镜像源；默认仍是 PyPI。BuildKit 缓存可复用已下载内容，保留 TLS 和包哈希校验。这些选项只准备依赖，不启动付费评测。
 
 传输／附件诊断：新批次记录脱敏 Provider 错误类别、阶段、底层错误码与失败调用耗时。基线包装后的生成错误保留最后一次失败请求的诊断，不能把已经恢复的早期故障当作最终原因。评测自身的总期限记为 `EVAL_DEADLINE`，与用户取消区分。原生预检通过各组自己的读取工具或解释器读取随机 XLSX；仅计算算术的预检不能验证文件访问。运行状态与任务工作区采用并列目录，继续执行 FileScope 安全检查。改动仅用于新冻结批次，不能将修复后的尝试混入旧成绩、覆盖回执或修改正在运行的冻结环境。旧 `TypeError` 记录缺少原因，不能事后确定地全部归为网络问题。
+
+## 独立后台与桌面入口
+
+`prepare-desktop.py` 创建新的源码快照，分别准备文本和 GAIA 队列，核验固定版本的 GAIA 评分器，并生成三个桌面 CMD。必填参数为 `--repo --root --python --data-python --settings --download --scorer-dir --desktop`，可选 `--profile-id --image --concurrency`。准备本身不调用付费模型，点击生成的 Start-Resume 才开始运行该批次。
+
+启动后控制器独立于 Codex／终端。Stop 停止派发新题和新评分，等待当前项保存；状态变成 paused 后可再次启动续测。操作系统文件锁阻止重复控制器，也尊重仍存活的 runner。中断且结果不明的题保留回执、单独列出，不自动重放。每分钟及结束时更新 SUMMARY.md／summary.json，Results 打开报告。未评分、运行失败和评分服务错误分别统计。
+
+GAIA 等待 Docker，通过三组容器预检后才付费运行，不降级为宿主执行。BFCL 和 LongMemEval 独立推进。关闭 Codex 不影响测试，但电脑必须保持开机、不休眠且联网；这不是开机自启服务，重启后再次点击启动。快照不复制生产数据库和密钥；Node 依赖使用链接，测试期间不要升级项目依赖。依赖锁或模型连接变更会阻止续跑。旧批次不修改；评分口径与上文一致，不是官方榜单或产品全部能力测试。

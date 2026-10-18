@@ -82,8 +82,14 @@ test('zero child limit passes the real spawn gate above 32, finite limits still 
   const store = new Store(join(directory, 'state.sqlite'));
   t.after(() => store.close());
   for (const run of runs) store.put('run', run);
-  store.put('conversation', { id: 'chat', teamStrategy: 'auto' });
-  const config: any = { get: () => ({ maxAgentDepth: 3, maxChildren }) };
+  store.put('conversation', { id: 'chat', teamStrategy: 'auto', profileId: 'test' });
+  const config: any = {
+    get: () => ({
+      maxAgentDepth: 3,
+      maxChildren,
+      profiles: [{ id: 'test', name: 'Test', model: 'test', transport: 'openai-chat' }],
+    }),
+  };
   const host: any = {
     context: async () => {
       throw Error('PASSED_CHILD_GATE');

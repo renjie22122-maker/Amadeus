@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { tools, ToolRegistry } from '../server/tools/registry.js';
 import { ToolExecutor } from '../server/core/tool-executor.js';
 import { Store } from '../server/storage/store.js';
-import { Configuration } from '../server/services/settings.js';
+import { Configuration, profileSchema } from '../server/services/settings.js';
 import { FileScope } from '../server/services/paths.js';
 import { recordWebEvidence, readWebEvidence } from '../server/services/web-evidence.js';
 function fixture(t: any) {
@@ -899,9 +899,22 @@ import { DelegationManager } from '../server/core/delegation-manager.js';
 import { EventEmitter } from 'node:events';
 test('specialists intersect parent tools and retain model and readonly scope', async (t) => {
   const f = fixture(t);
+  f.config.save({
+    ...f.config.get(),
+    defaultProfileId: 'parent-model',
+    profiles: [
+      profileSchema.parse({
+        id: 'parent-model',
+        name: 'Parent',
+        model: 'test',
+        baseUrl: 'http://localhost:9999',
+        transport: 'openai-chat',
+      }),
+    ],
+  });
   Object.assign(f.conversation, {
     teamStrategy: 'auto',
-    profileId: 'parent-model',
+    profileId: f.config.get().profiles[0].id,
     allowedTools: ['read_file', 'spawn_agent'],
   });
   f.store.put('conversation', f.conversation);
@@ -938,7 +951,7 @@ test('specialists intersect parent tools and retain model and readonly scope', a
   );
   const child = f.store.get<any>('conversation', f.store.get<any>('run', childId).conversationId);
   assert.deepEqual(child.allowedTools, ['read_file']);
-  assert.equal(child.profileId, 'parent-model');
+  assert.equal(child.profileId, f.conversation.profileId);
   assert.equal(child.permission, 'read-only');
   assert.ok(
     !f.registry.specs({ ...f.ctx, conversation: child }).some((t) => t.name === 'run_command'),
