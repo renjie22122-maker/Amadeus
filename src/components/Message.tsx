@@ -30,17 +30,22 @@ export function Message({
 }) {
   const [copied, setCopied] = useState(false);
   const user = event.type === 'user.message';
+  const scheduled = event.data.scheduledTrigger;
+  const zh = t('settings') !== 'Settings';
   return (
     <article className={'message ' + (user ? 'user' : 'assistant')} id={'event-' + event.id}>
       <div className="message-heading">
         {user ? (
-          <span className="avatar user-avatar">Y</span>
+          <span className="avatar user-avatar">{scheduled ? '◷' : 'Y'}</span>
         ) : (
           <span className="avatar">
             <Sparkles size={15} />
           </span>
         )}
-        <strong>{user ? 'You' : t('Amadeus')}</strong>
+        <strong>
+          {scheduled ? (zh ? '定时任务触发' : 'Scheduled task') : user ? 'You' : t('Amadeus')}
+        </strong>
+        {scheduled && <span className="pill">{scheduled.name}</span>}
         <time>
           {new Date(event.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </time>

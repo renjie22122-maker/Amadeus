@@ -166,7 +166,9 @@ export class MemoryLearning {
         if (reviewed) return;
       }
 
-      const events = this.store.events(c.id, 0, 'user.message');
+      const events = this.store
+        .events(c.id, 0, 'user.message')
+        .filter((e) => !e.data.scheduledTrigger);
       if (events.length < 2) continue;
       const observedLast = events.at(-1)!.id;
       const cursor = Math.max(
@@ -265,7 +267,10 @@ export class MemoryLearning {
           ),
         );
         const current = this.store.maybe<Conversation>('conversation', c.id);
-        const latest = this.store.events(c.id, 0, 'user.message').at(-1)?.id;
+        const latest = this.store
+          .events(c.id, 0, 'user.message')
+          .filter((e) => !e.data.scheduledTrigger)
+          .at(-1)?.id;
         if (
           !current ||
           !this.ready(current, Date.now()) ||

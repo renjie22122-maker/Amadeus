@@ -201,3 +201,8 @@ Task-ranked skill metadata, on-demand bodies, current-reference read checks, and
 ## 2026-10-16 — CI fixture repair
 
 Align the large-knowledge regression with the streamed retrieval path while preserving scope, deletion and model-compatibility checks. Exercise child-count limits against a real Store rather than an outdated mock. OS matrix jobs now finish independently (`fail-fast: false`).
+
+## 2026-10-19 — Follow-up cards in conversations
+
+- Create and manage scheduled work in the source chat; show scoped results and explicit automatic trigger provenance.
+- Keep unsent attachments and user-memory formation separate from scheduled input. No dependency or launcher changes.

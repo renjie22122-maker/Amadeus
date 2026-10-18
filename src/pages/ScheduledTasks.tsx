@@ -12,9 +12,14 @@ export function ScheduledTasks({
   notify,
   reload,
   openConversation,
+  conversationId,
 }: any) {
+  const resultsUrl =
+    '/schedule-results' +
+    (conversationId ? '?conversationId=' + encodeURIComponent(conversationId) : '');
   const chats = state.conversations.filter(
-    (c: any) => !c.archived && !c.parentId && !c.isolationId,
+    (c: any) =>
+      !c.archived && !c.parentId && !c.isolationId && (!conversationId || c.id === conversationId),
   );
   const blank = () => ({
     id: '',
@@ -41,7 +46,7 @@ export function ScheduledTasks({
   useEffect(() => {
     let closed = false;
     const load = () =>
-      api('/schedule-results')
+      api(resultsUrl)
         .then((v) => {
           if (!closed) setResults(v);
         })
@@ -52,13 +57,13 @@ export function ScheduledTasks({
       closed = true;
       clearInterval(timer);
     };
-  }, []);
+  }, [resultsUrl]);
   const act = async (fn: () => Promise<any>) => {
     setBusy(true);
     try {
       await fn();
       await reload();
-      setResults(await api('/schedule-results'));
+      setResults(await api(resultsUrl));
     } catch (e: any) {
       notify(e.message);
     } finally {

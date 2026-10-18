@@ -27,6 +27,21 @@ export function scheduledWorkRoutes(app: FastifyInstance, store: Store, config: 
     const p = config.profile(c.profileId);
     return JSON.stringify([p.id, p.baseUrl, c.projectId]);
   };
+  app.get<{ Querystring: { conversationId: string } }>(
+    '/api/conversation-schedules',
+    async (req) => {
+      const { conversationId } = z.object({ conversationId: z.string().min(1) }).parse(req.query);
+      store.get('conversation', conversationId);
+      return {
+        schedules: store
+          .list<ScheduledWork>('scheduled-work')
+          .filter((s) => s.conversationId === conversationId),
+        commands: store
+          .forConversation<any>('command-job', conversationId)
+          .map(({ id, status }) => ({ id, status, conversationId })),
+      };
+    },
+  );
   app.post('/api/scheduled-work', async (req) => {
     const d = scheduleFields.extend({ conversationId: z.string() }).parse(req.body);
     const task: ScheduledWork = { ...d, id: id(), enabled: true, status: 'waiting' };
@@ -81,9 +96,22 @@ export function scheduledWorkRoutes(app: FastifyInstance, store: Store, config: 
       .sort((a, b) => b.finishedAt - a.finishedAt)
       .slice(0, 40),
   );
-  app.get('/api/schedule-results', async () =>
-    store.list<any>('schedule-result').sort((a, b) => b.finishedAt - a.finishedAt),
-  );
+  app.get<{ Querystring: { conversationId?: string } }>('/api/schedule-results', async (req) => {
+    const { conversationId } = z.object({ conversationId: z.string().optional() }).parse(req.query);
+    const ids = conversationId
+      ? new Set(
+          store
+            .list<ScheduledWork>('scheduled-work')
+            .filter((s) => s.conversationId === conversationId)
+            .map((s) => s.id),
+        )
+      : null;
+    return store
+      .list<any>('schedule-result')
+      .filter((r) => !ids || ids.has(r.scheduleId) || r.conversationId === conversationId)
+      .sort((a, b) => b.finishedAt - a.finishedAt)
+      .slice(0, conversationId ? 100 : 1000);
+  });
   app.patch<{ Params: { id: string } }>('/api/schedule-results/:id', async (req) => {
     const r = store.get<any>('schedule-result', req.params.id);
     return store.put('schedule-result', { ...r, unread: false });

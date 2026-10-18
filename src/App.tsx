@@ -5,6 +5,7 @@ const BackgroundPage = lazy(() =>
   import('./pages/Background').then((m) => ({ default: m.BackgroundPage })),
 );
 import { conversationMarkdown } from './conversation-copy';
+import { ConversationSchedules } from './components/ConversationSchedules';
 import { mediaTimeline } from './media-timeline';
 import { MediaGallery } from './components/MediaGallery';
 import { TeamManagement } from './components/TeamManagement';
@@ -1043,6 +1044,19 @@ export function App() {
                     </section>
                   ) : (
                     timeline()
+                  )}
+                  {conversation && !conversation.parentId && !conversation.isolationId && (
+                    <ConversationSchedules
+                      key={conversation.id}
+                      conversationId={conversation.id}
+                      state={state}
+                      zh={language === 'zh'}
+                      notify={notify}
+                      openConversation={(id: string) => {
+                        setSelected(id);
+                        void refresh();
+                      }}
+                    />
                   )}
                   {Object.entries(streams).map(
                     ([key, s]: any) =>

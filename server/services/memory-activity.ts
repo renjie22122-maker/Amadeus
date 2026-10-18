@@ -10,7 +10,10 @@ export function memoryActivity(store: Store, memories: Memory[], at = Date.now()
     if (!chat || m.sourceEventId == null) continue;
     let events = cache.get(chat);
     if (!events) {
-      events = store.events(chat, 0, 'user.message').filter((e) => e.createdAt <= at);
+      events = store
+        .events(chat, 0, 'user.message')
+        .filter((e) => !e.data.scheduledTrigger)
+        .filter((e) => e.createdAt <= at);
       cache.set(chat, events);
     }
     // Unknown source means unavailable activity evidence, not arbitrarily old.

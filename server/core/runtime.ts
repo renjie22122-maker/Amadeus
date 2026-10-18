@@ -182,6 +182,7 @@ export class Runtime implements TeamPort {
       runId?: string;
       recoveredFrom?: string;
       controlTicket?: string;
+      scheduledTrigger?: { id: string; name: string };
     } = {},
   ): Run {
     const c = this.store.get<Conversation>('conversation', conversationId);
@@ -252,7 +253,13 @@ export class Runtime implements TeamPort {
       updatedAt: now,
     });
     this.store.put('run', run);
-    const queued = this.recordUserMessage(conversationId, run.id, message);
+    const queued = this.recordUserMessage(
+      conversationId,
+      run.id,
+      message,
+      false,
+      options.scheduledTrigger,
+    );
     this.steering.set(run.id, [queued]);
     this.execution.enqueue(run.id);
     this.pump();
@@ -270,13 +277,17 @@ export class Runtime implements TeamPort {
     runId: string,
     content: string,
     steering = false,
+    scheduledTrigger?: { id: string; name: string },
   ) {
     return this.store.transaction(() => {
-      const attachments = this.store
-        .forConversation<Attachment>('attachment', conversationId)
-        .filter((a) => !a.messageEventId);
+      const attachments = scheduledTrigger
+        ? []
+        : this.store
+            .forConversation<Attachment>('attachment', conversationId)
+            .filter((a) => !a.messageEventId);
       const event = this.store.event(conversationId, runId, 'user.message', {
         text: content,
+        scheduledTrigger,
         steering,
         attachments: attachments.map(({ id, name, mime, size }) => ({ id, name, mime, size })),
       });

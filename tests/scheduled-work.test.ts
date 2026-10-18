@@ -260,3 +260,43 @@ test('agent pause stops new launches without interrupting active work or crossin
   f.scheduler.tick(999999);
   assert.equal(f.calls.length, 1);
 });
+
+test('conversation cards return only scoped schedules, commands and cross-chat results', async (t) => {
+  const f = fixture(t);
+  f.save();
+  f.store.put('scheduled-work', { id: 'other', conversationId: 'elsewhere' });
+  f.store.put('command-job', { id: 'ours', conversationId: 'c', status: 'completed' });
+  f.store.put('command-job', { id: 'theirs', conversationId: 'elsewhere', status: 'running' });
+  f.store.put('schedule-result', {
+    id: 'r1',
+    scheduleId: 's',
+    conversationId: 'generated-chat',
+    finishedAt: 2,
+  });
+  f.store.put('schedule-result', {
+    id: 'r2',
+    scheduleId: 'other',
+    conversationId: 'elsewhere',
+    finishedAt: 3,
+  });
+  const app = Fastify();
+  scheduledWorkRoutes(app, f.store, f.runtime.config);
+  t.after(() => app.close());
+  const response = await app.inject('/api/conversation-schedules?conversationId=c');
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(
+    response.json().schedules.map((s: any) => s.id),
+    ['s'],
+  );
+  assert.deepEqual(
+    response.json().commands.map((s: any) => s.id),
+    ['ours'],
+  );
+  const results = await app.inject('/api/schedule-results?conversationId=c');
+  assert.deepEqual(
+    results.json().map((s: any) => s.id),
+    ['r1'],
+  );
+  f.scheduler.tick(1);
+  assert.deepEqual(f.calls[0].scheduledTrigger, { id: 's', name: 'Check' });
+});

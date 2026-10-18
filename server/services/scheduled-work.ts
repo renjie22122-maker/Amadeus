@@ -186,7 +186,7 @@ export class ScheduledWorkService {
           task.prompt +
             '\n\n[Scheduled task] Before finishing, use report_scheduled_result to report unchanged, update, or complete with a short summary. Choose complete only when the requested monitoring/follow-up is finished; it stops future runs. Missing reports still notify. Existing permissions apply.',
           0,
-          { runId },
+          { runId, scheduledTrigger: { id: task.id, name: task.name || task.prompt.slice(0, 80) } },
         );
         this.store.put('scheduled-work', { ...task, status: 'running' });
       } catch (e: any) {

@@ -2390,3 +2390,35 @@ test('conversation model settings validate connections and remain locked during 
     await app.close();
   }
 });
+
+test('scheduled wake-up is labelled and never consumes unsent user attachments', async () => {
+  let modelInput = '';
+  const f = await setup({
+    complete: async (request) => {
+      modelInput = JSON.stringify(request);
+      return result('Checked');
+    },
+  });
+  try {
+    f.store.put('attachment', {
+      id: 'draft',
+      conversationId: 'chat',
+      name: 'private-draft.txt',
+      text: 'UNSENT_PRIVATE_DRAFT_SENTINEL',
+      mime: 'text/plain',
+      size: 1,
+    });
+    const run = f.runtime.start('chat', 'Check progress', 0, {
+      scheduledTrigger: { id: 'schedule', name: 'Progress' },
+    });
+    await until(() => f.store.get<any>('run', run.id).status === 'completed');
+    const event = f.store.events('chat', 0, 'user.message')[0];
+    assert.deepEqual(event.data.scheduledTrigger, { id: 'schedule', name: 'Progress' });
+    assert.deepEqual(event.data.attachments, []);
+    assert.equal(f.store.get<any>('attachment', 'draft').messageEventId, undefined);
+    assert.equal(modelInput.includes('UNSENT_PRIVATE_DRAFT_SENTINEL'), false);
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});

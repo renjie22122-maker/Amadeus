@@ -64,7 +64,9 @@ export async function learnMemoryGraph(
     .flatMap((m) => {
       const event = store
         .events(c.id)
-        .find((e) => e.id === m.sourceEventId && e.type === 'user.message');
+        .find(
+          (e) => e.id === m.sourceEventId && e.type === 'user.message' && !e.data.scheduledTrigger,
+        );
       return event ? [{ m, original: String(event.data.content || event.data.text || '') }] : [];
     });
   if (!batch.length) return;

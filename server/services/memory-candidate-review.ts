@@ -67,7 +67,10 @@ export async function reviewMemoryCandidates(
     (!m.expiresAt || m.expiresAt > Date.now()) &&
     (m.validUntil == null || m.validUntil > Date.now());
   const sourceText = (eventId: number) => {
-    const e = store.events(c.id, 0, 'user.message').find((e) => e.id === eventId);
+    const e = store
+      .events(c.id, 0, 'user.message')
+      .filter((e) => !e.data.scheduledTrigger)
+      .find((e) => e.id === eventId);
     return String(e?.data.content || e?.data.text || '');
   };
   const selected: { m: Memory; source: string; eventId: number; stamp: string }[] = [];
