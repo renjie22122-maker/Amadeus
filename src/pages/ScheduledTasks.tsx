@@ -26,8 +26,11 @@ export function ScheduledTasks({
     every: '1',
     unit: '60000',
     destination: 'same-chat',
-    notifications: 'all',
+    notifications: 'meaningful',
+    maxRuns: '',
+    endAt: '',
     jobId: '',
+    trigger: 'time',
   });
   const [form, setForm] = useState(blank),
     [editing, setEditing] = useState(false),
@@ -75,12 +78,16 @@ export function ScheduledTasks({
       destination: s.destination || 'same-chat',
       notifications: s.notifications || 'all',
       jobId: s.jobId || '',
+      trigger: s.jobId ? 'command' : 'time',
+      maxRuns: s.maxRuns ? String(s.maxRuns) : '',
+      endAt: s.endAt ? timeInput(s.endAt) : '',
     });
     setEditing(true);
   };
   const status = (s: string) =>
     ({
       waiting: tr('已安排', 'Scheduled'),
+      limit_reached: tr('已到停止条件', 'Launch limit reached'),
       running: tr('运行中', 'Running'),
       dispatching: tr('启动中', 'Starting'),
       paused: tr('已暂停', 'Paused'),
@@ -111,6 +118,39 @@ export function ScheduledTasks({
           {tr('＋ 新建任务', '＋ New task')}
         </button>
       </header>
+      <div className="schedule-actions" aria-label={tr('快捷安排', 'Quick schedule')}>
+        {[
+          ['later', tr('稍后继续', 'Continue later')],
+          ['review', tr('完成后检查', 'Review after completion')],
+          ['monitor', tr('定期检查', 'Monitor')],
+        ].map(([kind, label]) => (
+          <button
+            key={kind}
+            onClick={() => {
+              const draft = blank();
+              setForm({
+                ...draft,
+                name: label,
+                trigger: kind === 'review' ? 'command' : 'time',
+                when: timeInput(Date.now() + (kind === 'later' ? 30 * 60000 : 0)),
+                repeat: kind === 'monitor' ? 'interval' : 'once',
+                every: '30',
+                maxRuns: kind === 'monitor' ? '8' : '',
+                prompt:
+                  kind === 'review'
+                    ? tr(
+                        '检查所选后台任务的实际输出，按本对话验收要求核实；未通过时不要启动依赖步骤，报告问题和下一步。',
+                        'Inspect actual outputs of the selected job against this conversation’s acceptance criteria. Do not launch dependent steps on failed review; report findings and next steps.',
+                      )
+                    : '',
+              });
+              setEditing(true);
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       {results.some((r) => r.unread) && (
         <details className="panel" open>
           <summary>
@@ -120,6 +160,8 @@ export function ScheduledTasks({
             .filter((r) => r.unread)
             .map((r) => (
               <div className="schedule-result" key={r.id}>
+                {r.summary && <p>{r.summary}</p>}
+                {r.error && <p role="status">{r.error}</p>}
                 <button onClick={() => openConversation(r.conversationId)}>
                   {r.name} · {status(r.status)}
                 </button>
@@ -149,6 +191,8 @@ export function ScheduledTasks({
                 destination: form.destination,
                 notifications: form.notifications,
                 jobId: form.jobId || null,
+                maxRuns: form.maxRuns ? Number(form.maxRuns) : null,
+                endAt: form.endAt ? new Date(form.endAt).getTime() : null,
               };
               if (!form.id) data.conversationId = form.conversationId;
               await api(
@@ -266,8 +310,26 @@ export function ScheduledTasks({
               </select>
             </label>
             <label>
-              {tr('等待后台命令（可选）', 'Wait for command (optional)')}
-              <select value={form.jobId} onChange={(e) => field('jobId', e.target.value)}>
+              {tr('触发条件', 'Trigger')}
+              <select
+                value={form.trigger}
+                onChange={(e) => {
+                  field('trigger', e.target.value);
+                  if (e.target.value === 'time') field('jobId', '');
+                }}
+              >
+                <option value="time">{tr('到达设定时间', 'Scheduled time')}</option>
+                <option value="command">
+                  {tr('到达时间且后台命令完成', 'Scheduled time and command completed')}
+                </option>
+              </select>
+              {tr('关联后台命令', 'Background command')}
+              <select
+                required={form.trigger === 'command'}
+                disabled={form.trigger !== 'command'}
+                value={form.jobId}
+                onChange={(e) => field('jobId', e.target.value)}
+              >
                 <option value="">{tr('不等待', 'None')}</option>
                 {commands
                   .filter((j: any) => j.conversationId === form.conversationId)
@@ -279,6 +341,32 @@ export function ScheduledTasks({
               </select>
             </label>
           </div>
+          <div className="schedule-options">
+            <label>
+              {tr('最多自动启动次数（留空不限）', 'Maximum launches (blank: unlimited)')}
+              <input
+                type="number"
+                min="1"
+                max="10000"
+                value={form.maxRuns}
+                onChange={(e) => field('maxRuns', e.target.value)}
+              />
+            </label>
+            <label>
+              {tr('停止安排新运行的时间（可选）', 'Stop launching after (optional)')}
+              <input
+                type="datetime-local"
+                value={form.endAt}
+                onChange={(e) => field('endAt', e.target.value)}
+              />
+            </label>
+          </div>
+          <p className="muted">
+            {tr(
+              '完成后检查：请在上方选择后台命令。限制只阻止新运行，不中止已启动任务；达到限制不代表验收通过。',
+              'For completion review, select a command above. Limits prevent new launches, not active work; reaching a limit is not verification success.',
+            )}
+          </p>
           <fieldset className="schedule-destinations">
             <legend>{tr('对话方式', 'Conversation mode')}</legend>
             {['same-chat', 'new-chat'].map((mode) => (
@@ -338,6 +426,22 @@ export function ScheduledTasks({
               <dl>
                 <dt>{tr('运行位置', 'Runs in')}</dt>
                 <dd>{c?.title || tr('原对话不可用', 'Source unavailable')}</dd>
+                <dt>{tr('触发', 'Trigger')}</dt>
+                <dd>
+                  {s.jobId
+                    ? tr('等待关联后台命令完成', 'Wait for linked command completion')
+                    : tr('按时间', 'By time')}
+                </dd>
+                <dt>{tr('已启动／上限', 'Launches / limit')}</dt>
+                <dd>
+                  {s.dispatchCount || 0} / {s.maxRuns || tr('不限', 'unlimited')}
+                </dd>
+                {s.endAt && (
+                  <>
+                    <dt>{tr('截止', 'Cutoff')}</dt>
+                    <dd>{new Date(s.endAt).toLocaleString()}</dd>
+                  </>
+                )}
                 <dt>{tr('频率', 'Repeat')}</dt>
                 <dd>
                   {s.intervalMs
@@ -400,6 +504,8 @@ export function ScheduledTasks({
                   <div className="schedule-history">
                     {history.map((r) => (
                       <div className="schedule-result" key={r.id}>
+                        {r.summary && <p>{r.summary}</p>}
+                        {r.error && <p role="status">{r.error}</p>}
                         <button onClick={() => openConversation(r.conversationId)}>
                           {new Date(r.finishedAt).toLocaleString()} · {status(r.status)}
                         </button>

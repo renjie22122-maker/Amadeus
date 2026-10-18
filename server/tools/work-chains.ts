@@ -100,6 +100,14 @@ export function installWorkChains(registry: ToolRegistry) {
       const execution = executionSettings(settings, c.conversation);
       return json({
         tools: [...available],
+        scheduling: {
+          available: available.has('schedule_followup'),
+          discovery: 'inspect_schedules',
+          triggers: ['time', 'interval', 'background-command-completed'],
+          requiresRunningService: true,
+          notifications: 'in-app',
+          note: 'Future model turns require a saved, approved schedule; background scripts alone do not perform model review.',
+        },
         compute: {
           backend: execution.commandBackend,
           status:

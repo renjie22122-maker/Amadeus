@@ -6,10 +6,56 @@ import type { ToolRegistry } from './registry.js';
 const text = (value: unknown) => ({ content: JSON.stringify(value) });
 export function installScheduledTools(registry: ToolRegistry) {
   registry.add({
+    name: 'inspect_schedules',
+    effect: 'read',
+    parallelSafe: true,
+    description:
+      'Inspect durable follow-ups in this conversation before creating duplicates or claiming future wake-up is unavailable. Does not run tasks or change permissions.',
+    schema: z.object({}),
+    run: (_a, c) =>
+      text({
+        schedules: c.store
+          .list<ScheduledWork>('scheduled-work')
+          .filter((t) => t.conversationId === c.conversation.id),
+        capabilities: {
+          once: true,
+          repeated: true,
+          afterBackgroundCommand: true,
+          requiresRunningService: true,
+          notifications: 'in-app',
+          approvalRequired: true,
+        },
+        guidance:
+          'Use schedule_followup for authorized future model work, optionally jobId for command completion. Technical checks do not replace semantic review. The service and computer must stay running; no wake from sleep or email notification is implied.',
+      }),
+  });
+  registry.add({
+    name: 'pause_scheduled_followup',
+    effect: 'coordinate',
+    description:
+      'Pause future launches of a schedule in this conversation when no longer needed or requested. Does not interrupt an already running task, replay operations, or re-enable a schedule.',
+    schema: z.object({ id: z.string() }),
+    run: (a, c) => {
+      const task = c.store.get<ScheduledWork>('scheduled-work', a.id);
+      assert(
+        task.conversationId === c.conversation.id,
+        'SCOPE',
+        'Schedule belongs to another conversation.',
+      );
+      return text(
+        c.store.put('scheduled-work', {
+          ...task,
+          enabled: false,
+          status: task.runId ? task.status : 'paused',
+        }),
+      );
+    },
+  });
+  registry.add({
     name: 'schedule_followup',
     effect: 'write',
     description:
-      'Schedule a requested follow-up, once or repeatedly, in this chat or a new chat per run. Configure notifications and optionally wait for a background command. Requires confirmation, preserves current permissions, and never replays unknown effects.',
+      'Schedule a requested follow-up, once or repeatedly, in this chat or a new chat per run. Configure notifications and optionally wait for a background command. Requires confirmation. The service automatically starts a model turn without another user message while the computer/service stay running. Use jobId to review completed outputs before downstream work; maxRuns/endAt bound future launches. Preserves current permissions, and never replays unknown effects.',
     schema: scheduleFields,
     run: async (a, c) => {
       assert(

@@ -202,3 +202,61 @@ test('interval validation rejects zero, fraction and excessive values', () => {
   for (const intervalMs of [0, 1, 60000.5, Infinity, 367 * 86400000])
     assert.equal(scheduleFields.safeParse({ prompt: 'x', dueAt: 0, intervalMs }).success, false);
 });
+
+test('launch limits survive restart and do not mark pending work verified complete', (t) => {
+  const f = fixture(t);
+  f.save({ intervalMs: 60000, maxRuns: 1 });
+  f.scheduler.tick(1);
+  assert.equal(f.store.get<any>('scheduled-work', 's').dispatchCount, 1);
+  f.store.put('run', { id: f.calls[0].runId, status: 'completed' });
+  f.scheduler.tick(2);
+  new ScheduledWorkService(f.store, f.runtime).tick(60001);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.store.get<any>('scheduled-work', 's').status, 'limit_reached');
+  assert.equal(f.store.get<any>('scheduled-work', 's').enabled, false);
+});
+test('deadline stops new work but does not interrupt an active scheduled run', (t) => {
+  const f = fixture(t);
+  f.save({ endAt: 10 });
+  f.scheduler.tick(10);
+  assert.equal(f.calls.length, 0);
+  f.save({ endAt: 10 });
+  f.scheduler.tick(1);
+  f.scheduler.tick(11);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.store.get<any>('scheduled-work', 's').status, 'running');
+});
+test('schedule discovery never exposes another conversation task', (t) => {
+  const f = fixture(t);
+  f.save();
+  f.store.put('scheduled-work', { id: 'private', conversationId: 'other', prompt: 'private' });
+  const defs: any[] = [];
+  installScheduledTools({ add: (x: any) => defs.push(x) } as any);
+  const result = JSON.parse(
+    defs
+      .find((x) => x.name === 'inspect_schedules')
+      .run({}, { store: f.store, conversation: { id: 'c' } }).content,
+  );
+  assert.deepEqual(
+    result.schedules.map((x: any) => x.id),
+    ['s'],
+  );
+  assert.equal(result.capabilities.afterBackgroundCommand, true);
+});
+
+test('agent pause stops new launches without interrupting active work or crossing scope', (t) => {
+  const f = fixture(t);
+  f.save({ intervalMs: 60000 });
+  f.scheduler.tick(1);
+  const defs: any[] = [];
+  installScheduledTools({ add: (x: any) => defs.push(x) } as any);
+  const tool = defs.find((x) => x.name === 'pause_scheduled_followup');
+  assert.throws(
+    () => tool.run({ id: 's' }, { store: f.store, conversation: { id: 'other' } }),
+    /another conversation/,
+  );
+  tool.run({ id: 's' }, { store: f.store, conversation: { id: 'c' } });
+  assert.equal(f.store.get<any>('run', f.calls[0].runId).status, 'running');
+  f.scheduler.tick(999999);
+  assert.equal(f.calls.length, 1);
+});

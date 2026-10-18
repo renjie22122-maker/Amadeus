@@ -1,6 +1,10 @@
 import type { ToolSpec } from '../../shared/types.js';
 export const coreTools = new Set([
   'inspect_work_capabilities',
+  'schedule_followup',
+  'inspect_schedules',
+  'pause_scheduled_followup',
+  'report_scheduled_result',
   'inspect_tool_plan',
   'set_response_contract',
   'glob',
@@ -47,6 +51,9 @@ export const coreTools = new Set([
 ]);
 export function findTools(specs: ToolSpec[], query: string, offset: number, limit: number) {
   const aliases: Record<string, string> = {
+    定时: 'schedule followup',
+    唤醒: 'schedule followup',
+    提醒: 'schedule followup',
     团队: 'team agent discussion',
     辩论: 'team discussion limits challenge',
     通讯: 'message agent team',

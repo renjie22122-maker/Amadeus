@@ -13,6 +13,8 @@ export const scheduleFields = z.object({
     .max(366 * 86400000)
     .nullable()
     .optional(),
+  maxRuns: z.number().int().min(1).max(10000).nullable().optional(),
+  endAt: z.number().int().nonnegative().max(8640000000000000).nullable().optional(),
   jobId: z.string().nullable().optional(),
   destination: z.enum(['same-chat', 'new-chat']).optional(),
   notifications: z.enum(['all', 'meaningful', 'failures', 'off']).optional(),
@@ -35,6 +37,9 @@ export interface ScheduledWork {
   target?: string;
   runConversationId?: string;
   startedAt?: number;
+  maxRuns?: number | null;
+  endAt?: number | null;
+  dispatchCount?: number;
 }
 export class ScheduledWorkService {
   private timer?: ReturnType<typeof setInterval>;
@@ -109,6 +114,20 @@ export class ScheduledWorkService {
           }
         }
         if (!task.enabled) continue;
+        if (
+          !task.runId &&
+          ((task.maxRuns && (task.dispatchCount || 0) >= task.maxRuns) ||
+            (task.endAt != null && now >= task.endAt))
+        ) {
+          this.store.put('scheduled-work', { ...task, enabled: false, status: 'limit_reached' });
+          this.record(
+            task,
+            'limit_reached',
+            now,
+            'Schedule launch limit reached; unfinished work is not verified complete.',
+          );
+          continue;
+        }
         const c = this.store.get<Conversation>('conversation', task.conversationId);
         if (
           c.archived ||
@@ -144,6 +163,7 @@ export class ScheduledWorkService {
           runId,
           runConversationId: chatId,
           startedAt: task.startedAt || now,
+          dispatchCount: (task.dispatchCount || 0) + (task.runId ? 0 : 1),
           status: 'dispatching',
         };
         this.store.put('scheduled-work', task);

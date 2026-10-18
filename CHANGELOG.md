@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-19 — Discoverable durable follow-ups
+
+Expose scheduling, scoped inspection and pause tools; add quick editable cards, total launch limits and cutoff times. Clarify command completion versus semantic acceptance and in-app notifications. Existing permissions and unknown-effect safeguards remain. No launcher/dependency changes; running benchmark snapshots are untouched.
+
 ## 2026-10-18 — Failure diagnosis and bounded completion
 
 Added late-budget completion guidance, safe generation-failure details, strict execution/preflight parameter parity, and history-aggregation/tool-selection guidance. Empty/failed retrievals no longer increase evidence coverage. Serialized the native baseline RPC exchange and retained exception types. Existing frozen benchmarks, limits and results remain unchanged; no launcher or dependency changes.

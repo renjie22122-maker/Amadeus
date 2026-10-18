@@ -123,3 +123,11 @@ The message composer grows with typed, wrapped or restored draft content, up to 
 Long pasted-text attachments use a bounded Markdown heading or opening line as the filename, sanitized locally. This is a display label, not a generated summary; attachment IDs distinguish repeated names.
 
 Subagent selection in Auto now explicitly considers bounded independent source investigations and verification before serial research. Runtime and plan inspection expose delegation blockers, remaining task-tree execution budget and independent ready tasks based on declared dependencies/resources. This is advisory, not automatic keyword-based spawning or evidence of faster/better results. Simple lookups stay local; source overlap is not independent corroboration. Configured model allowlists remain enforced.
+
+### Durable follow-up and model wake-up
+
+Background work includes editable cards for Continue later, Review after completion, and Monitor. Choose the conversation, local first-run time, repeat interval, notification policy, optional command dependency, maximum total launches and cutoff time. Completion review requires a linked command. The service dispatches a model turn without a new user message; it must stay running on an awake computer. Notifications are in-app, not email or guaranteed OS push.
+
+The always-discoverable schedule_followup/inspect_schedules tools let agents check existing schedules and request approval for future model work; pause_scheduled_followup stops future launches in the same conversation. Active runs are not cancelled by pausing or launch limits. Use meaningful notifications to suppress unchanged reports; complete stops repeat runs only after the scheduled turn succeeds. A launch limit is not acceptance. Permissions are inherited; failures and unknown effects do not silently replay. No launcher change is required.
+
+For review-before-production workflows, bind the generation command then inspect actual outputs with relevant skills and image/document tools before launching dependent work. Technical file checks cannot establish visual/semantic quality. Model review is fallible; preserve findings and unresolved items. External queues need a bounded periodic check; a completed enqueue script is not proof its external job finished.
