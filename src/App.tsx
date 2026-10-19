@@ -685,31 +685,9 @@ export function App() {
         </button>,
       );
     const folded = collapsibleProcess(all, currentRuns);
-    let processNodes: any[] = [],
-      processEvents: AgentEvent[] = [];
-    const finishProcess = () => {
-      if (!processNodes.length) return;
-      const tools = processEvents.filter((e) => e.type === 'tool.started').length;
-      const messages = processEvents.filter((e) => e.type === 'assistant.message').length;
-      nodes.push(
-        <ProcessHistory
-          key={'process-' + processEvents[0].id}
-          label={
-            language === 'zh'
-              ? `执行过程 · ${tools} 次工具调用 · ${messages} 条进度消息`
-              : `Work · ${tools} tool calls · ${messages} progress messages`
-          }
-        >
-          {processNodes}
-        </ProcessHistory>,
-      );
-      processNodes = [];
-      processEvents = [];
-    };
+    const processes = new Map<string, { index: number; nodes: any[]; events: AgentEvent[] }>();
     for (const e of all.slice(offset)) {
-      if (folded.has(e.id) || processNodes.length) flush();
-      if (!folded.has(e.id) || (processEvents.length && processEvents[0].runId !== e.runId))
-        finishProcess();
+      if (folded.has(e.id)) flush();
       const start = nodes.length;
       if (e.type === 'user.message' || e.type === 'assistant.message') {
         flush();
@@ -819,9 +797,18 @@ export function App() {
         );
       }
       if (folded.has(e.id)) flush();
-      if (folded.has(e.id)) {
-        processNodes.push(...nodes.splice(start));
-        processEvents.push(e);
+      if (folded.has(e.id) && e.runId) {
+        const rendered = nodes.splice(start);
+        if (rendered.length) {
+          let group = processes.get(e.runId);
+          if (!group) {
+            group = { index: nodes.length, nodes: [], events: [] };
+            processes.set(e.runId, group);
+            nodes.push(null);
+          }
+          group.nodes.push(...rendered);
+          group.events.push(e);
+        }
       }
       if (e.runId && lastByRun.get(e.runId) === e.id && detail) {
         flush();
@@ -839,7 +826,23 @@ export function App() {
       }
     }
     flush();
-    finishProcess();
+    for (const [runId, group] of processes) {
+      const messages = group.events.filter((e) => e.type === 'assistant.message').length;
+      const tools = group.events.filter((e) => e.type === 'tool.started').length;
+      const count = group.events.length;
+      nodes[group.index] = (
+        <ProcessHistory
+          key={'process-' + runId}
+          label={
+            language === 'zh'
+              ? `此前过程 · ${count} 条记录${messages ? ` · ${messages} 条模型回复` : ''}${tools ? ` · ${tools} 次工具调用` : ''}`
+              : `${count} previous events${messages ? ` · ${messages} assistant messages` : ''}${tools ? ` · ${tools} tool calls` : ''}`
+          }
+        >
+          {group.nodes}
+        </ProcessHistory>
+      );
+    }
     return nodes;
   }
   if (!state)
