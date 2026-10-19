@@ -862,13 +862,27 @@ export class ChatConnections {
       this.store.put('chat-file-cursor', { id: c.id, eventId: event.id });
     }
   }
+  private connectionStatus(c: ChatConnection) {
+    if (!c.enabled) return { status: 'paused' };
+    const own = this.store.maybe<any>('chat-transport-state', c.id);
+    if (own) return own;
+    const peer = this.list().find(
+      (x) =>
+        x.id !== c.id &&
+        x.enabled &&
+        x.transport === c.transport &&
+        x.accountId === c.accountId &&
+        x.endpoint === c.endpoint &&
+        this.secrets(x.id).token === this.secrets(c.id).token &&
+        this.store.maybe<any>('chat-transport-state', x.id)?.status === 'connected',
+    );
+    return peer ? { status: 'connected', sharedTransport: true } : { status: 'connecting' };
+  }
   overview() {
     return this.list().map((c) => ({
       ...c,
       authorizedTarget: undefined,
-      status: this.store.maybe<any>('chat-transport-state', c.id) || {
-        status: c.enabled ? 'connecting' : 'paused',
-      },
+      status: this.connectionStatus(c),
       deliveries: this.store.db
         .prepare(
           'SELECT state,count(*) AS count FROM chat_outbox WHERE connection_id=? GROUP BY state',

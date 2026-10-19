@@ -596,3 +596,19 @@ test('model output is converted before delivery while local event and approval t
     'Review exact payload: **literal** /approve abc',
   );
 });
+
+test('new routes display the authenticated shared connection without masking route errors', (t) => {
+  const { channels, c, store } = setup(t);
+  (channels as any).secrets = () => ({ token: 'same' });
+  store.put('chat-transport-state', { id: c.id, status: 'connected' });
+  const other = { ...c, id: id(), peerId: '999' };
+  store.put('chat-connection', other);
+  assert.equal(channels.overview().find((x) => x.id === other.id)!.status.status, 'connected');
+  store.put('chat-transport-state', { id: other.id, status: 'delivery-uncertain' });
+  assert.equal(
+    channels.overview().find((x) => x.id === other.id)!.status.status,
+    'delivery-uncertain',
+  );
+  channels.pause(other.id);
+  assert.equal(channels.overview().find((x) => x.id === other.id)!.status.status, 'paused');
+});
