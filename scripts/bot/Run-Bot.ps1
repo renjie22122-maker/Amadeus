@@ -1,6 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$Config, [ValidateSet('all','bridge')][string]$Mode='all')
 $ErrorActionPreference='Stop'
-$c=Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+$c=Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
 if($c.version -ne 1){throw 'Unsupported bot configuration'}
 function Ready($service){
     if($service.healthUrl){try{$r=Invoke-RestMethod $service.healthUrl -TimeoutSec 2;return $r.ready -eq $true -and $r.application -in @('Amadeus','AgentDemo')}catch{return $false}}

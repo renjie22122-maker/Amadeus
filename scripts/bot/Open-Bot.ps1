@@ -1,7 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$Config,[ValidateSet('all','bridge')][string]$Mode='all',[switch]$NoBrowser)
 $ErrorActionPreference='Stop'
 try{
-    $c=Get-Content -LiteralPath $Config -Raw|ConvertFrom-Json
+    $c=Get-Content -LiteralPath $Config -Raw -Encoding UTF8|ConvertFrom-Json
     $suffix=if($Mode -eq 'bridge'){'Bridge'}else{'All'}
     foreach($name in @(($c.taskPrefix+'-'+$suffix),($c.taskPrefix+'-Notices'))){
         if((Get-ScheduledTask -TaskName $name).State -ne 'Running'){Start-ScheduledTask -TaskName $name}

@@ -1,7 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$Config,[switch]$NoShortcuts)
 $ErrorActionPreference='Stop'
 $Config=(Resolve-Path -LiteralPath $Config).Path
-$c=Get-Content -LiteralPath $Config -Raw|ConvertFrom-Json
+$c=Get-Content -LiteralPath $Config -Raw -Encoding UTF8|ConvertFrom-Json
 if($c.version -ne 1 -or $c.taskPrefix -notmatch '^[A-Za-z0-9_-]{1,60}$'){throw 'Invalid task prefix or configuration version'}
 foreach($p in @($Config,$PSScriptRoot)){if($p.Contains('"')){throw 'Invalid quoted path'}}
 $principal=New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
@@ -27,4 +27,3 @@ if(-not $NoShortcuts){
     }
 }
 Write-Host 'Registered on-demand tasks. No service was started or stopped. No logon trigger was added.'
-

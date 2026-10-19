@@ -16,6 +16,7 @@ test(
       writeFileSync(join(dir, 'run.ps1'), source);
       const config = {
         version: 1,
+        notice: '中文配置与日语テスト',
         taskPrefix: 'BotTest' + process.pid,
         logDirectory: dir,
         bridge: {
