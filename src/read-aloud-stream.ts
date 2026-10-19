@@ -11,6 +11,8 @@ export async function playLocalSpeech(args: {
   onAudio: () => void;
 }): Promise<boolean> {
   const { signal, context } = args;
+  signal.throwIfAborted();
+  if (!Number.isFinite(args.rate) || args.rate <= 0) throw Error('Invalid playback rate');
   const response = await streamReadAloud(args.conversationId, args.serviceId, args.text, signal);
   // Explicit capability rejection occurs before synthesis; only this case permits fallback.
   if (response.status === 409 || response.status === 404) return false;
@@ -22,6 +24,23 @@ export async function playLocalSpeech(args: {
     throw Error(`Speech stream unavailable (${response.status}); no automatic resubmission.`);
   }
   const reader = response.body.getReader();
+  const sources = new Set<AudioBufferSourceNode>();
+  const stopSources = () => {
+    for (const source of sources) {
+      try {
+        source.stop();
+      } catch {
+        /* Already ended. */
+      }
+      source.disconnect();
+    }
+    sources.clear();
+  };
+  const abort = () => {
+    stopSources();
+    void reader.cancel().catch(() => {});
+  };
+  signal.addEventListener('abort', abort, { once: true });
   const decoder = new TextDecoder();
   let buffer = '',
     sequence = 0,
@@ -45,6 +64,7 @@ export async function playLocalSpeech(args: {
     for (;;) {
       signal.throwIfAborted();
       const result = await reader.read();
+      signal.throwIfAborted();
       buffer += decoder.decode(result.value, { stream: !result.done });
       if (buffer.length > 6 * 1024 * 1024) throw Error('Oversized speech stream frame');
       let newline: number;
@@ -55,7 +75,7 @@ export async function playLocalSpeech(args: {
         const frame = JSON.parse(line);
         if (frame.type === 'error') throw Error(String(frame.error || 'Speech stream failed'));
         if (frame.type === 'done') {
-          if (frame.chunks !== sequence) throw Error('Incomplete speech stream');
+          if (finished || frame.chunks !== sequence) throw Error('Incomplete speech stream');
           finished = true;
           continue;
         }
@@ -73,7 +93,11 @@ export async function playLocalSpeech(args: {
         source.buffer = decoded;
         source.playbackRate.value = args.rate;
         source.connect(context.destination);
-        source.onended = () => source.disconnect();
+        sources.add(source);
+        source.onended = () => {
+          sources.delete(source);
+          source.disconnect();
+        };
         const at = Math.max(context.currentTime + 0.025, until);
         source.start(at);
         until = at + decoded.duration / args.rate;
@@ -86,6 +110,8 @@ export async function playLocalSpeech(args: {
     while (context.currentTime < until) await wait();
     return true;
   } finally {
+    signal.removeEventListener('abort', abort);
+    stopSources();
     await reader.cancel().catch(() => {});
   }
 }

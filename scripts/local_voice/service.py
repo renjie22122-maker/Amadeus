@@ -6,6 +6,7 @@ from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
+import shutil
 import json
 import os
 from pathlib import Path
@@ -213,6 +214,9 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                                 state.update(device="cpu", reason="GPU worker unavailable; retrying once on CPU")
                                 result_path.unlink()
                                 Path(job["output"]).unlink(missing_ok=True)
+                                # Failed-attempt chunks must never enter the CPU attempt's stream.
+                                if (directory / "chunks").exists():
+                                    shutil.rmtree(directory / "chunks")
                                 continue
                             return self.reply(503, {"error": result["error"]})
                         if streaming:

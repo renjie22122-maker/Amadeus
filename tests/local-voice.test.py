@@ -105,14 +105,50 @@ class VoiceTests(unittest.TestCase):
             devices.append(job["device"])
             if job["device"] == "cuda":
                 Path(job["output"]).write_bytes(b"partial")
+                chunks = Path(job["output"]).parent / "chunks"
+                chunks.mkdir()
+                (chunks / "1.wav").write_bytes(b"stale failed attempt")
                 Path(job["result"]).write_text(json.dumps({"error": "CUDA out of memory", "code": "GPU_OOM"}))
             else:
                 self.assertFalse(Path(job["output"]).exists())
+                self.assertFalse((Path(job["output"]).parent / "chunks").exists())
                 Path(job["output"]).write_bytes(b"RIFFcpu")
                 Path(job["result"]).write_text(json.dumps({"mime": "audio/wav"}))
         with patch.object(service, "select_device", return_value=("cuda", "idle")), patch.object(service, "run_worker", side_effect=worker):
             status, body, _ = self.request("/v1/audio/speech", {"model": "cosyvoice", "input": "hello"})
         self.assertEqual((status, body, devices), (200, b"RIFFcpu", ["cuda", "cpu"]))
+
+    def test_stream_retry_never_emits_failed_attempt_chunks(self):
+        import base64
+        import io
+        import wave
+        def wav(value):
+            output = io.BytesIO()
+            with wave.open(output, "wb") as audio:
+                audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+                audio.writeframes(value.to_bytes(2, "little", signed=True) * 80)
+            return output.getvalue()
+        good, stale = wav(1000), wav(-1000)
+        self.config["device"] = "auto"
+        def worker(args, **kwargs):
+            job = json.loads(Path(args[-1]).read_text())
+            chunks = Path(job["output"]).parent / "chunks"
+            chunks.mkdir(exist_ok=True)
+            if job["device"] == "cuda":
+                (chunks / "1.wav").write_bytes(stale)
+                Path(job["result"]).write_text(json.dumps({"error": "OOM", "code": "GPU_OOM"}))
+            else:
+                (chunks / "0.wav").write_bytes(good)
+                Path(job["result"]).write_text(json.dumps({"mime": "audio/wav"}))
+            return 0
+        with patch.object(service, "select_device", return_value=("cuda", "idle")), patch.object(service, "run_worker", side_effect=worker):
+            status, body, _ = self.request("/v1/audio/speech", {"model": "cosyvoice", "input": "normal fixture", "stream": True})
+        frames = [json.loads(line) for line in body.splitlines()]
+        audio = [frame for frame in frames if frame["type"] == "audio"]
+        self.assertEqual(status, 200)
+        self.assertEqual(len(audio), 1)
+        self.assertEqual(base64.b64decode(audio[0]["audio"]), good)
+        self.assertEqual(frames[-1], {"type": "done", "chunks": 1})
 
     def test_unrelated_failure_is_not_replayed(self):
         self.config["device"] = "auto"
@@ -162,6 +198,7 @@ class VoiceTests(unittest.TestCase):
         def worker(args, **kwargs):
             job = json.loads(Path(args[-1]).read_text())
             self.assertEqual(job["config"]["voices"]["new"]["text"], "exact words")
+            self.assertEqual(job["input"], "hello")
             Path(job["output"]).write_bytes(b"RIFFfixture")
             Path(job["result"]).write_text(json.dumps({"mime": "audio/wav"}))
         try:

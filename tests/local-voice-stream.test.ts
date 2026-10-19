@@ -61,6 +61,14 @@ test('native read-aloud proxy scopes access, requires capability and does not cr
     assert.equal(body.stream, true);
     assert.equal(body.model, 'custom-voice');
     assert.equal(body.voice, 'voice');
+    assert.equal(body.input, 'Hello');
+    assert.deepEqual(Object.keys(body).sort(), [
+      'input',
+      'model',
+      'response_format',
+      'stream',
+      'voice',
+    ]);
     return new Response('{"type":"waiting"}\n{"type":"done","chunks":1}\n', {
       headers: { 'Content-Type': 'application/x-ndjson' },
     });
