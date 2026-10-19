@@ -35,6 +35,34 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [audio, setAudio] = useState('');
+  const [previewing, setPreviewing] = useState(false);
+  const [deviceStatus, setDeviceStatus] = useState<{
+    available: boolean;
+    busy: boolean;
+    device: 'cuda' | 'cpu' | null;
+    reason: string | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!previewing) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const status = await api<NonNullable<typeof deviceStatus>>('/media/local-voice/status');
+        if (!disposed) setDeviceStatus(status);
+      } catch {
+        if (!disposed)
+          setDeviceStatus({ available: false, busy: false, device: null, reason: null });
+      } finally {
+        if (!disposed) timer = setTimeout(poll, 2000);
+      }
+    };
+    void poll();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
+  }, [previewing]);
   const action = async (run: () => Promise<void>) => {
     setBusy(true);
     setMessage('');
@@ -244,19 +272,22 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
               onClick={() =>
                 void action(async () => {
                   setAudio('');
-                  setMessage(
-                    zh
-                      ? '正在本机合成试听，CPU 可能需要一两分钟…'
-                      : 'Generating locally; CPU may need a minute or two…',
-                  );
-                  const result = await api<{ audio: string; mime: string }>(
-                    '/media/local-voice/preview',
-                    { id: selected, language },
-                  );
-                  setAudio('data:audio/wav;base64,' + result.audio);
-                  setMessage(
-                    zh ? '试听已生成，点击播放器播放。' : 'Preview ready. Press Play to listen.',
-                  );
+                  setMessage(zh ? '正在本机合成试听…' : 'Generating preview locally…');
+                  setDeviceStatus(null);
+                  setPreviewing(true);
+                  try {
+                    const result = await api<{ audio: string; mime: string }>(
+                      '/media/local-voice/preview',
+                      { id: selected, language },
+                    );
+                    setAudio('data:audio/wav;base64,' + result.audio);
+                    setMessage(
+                      zh ? '试听已生成，点击播放器播放。' : 'Preview ready. Press Play to listen.',
+                    );
+                  } finally {
+                    setPreviewing(false);
+                    setDeviceStatus(null);
+                  }
                 })
               }
             >
@@ -278,6 +309,35 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
       <p role="status" aria-live="polite">
         {message}
       </p>
+      {previewing && (
+        <p className="muted" role="status" aria-live="polite">
+          {zh ? '语音服务：' : 'Voice service: '}
+          {!deviceStatus
+            ? zh
+              ? '正在读取设备状态…'
+              : 'Reading device status…'
+            : !deviceStatus.available
+              ? zh
+                ? '设备状态暂不可用，合成仍在等待结果。'
+                : 'Device status unavailable; still awaiting synthesis.'
+              : !deviceStatus.busy
+                ? zh
+                  ? '服务空闲／请求准备中'
+                  : 'Idle / preparing request'
+                : deviceStatus.device === 'cuda'
+                  ? zh
+                    ? 'GPU · 正在处理'
+                    : 'GPU · Processing'
+                  : deviceStatus.device === 'cpu'
+                    ? zh
+                      ? 'CPU · 正在处理'
+                      : 'CPU · Processing'
+                    : zh
+                      ? '正在选择设备…'
+                      : 'Selecting device…'}
+          {deviceStatus?.busy && deviceStatus.reason && <> · {deviceStatus.reason}</>}
+        </p>
+      )}
       {audio && <audio controls src={audio} style={{ maxWidth: '100%' }} />}
     </details>
   );

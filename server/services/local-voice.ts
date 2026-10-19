@@ -72,3 +72,35 @@ export function configureLocalVoice(config: Configuration, root: string) {
   config.save(settings);
   return config.public();
 }
+
+// Expose only runtime telemetry, never local paths, voice text or service credentials.
+export async function localVoiceStatus(root: string) {
+  try {
+    const local = localVoiceConfig(root);
+    const response = await fetch(new URL('/health', local.baseUrl), {
+      headers: { Authorization: `Bearer ${local.token}` },
+      signal: AbortSignal.timeout(3000),
+      redirect: 'error',
+    });
+    if (!response.ok) throw new Error('Unavailable');
+    const data = z
+      .object({
+        state: z.object({
+          busy: z.boolean(),
+          device: z.enum(['cuda', 'cpu']).nullable(),
+          reason: z.string().nullable(),
+        }),
+        devicePolicy: z.enum(['auto', 'cuda', 'cpu']),
+      })
+      .parse(await response.json());
+    return {
+      available: true,
+      busy: data.state.busy,
+      device: data.state.busy ? data.state.device : null,
+      reason: data.state.busy ? (data.state.reason?.slice(0, 300) ?? null) : null,
+      policy: data.devicePolicy,
+    };
+  } catch {
+    return { available: false, busy: false, device: null, reason: null, policy: null };
+  }
+}

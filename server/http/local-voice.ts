@@ -1,3 +1,4 @@
+import { localVoiceStatus } from '../services/local-voice.js';
 import type { FastifyInstance } from 'fastify';
 import type { Configuration } from '../services/settings.js';
 import {
@@ -10,6 +11,10 @@ import {
 import { assert } from '../core/errors.js';
 import { z } from 'zod';
 export function localVoiceRoutes(app: FastifyInstance, config: Configuration, root: string) {
+  app.get('/api/media/local-voice/status', async (_req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return localVoiceStatus(root);
+  });
   app.get('/api/media/local-voice/voices', async () => ({
     voices: listLocalVoices(root),
     capabilities: localVoiceCapabilities,
