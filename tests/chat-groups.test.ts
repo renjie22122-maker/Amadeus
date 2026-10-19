@@ -576,3 +576,23 @@ test('mentioning another member and quoting a message preserves actual sender id
   assert(m.text.includes('Mention ID: 124'));
   assert(m.text.includes('Reply message ID: 42'));
 });
+
+test('model output is converted before delivery while local event and approval text remain intact', (t) => {
+  const { channels, c, store } = setup(t);
+  store.db
+    .prepare(
+      'INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id) VALUES(?,?,?,?,?,?)',
+    )
+    .run('format', c.id, Date.now(), 'running', '', 'r');
+  const event = { data: { final: true, text: '## 标题\n\n**正文**' } };
+  (store as any).maybeRunHeader = () => ({ id: 'r', status: 'completed' });
+  (store as any).eventsForRun = () => [event];
+  channels.tick();
+  assert.equal(store.db.prepare('SELECT text FROM chat_outbox').get()!.text, '标题\n\n正文');
+  assert.equal(event.data.text, '## 标题\n\n**正文**');
+  channels.reply(c, 'approval', 'Review exact payload: **literal** /approve abc');
+  assert.equal(
+    store.db.prepare("SELECT text FROM chat_outbox WHERE id='approval:0'").get()!.text,
+    'Review exact payload: **literal** /approve abc',
+  );
+});

@@ -45,8 +45,10 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "remark-parse": "11.0.0",
     "sharp": "^0.35.5",
     "tsx": "^4.20.0",
+    "unified": "11.0.5",
     "yaml": "^2.8.0",
     "zod": "^4.1.0"
   },

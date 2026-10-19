@@ -1,3 +1,4 @@
+import { chatPlainText } from './chat-format.js';
 import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -733,8 +734,9 @@ export class ChatConnections {
             this.reply(
               c,
               row.id,
-              result?.data.text ||
-                `Task ${run.status}. Inspect the local conversation for details.`,
+              result?.data.text
+                ? chatPlainText(result.data.text)
+                : `Task ${run.status}. Inspect the local conversation for details.`,
             );
           this.store.db
             .prepare("UPDATE chat_inbox SET state='done',text='' WHERE id=?")

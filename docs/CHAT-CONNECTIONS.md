@@ -55,3 +55,7 @@ Routes share account transports and maintain separate delivery queues. Ambiguous
 Automated tests cover protocols, permissions, isolated histories, invite identity/freshness, duplicate handling, context expiry/capacity, decision budgets, silent replies and shared delivery fairness. They make no paid model calls. Live QQ private messaging and group ingress have been observed; new group behavior needs post-deployment acceptance. Other platforms are not claimed live-tested.
 
 References: [Telegram](https://core.telegram.org/bots/api), [Meta](https://developers.facebook.com/docs/whatsapp/cloud-api/), [VK](https://github.com/VKCOM/vk-api-schema), [QQ](https://github.com/tencent-connect/bot-docs), [WeCom](https://github.com/WecomTeam/aibot-node-sdk), [NapCat](https://github.com/NapNeko/NapCatQQ), [OneBot 11](https://github.com/botuniverse/onebot-11), [OneBot 12](https://12.onebot.dev/).
+
+## Outbound formatting
+
+QQ, WeChat and current adapters send model answers as plain text: Markdown styling is removed, tables become labeled records, and code, line breaks, URLs, footnotes and formula content are preserved. Code punctuation is not stripped. Conversion precedes byte-budget splitting. Local history retains the original. Approval commands and reviewed operation payloads bypass conversion so the reviewed operation cannot change. Images, speech and video continue through media delivery.

@@ -54,3 +54,7 @@ QQ 官方和 WhatsApp 需要 HTTPS 反向代理到独立回调端口（默认 87
 自动测试覆盖协议、隔离、成员权限、邀请真实性、重复事件、上下文容量/过期、限频、静默结果和共享投递。测试不调用付费模型。真实 QQ 私聊收发和群消息到达已验证；新增群行为仍需部署后验收，其他平台不宣称真机全通过。
 
 参考：[Telegram](https://core.telegram.org/bots/api)、[Meta](https://developers.facebook.com/docs/whatsapp/cloud-api/)、[VK](https://github.com/VKCOM/vk-api-schema)、[QQ](https://github.com/tencent-connect/bot-docs)、[企业微信](https://github.com/WecomTeam/aibot-node-sdk)、[NapCat](https://github.com/NapNeko/NapCatQQ)、[OneBot 11](https://github.com/botuniverse/onebot-11)、[OneBot 12](https://12.onebot.dev/)。
+
+## 发送格式
+
+QQ、微信及当前其他适配器以纯文本发送模型回答：去掉 Markdown 排版标记，表格转成带列名的逐项记录，保留代码原文、换行、网址、脚注和公式内容；不把代码中的星号、下划线当作排版删除。转换后再按平台字节上限分段。本地会话保留原文；审批指令及待审核操作内容不经过该转换，避免改变审批对象。图片、语音和视频继续通过媒体通道发送。
