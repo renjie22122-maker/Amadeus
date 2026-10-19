@@ -240,7 +240,9 @@ export function ReadAloud({
     } catch (error) {
       if (!current.signal.aborted) notify(String(error));
     } finally {
-      if (controller.current === current) stop();
+      if (controller.current === current) {
+        stop();
+      }
     }
   };
   const label = busy

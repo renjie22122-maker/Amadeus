@@ -5,6 +5,7 @@ type Voice = {
   id: string;
   name: string;
   text: string;
+  source?: string;
   language?: string;
   quality?: { duration: number; warnings: string[] };
 };
@@ -90,7 +91,7 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
       }}
     >
       <summary>
-        {zh ? '本地音色 · 参考音频克隆与试听' : 'Local voices · Reference cloning and preview'}
+        {zh ? '本地音色 · 预置、克隆与试听' : 'Local voices · Presets, cloning and preview'}
       </summary>
       <p className="muted">
         {zh
@@ -214,6 +215,7 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
             {voices.map((voice) => (
               <option key={voice.id} value={voice.id}>
                 {voice.name}
+                {voice.source === 'preset' ? (zh ? ' · 预置' : ' · Preset') : ''}
               </option>
             ))}
           </select>

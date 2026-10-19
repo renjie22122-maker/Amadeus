@@ -96,3 +96,25 @@ Actual short streaming smoke tests (2026-10-19, upstream example reference voice
 GPU selection now depends only on available memory, independent of ComfyUI or any other application. Applying the update requires restarting Agent and the local voice listener; no new dependencies, model downloads or first-start steps. Native streaming is ephemeral read-aloud, without saved chat-media artifacts; ordinary speech generation retains file delivery.
 
 Read-aloud service selection uses the declared `wav-ndjson-v1` capability, not a built-in connection ID or fixed port. In Media settings, enable it only for a service that implements the NDJSON WAV chunk contract; changing endpoint/model requires reconfirmation. Native listener `voice-service/config.json` optionally sets `listenPort` (default 8812); startup, health checks, registration and preview read the same value. Restart the listener after a port change, then re-add local connections to refresh their endpoint. Existing default installations need no manual migration. No dependencies or first-start steps changed.
+
+## Unified pretrained and reference voice discovery
+
+Reference cloning remains available. Optionally prepare the official [CosyVoice-300M-SFT](https://huggingface.co/FunAudioLLM/CosyVoice-300M-SFT) snapshot with the configured TTS Python:
+
+```text
+python scripts/local_voice/prepare.py --config .data/voice-service/config.json --models cosyvoice-sft
+```
+
+This separate, revision-pinned model is about 2.6 GB. It is not downloaded by default. Preparation publishes the model path and speaker manifest only after download; retries reuse the cache. Speaker names come from the actual checkpoint. The settings voice list includes both references and `preset:` speakers. Existing voices and defaults remain intact. Updated listeners load the selected model on demand and release it after inference; no replacement of the cloning model is needed.
+
+`media_services` exposes IDs, names, source and language metadata for matching local speech connections. It excludes reference recordings, transcripts, private paths and credentials. Use `generate_media` with `options.voice` to select a listed ID, honoring explicit user choices and stable character assignments. This applies to narration, dialogue and other tasks, without a roleplay-specific branch. Unknown providers are not assigned invented catalogs. Speech generation retains normal permission/cost handling and does not authorize autoplay of history.
+
+## Playback buffering and developer validation
+
+Native playback starts with a 1.5-second scheduling lead. An underrun rebuilds 0.5–3 seconds of buffer; already scheduled audio remains contiguous on one audio clock. Sustained generation slower than playback can still wait. Duplicate/missing sequences and premature termination fail instead of silently skipping audio.
+
+Diagnostics are test-only, with no download control in daily settings. Tests explicitly supply bounded, memory-only `ReadAloudDiagnostics` to capture sent text, the server text hash, WAV chunks and arrival/decode/scheduling/end-callback times. Scheduled times are not physical speaker measurements. Normal playback does not retain diagnostic text or audio.
+
+On 2026-10-19 a normal upstream sample voice on CUDA produced 9 chunks, 29.68 seconds of audio in 39.31 seconds, first chunk at 17.44 seconds. A 1.36-second chunk was followed after 1.47 seconds; a 2-second chunk was followed after 2.94 seconds. Replaying this timing with the new lead has no scheduling gap. Concatenated chunk PCM exactly matches the complete generated file. Two ASR systems covered all ordinary Chinese test sentences; no paragraph omission or Japanese was observed. One ASR hallucinated a tail beyond the actual audio duration, which is not evidence of TTS contamination. These results do not validate all voices or cross-language synthesis; character voices were not tested, and unreplicated historical omissions/language shifts are not declared fixed.
+
+Set `AMADEUS_TEST_SPEECH_BROWSER=1` and run `node --import tsx --test tests/read-aloud-browser.test.ts` for an installed Edge AudioContext test using ordinary synthetic waveforms. CI does not download a browser. Regular tests cover text forwarding, chunk fidelity/order, cancellation, buffering, catalog privacy and diagnostic memory bounds.

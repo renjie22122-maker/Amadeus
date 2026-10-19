@@ -154,13 +154,16 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                     if not isinstance(fields, dict):
                         raise ValueError("Expected a JSON object")
                     job = validate_job(fields, speech)
+                    if config_path and speech:
+                        # Snapshot current prepared resources; never download during inference.
+                        latest = json.loads(Path(config_path).read_text(encoding="utf-8-sig"))
+                        config["voices"] = latest.get("voices", {})
+                        config["models"] = latest.get("models", {})
+                    if speech and job.get("voice", "").startswith("preset:"):
+                        job["model"] = "cosyvoice-sft"
                     model_path = config.get("models", {}).get(job["model"])
                     if not model_path or not Path(model_path).is_dir():
                         return self.reply(503, {"error": "MODEL_NOT_READY: run local voice setup and prepare models"})
-                    if config_path and speech:
-                        # Refresh voice presets only; a request keeps its own snapshot.
-                        latest = json.loads(Path(config_path).read_text(encoding="utf-8-sig"))
-                        config["voices"] = latest.get("voices", {})
                     device, reason = select_device(config)
                     state.update(device=device, reason=reason)
                     with tempfile.TemporaryDirectory(prefix="amadeus-voice-") as folder:

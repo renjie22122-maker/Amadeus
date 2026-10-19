@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import {
   supportsReadAloud,
   speechStreamEndpoints,
@@ -83,7 +84,9 @@ export function mediaRoutes(app: FastifyInstance, runtime: Runtime) {
       reply
         .header('Content-Type', 'application/x-ndjson')
         .header('Cache-Control', 'no-store')
-        .header('X-Accel-Buffering', 'no');
+        .header('X-Accel-Buffering', 'no')
+        .header('X-Read-Aloud-Request-Id', randomUUID())
+        .header('X-Read-Aloud-Text-SHA256', createHash('sha256').update(a.text).digest('hex'));
       return reply.send(Readable.fromWeb(response.body as any));
     } catch (error) {
       close();

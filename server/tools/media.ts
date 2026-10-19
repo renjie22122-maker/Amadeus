@@ -108,7 +108,7 @@ export function installMedia(registry: ToolRegistry) {
   registry.add({
     name: 'media_services',
     description:
-      'List enabled image, video, music, speech and 3D generation services. Model-specific reference image/multi-image options live in each service defaults; do not invent capabilities or pricing.',
+      'List enabled image, video, music, speech and 3D generation services. Model-specific reference image/multi-image options live in each service defaults; do not invent capabilities or pricing. Speech voices, when present, include saved reference and pretrained voices. Select an exact voices.id through generate_media options.voice; honor user choice and keep recurring character assignments consistent. Voice names/languages are metadata, not verified output quality. Never request or repeat reference transcripts.',
     effect: 'read',
     schema: z.object({}),
     run: (_a, c) => ({ content: JSON.stringify(c.media.connections()) }),

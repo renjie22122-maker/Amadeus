@@ -1,6 +1,8 @@
+import { listLocalVoices } from './local-voice-presets.js';
+import { localVoiceConfig } from './local-voice.js';
 import { mediaCapabilityTarget, mediaReferenceBudget } from '../../shared/media-capabilities.js';
 import type { MediaConnection } from '../../shared/media.js';
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { saveMediaStream } from './media-stream.js';
 import { attachmentMediaType, mediaAttachmentText } from './attachment-media.js';
 import { inspectMedia } from './media-inspection.js';
@@ -52,7 +54,24 @@ export class MediaService {
   connections() {
     return (this.config.get().media?.connections || [])
       .filter((c) => c.enabled)
-      .map(({ apiKey, ...c }) => ({ ...c, hasKey: !!apiKey }));
+      .map(({ apiKey, ...c }) => {
+        let voices: { id: string; name: string; source: string; language: string }[] | undefined;
+        if (c.kind === 'speech' && existsSync(join(this.directory, 'voice-service/config.json'))) {
+          const local = localVoiceConfig(this.directory);
+          if (
+            c.baseUrl.replace(/\/$/, '') === local.baseUrl &&
+            apiKey === local.token &&
+            c.model === 'cosyvoice'
+          )
+            voices = listLocalVoices(this.directory).map(({ id, name, source, language }) => ({
+              id,
+              name,
+              source,
+              language,
+            }));
+        }
+        return { ...c, hasKey: !!apiKey, ...(voices ? { voices } : {}) };
+      });
   }
   connection(key: string) {
     const c = this.config.get().media?.connections.find((c) => c.id === key && c.enabled);

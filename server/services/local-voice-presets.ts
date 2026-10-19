@@ -60,16 +60,38 @@ function local(root: string) {
   return { path, data: JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')) };
 }
 export function listLocalVoices(root: string) {
-  return Object.entries(local(root).data.voices || {}).map(([id, raw]) => {
+  const data = local(root).data;
+  const references = Object.entries(data.voices || {}).map(([id, raw]) => {
     const voice = raw as any;
     return {
       id,
+      source: 'reference' as const,
       name: voice.name || (id === 'default' ? 'Default / 默认' : id),
       text: voice.text || '',
       language: voice.language || 'auto',
       quality: voice.quality || null,
     };
   });
+  const folder = data.models?.['cosyvoice-sft'];
+  const manifest = typeof folder === 'string' ? join(folder, 'preset-voices.json') : '';
+  const speakers =
+    manifest && existsSync(manifest)
+      ? z
+          .array(z.string().min(1).max(100))
+          .max(1000)
+          .parse(JSON.parse(readFileSync(manifest, 'utf8')))
+      : [];
+  return [
+    ...references,
+    ...speakers.map((speaker) => ({
+      id: 'preset:' + speaker,
+      name: speaker,
+      source: 'preset' as const,
+      text: '',
+      language: 'auto',
+      quality: null,
+    })),
+  ];
 }
 export async function normalizeVoice(input: string, output: string) {
   // Bounded decode, no shell and no client-supplied paths or executable.

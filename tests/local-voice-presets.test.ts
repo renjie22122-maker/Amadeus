@@ -1,3 +1,4 @@
+import { MediaService } from '../server/services/media.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
@@ -133,4 +134,39 @@ test('reference limits follow CosyVoice and technical checks distinguish silence
   assert(inspectReferencePcm(clipped).warnings.includes('clipping'));
   assert.equal(inspectReferencePcm(clipped).duration, 30);
   assert(inspectReferencePcm(Buffer.alloc(48000, 12)).warnings.includes('short'));
+});
+
+test('pretrained and reference voices share a catalog without changing references', async () => {
+  const root = await fixture();
+  try {
+    const model = join(root, 'model');
+    await mkdir(model);
+    await writeFile(join(model, 'preset-voices.json'), JSON.stringify(['speaker-a', 'speaker-b']));
+    const path = join(root, 'voice-service/config.json');
+    const config = JSON.parse(await readFile(path, 'utf8'));
+    config.models = { 'cosyvoice-sft': model };
+    await writeFile(path, JSON.stringify(config));
+    const voices = listLocalVoices(root);
+    assert.deepEqual(
+      voices.map((v) => v.id),
+      ['default', 'preset:speaker-a', 'preset:speaker-b'],
+    );
+    assert.equal(voices[1].source, 'preset');
+    assert.equal(voices[1].text, '');
+    const settings = new Configuration(join(root, 'settings.json'));
+    configureLocalVoice(settings, root);
+    const media = new MediaService({} as any, settings, root);
+    const publicCatalog = media.connections().find((c) => c.kind === 'speech')!;
+    assert.equal(publicCatalog.voices!.length, 3);
+    assert(!JSON.stringify(publicCatalog).includes('source transcript'));
+    assert(!JSON.stringify(publicCatalog).includes('private-path'));
+    assert(!JSON.stringify(publicCatalog).includes('x'.repeat(40)));
+    useLocalVoice(settings, root, 'preset:speaker-b');
+    assert.equal(
+      settings.get().media!.connections.find((c) => c.kind === 'speech')!.defaults.voice,
+      'preset:speaker-b',
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

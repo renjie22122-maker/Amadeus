@@ -78,6 +78,23 @@ class VoiceTests(unittest.TestCase):
             self.assertEqual(results[0][0], 504)
             self.assertFalse(json.loads(self.request("/health")[1])["state"]["busy"])
 
+    def test_preset_voice_routes_to_prepared_sft_without_reference_audio(self):
+        self.config["models"]["cosyvoice-sft"] = self.tmp.name
+        def worker(args, **kwargs):
+            job = json.loads(Path(args[-1]).read_text())
+            self.assertEqual(job["model"], "cosyvoice-sft")
+            self.assertEqual(job["voice"], "preset:speaker-a")
+            self.assertEqual(job["input"], "ordinary test")
+            self.assertNotIn("voices", job["config"])
+            Path(job["result"]).write_text(json.dumps({"mime": "audio/wav"}))
+            Path(job["output"]).write_bytes(b"RIFFpreset")
+        with patch.object(service, "run_worker", side_effect=worker):
+            status, body, _ = self.request("/v1/audio/speech", {"model": "cosyvoice", "voice": "preset:speaker-a", "input": "ordinary test"})
+            self.assertEqual((status, body), (200, b"RIFFpreset"))
+        del self.config["models"]["cosyvoice-sft"]
+        with patch.object(service, "run_worker", side_effect=AssertionError("no implicit download")):
+            self.assertEqual(self.request("/v1/audio/speech", {"model": "cosyvoice", "voice": "preset:speaker-a", "input": "ordinary test"})[0], 503)
+
     def test_wav_result_and_temp_cleanup(self):
         paths = []
         def worker(args, **kwargs):

@@ -1,3 +1,4 @@
+import { ReadAloudDiagnostics, speechSchedule } from '../src/read-aloud-diagnostics.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { playLocalSpeech } from '../src/read-aloud-stream.js';
@@ -136,5 +137,47 @@ test('abort during audio decode never schedules the decoded old request', async 
     assert.equal(h.started.length, 0);
   } finally {
     h.restore();
+  }
+});
+
+test('diagnostics capture exact returned audio without altering playback', async () => {
+  const audio = tone(440);
+  const h = harness([frame(0, audio), { type: 'done', chunks: 1 }]);
+  const trace = new ReadAloudDiagnostics();
+  try {
+    await playLocalSpeech({ ...args(h.context), diagnostics: trace });
+    const events = trace.snapshot().events;
+    assert.equal(events.find((e) => e.type === 'request')?.text, '普通测试 Hello');
+    assert.deepEqual(
+      Buffer.from(String(events.find((e) => e.type === 'audio_received')?.wavBase64), 'base64'),
+      audio,
+    );
+    assert.equal(events.filter((e) => e.type === 'scheduled').length, 1);
+    assert.equal(events.at(-1)?.type, 'source_stop');
+  } finally {
+    h.restore();
+  }
+});
+test('initial playback lead absorbs jitter and reports actual underruns', () => {
+  const first = speechSchedule(0, 0, true);
+  assert.equal(first.start, 1.5);
+  assert.equal(speechSchedule(first.start + 0.15, 0.2, false).gapSeconds, 0);
+  assert(speechSchedule(first.start + 0.15, 2, false).gapSeconds >= 0.5);
+});
+test('diagnostics memory cap never prevents later playback', () => {
+  const trace = new ReadAloudDiagnostics(1);
+  trace.record('audio_received', { wavBase64: 'oversize' });
+  assert.equal(trace.snapshot().truncated, true);
+  assert.equal(trace.snapshot().events.length, 0);
+});
+
+test('measured normal-voice startup timing has no scheduling underrun with buffered start', () => {
+  const arrivals = [17.437, 18.906, 21.844, 24.375, 27.172, 31.422, 34.75, 37.281, 38.562];
+  const durations = [1.36, 2, 4, 4, 3.72, 4.36, 4, 4, 2.24];
+  let end = 0;
+  for (let i = 0; i < arrivals.length; i++) {
+    const next = speechSchedule(end, arrivals[i], i === 0);
+    assert.equal(next.gapSeconds, 0);
+    end = next.start + durations[i];
   }
 });

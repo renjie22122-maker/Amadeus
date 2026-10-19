@@ -70,7 +70,7 @@ def run(job):
         segments, info = engine.transcribe(job["audio"], language=job.get("language"), vad_filter=True)
         rows = [{"start": s.start, "end": s.end, "text": s.text} for s in segments]
         return {"text": "".join(s["text"] for s in rows), "segments": rows, "language": info.language}
-    if model != "cosyvoice":
+    if model not in ("cosyvoice", "cosyvoice-sft"):
         raise ValueError("Unsupported model")
     source = Path(config["cosySource"]).resolve()
     sys.path.insert(0, str(source))
@@ -79,12 +79,18 @@ def run(job):
     import soundfile
     from cosyvoice.cli.cosyvoice import AutoModel
     torch.set_num_threads(int(config.get("cpuThreads", 2)))
-    voice = config.get("voices", {}).get(job.get("voice", "default"))
-    if not voice or not Path(voice.get("audio", "")).is_file() or not voice.get("text"):
-        raise ValueError("VOICE_NOT_READY: configure a local reference recording and its transcript")
     engine = AutoModel(model_dir=model_path)
-    prompt = "You are a helpful assistant.<|endofprompt|>" + voice["text"]
-    chunks = engine.inference_zero_shot(job["input"], prompt, voice["audio"], stream=bool(job.get("stream")))
+    if model == "cosyvoice-sft":
+        speaker = job.get("voice", "").removeprefix("preset:")
+        if speaker not in engine.list_available_spks():
+            raise ValueError("VOICE_NOT_READY: unknown pretrained speaker")
+        chunks = engine.inference_sft(job["input"], speaker, stream=bool(job.get("stream")))
+    else:
+        voice = config.get("voices", {}).get(job.get("voice", "default"))
+        if not voice or not Path(voice.get("audio", "")).is_file() or not voice.get("text"):
+            raise ValueError("VOICE_NOT_READY: configure a local reference recording and its transcript")
+        prompt = "You are a helpful assistant.<|endofprompt|>" + voice["text"]
+        chunks = engine.inference_zero_shot(job["input"], prompt, voice["audio"], stream=bool(job.get("stream")))
     # Write incrementally; do not accumulate an entire long narration in RAM.
     with soundfile.SoundFile(job["output"], mode="w", samplerate=engine.sample_rate, channels=1, subtype="PCM_16") as output:
         written = 0
