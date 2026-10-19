@@ -1,4 +1,5 @@
 """Detached benchmark supervisor and read-only progress report. No model credentials copied."""
+from attempt_state import classify_attempt
 import argparse, collections, contextlib, datetime, hashlib, json, os, pathlib, shutil, subprocess, sys, time
 
 FLAGS = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
@@ -75,6 +76,7 @@ def report(config):
         out = root / group
         queue = read(out / 'queue.json', [])
         stats = collections.defaultdict(lambda: dict(expected=0, completed=0, errors=0, unknown=0, graded=0, passed=0, judgeErrors=0, inputTokens=0, outputTokens=0, cachedInputTokens=0, unknownUsageCalls=0, elapsedMs=0))
+        active_ids = {(x.get('track'), x.get('id'), x.get('arm')) for x in live(out / 'progress.json', {}).get('active', [])}
         grades = {}
         for track in ['bfcl', 'gaia']:
             data = live(out / track / 'grades.json', [])
@@ -83,7 +85,8 @@ def report(config):
         for item in queue:
             track, arm = item['track'], item['arm']; s = stats[(track, arm)]; s['expected'] += 1
             folder = pathlib.Path(item['directory']); result = live(folder / 'result.json')
-            if (folder / 'process.json').exists() and result is not None:
+            receipt_state = classify_attempt(folder, (track, item['id'], arm) in active_ids)
+            if receipt_state == 'completed' and result is not None:
                 s['completed'] += 1; s['errors'] += bool(result.get('error'))
                 s['elapsedMs'] += result.get('elapsedMs', 0) or 0
                 usages = [result.get('usage')] if 'requests' not in result else [r.get('result', {}).get('usage') or r.get('usage') for r in result['requests']]
@@ -99,9 +102,9 @@ def report(config):
                     if passed is not None:
                         s['graded'] += 1; s['passed'] += bool(passed)
                     else: s['judgeErrors'] += 1
-            elif (folder / 'started.json').exists():
+            elif receipt_state != 'not_started':
                 # Includes currently running work: do not label it a failed answer.
-                s['unknown'] += 1; unknown.append({'track': track, 'arm': arm, 'id': item['id'], 'directory': str(folder)})
+                s['unknown'] += 1; unknown.append({'track': track, 'arm': arm, 'id': item['id'], 'directory': str(folder), 'state': receipt_state, 'replayAllowed': False})
         rows += [dict(track=t, arm=a, **s) for (t, a), s in stats.items()]
     result = {'updatedAt': now(), 'controller': read(root / 'status.json'), 'rows': rows, 'inFlightOrUnresolved': unknown, 'unreadableOrBeingWritten': unreadable}
     save(root / 'summary.json', result)
@@ -141,8 +144,8 @@ def run(config):
                         del active[group]
                     if group in attempted or stopping: continue
                     progress = read(out / 'progress.json', {})
-                    if progress.get('phase') == 'finished':
-                        phases[group] = 'finished'; attempted.add(group); continue
+                    if progress.get('phase') in ('finished', 'finished_with_unresolved'):
+                        phases[group] = progress['phase']; attempted.add(group); continue
                     lock = out / 'runner.lock'
                     previous = read(lock)
                     if previous and alive(previous['pid']):

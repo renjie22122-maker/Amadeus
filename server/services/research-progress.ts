@@ -2,8 +2,16 @@ import { createHash } from 'node:crypto';
 export interface ResearchProgress {
   hashes: string[];
   repeated: number;
+  attempts?: number;
+  unusable?: number;
+  novel?: number;
 }
 export function researchProgress(previous: ResearchProgress | undefined, evidence: unknown) {
+  const metrics = {
+    attempts: (previous?.attempts || 0) + 1,
+    unusable: previous?.unusable || 0,
+    novel: previous?.novel || 0,
+  };
   const page =
     evidence && typeof evidence === 'object' && 'status' in evidence
       ? (evidence as { status: number; text?: string })
@@ -15,6 +23,8 @@ export function researchProgress(previous: ResearchProgress | undefined, evidenc
       : Boolean(evidence);
   if (!usable)
     return {
+      ...metrics,
+      unusable: metrics.unusable + 1,
       hashes: previous?.hashes || [],
       repeated: (previous?.repeated || 0) + 1,
       usable: false,
@@ -26,6 +36,9 @@ export function researchProgress(previous: ResearchProgress | undefined, evidenc
   const hash = createHash('sha256').update(JSON.stringify(content)).digest('hex');
   const repeated = previous?.hashes.includes(hash) ? previous.repeated + 1 : 0;
   return {
+    ...metrics,
+    usable: true,
+    novel: metrics.novel + (previous?.hashes.includes(hash) ? 0 : 1),
     hashes: [...(previous?.hashes || []).filter((h) => h !== hash), hash].slice(-32),
     repeated,
     ...(repeated >= 2

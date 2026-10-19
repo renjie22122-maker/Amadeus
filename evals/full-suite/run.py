@@ -1,4 +1,5 @@
 """Durable paired batch runner. No ambiguous started attempt is automatically replayed."""
+from attempt_state import completion_phase
 import argparse,concurrent.futures,datetime,json,os,pathlib,subprocess,threading,time,hashlib,sys
 p=argparse.ArgumentParser();p.add_argument('output');p.add_argument('runtime');p.add_argument('python');p.add_argument('settings');p.add_argument('--profile-id');p.add_argument('--analysis-image');p.add_argument('--concurrency',type=int,default=4);p.add_argument('--limit',type=int);p.add_argument('--prepare-python',default=sys.executable);p.add_argument('--download',required=True);a=p.parse_args()
 out=pathlib.Path(a.output).resolve();runtime=pathlib.Path(a.runtime).resolve();queue=json.loads((out/'queue.json').read_text(encoding='utf8'));queue=queue[:a.limit] if a.limit else queue
@@ -40,15 +41,22 @@ def run_one(item):
  timedout=False;code=None
  with (directory/'worker.stdout.log').open('w',encoding='utf8') as stdout,(directory/'worker.stderr.log').open('w',encoding='utf8') as stderr:
   child=subprocess.Popen(['node','--import','tsx',item['worker'],str(jobpath)],cwd=runtime,stdout=stdout,stderr=stderr,creationflags=flags)
+  save(receipt,{**json.loads(receipt.read_text(encoding='utf8')),'workerPid':child.pid,'runnerPid':os.getpid()})
   try:code=child.wait(timeout=660 if item['track']=='gaia' else 240)
   except subprocess.TimeoutExpired:
    timedout=True
    if os.name=='nt':subprocess.run(['taskkill','/PID',str(child.pid),'/T','/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=flags)
    else:child.kill()
    child.wait()
+ save(directory/'process.json',{'exitCode':code,'timedOut':timedout,'completedAt':now()})
  result=directory/'result.json'
  if not result.exists():save(result,{'error':'EVAL_TIMEOUT' if timedout else 'EVAL_WORKER_EXIT','elapsedMs':0,'answer':''})
- data=json.loads(result.read_text(encoding='utf8'));save(directory/'process.json',{'exitCode':code,'timedOut':timedout,'completedAt':now()})
+ try:
+  data=json.loads(result.read_text(encoding='utf8'))
+  if not isinstance(data,dict):raise ValueError('Result must be an object')
+ except (ValueError,OSError) as exc:
+  save(directory/'reconciliation.json',{'state':'invalid_result','errorType':type(exc).__name__,'at':now(),'replayAllowed':False})
+  data={'error':'EVAL_RESULT_UNREADABLE'}
  with mutex:
   active.pop(str(jobpath),None);finished+=1;errors+=bool(data.get('error'));progress()
  print(item['track'],item['id'],item['arm'],data.get('error','delivered'),flush=True)
@@ -79,7 +87,7 @@ try:
   judges.extend((folder,i) for i in range(len(prompts)))
  with concurrent.futures.ThreadPoolExecutor(max_workers=a.concurrency) as pool:list(pool.map(judge_one,judges))
  command([a.python,'-X','utf8','evals/full-suite/report.py',str(out)])
- progress('paused' if (out/'STOP').exists() else 'finished')
+ progress('paused' if (out/'STOP').exists() else completion_phase(queue))
 except InterruptedError:
  progress('paused')
 except Exception as e:

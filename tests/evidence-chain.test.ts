@@ -142,3 +142,15 @@ test('failed pages never increase evidence coverage; mirrored bodies are repeate
   assert.equal(mirrored.repeated, 1);
   assert.deepEqual(researchProgress(initial, []).hashes, initial.hashes);
 });
+
+test('failed acquisitions retain cumulative diagnostics across later successful retrievals', () => {
+  const failed = researchProgress(researchProgress(undefined, null), {
+    status: 503,
+    text: 'Unavailable',
+  });
+  const next = researchProgress(failed, { status: 200, text: 'new material' });
+  assert.equal(next.attempts, 3);
+  assert.equal(next.unusable, 2);
+  assert.equal(next.novel, 1);
+  assert.equal(researchProgress(next, { status: 200, text: 'new material' }).novel, 1);
+});

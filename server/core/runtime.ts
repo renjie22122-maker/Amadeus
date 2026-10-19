@@ -582,7 +582,14 @@ export class Runtime implements TeamPort {
             () =>
               this.complete(run, {
                 profile,
-                messages: [...run.checkpoints, ...modelStepBudget(run.maxSteps, steps - 1)],
+                messages: [
+                  ...run.checkpoints,
+                  ...modelStepBudget(
+                    run.maxSteps,
+                    steps - 1,
+                    this.store.maybe('research-progress', run.id),
+                  ),
+                ],
                 tools: this.registry.modelSpecs(ctx),
                 signal,
                 onText: (text) => {

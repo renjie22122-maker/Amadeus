@@ -889,9 +889,21 @@ export function tools() {
           (usage, profile) => c.accountWeb?.(usage, profile),
           c.sourcePolicy,
         );
-      const result = (await (c.auxiliary ? c.auxiliary(perform) : perform())) as Awaited<
-        ReturnType<typeof searchWeb>
-      >;
+      let result: Awaited<ReturnType<typeof searchWeb>>;
+      try {
+        result = (await (c.auxiliary ? c.auxiliary(perform) : perform())) as Awaited<
+          ReturnType<typeof searchWeb>
+        >;
+      } catch (error) {
+        if (!c.signal.aborted) {
+          const progress = researchProgress(
+            c.store.maybe<ResearchProgress>('research-progress', c.run.id),
+            null,
+          );
+          c.store.put('research-progress', { id: c.run.id, ...progress });
+        }
+        throw error;
+      }
       const progress = researchProgress(
         c.store.maybe<ResearchProgress>('research-progress', c.run.id),
         result.sources,
@@ -907,14 +919,27 @@ export function tools() {
     effect: 'network',
     schema: z.object({ url: z.url() }),
     run: async (a, c) => {
-      const page = await fetchPublic(
-        a.url,
-        c.signal,
-        0,
-        AbortSignal.any([c.signal, AbortSignal.timeout(30000)]),
-        false,
-        c.sourcePolicy,
-      );
+      let page: Awaited<ReturnType<typeof fetchPublic>>;
+      try {
+        page = await fetchPublic(
+          a.url,
+          c.signal,
+          0,
+          AbortSignal.any([c.signal, AbortSignal.timeout(30000)]),
+          false,
+          c.sourcePolicy,
+        );
+      } catch (error) {
+        // Record failed acquisition without converting it into successful evidence.
+        if (!c.signal.aborted) {
+          const progress = researchProgress(
+            c.store.maybe<ResearchProgress>('research-progress', c.run.id),
+            null,
+          );
+          c.store.put('research-progress', { id: c.run.id, ...progress });
+        }
+        throw error;
+      }
       const progress = researchProgress(
         c.store.maybe<ResearchProgress>('research-progress', c.run.id),
         { url: page.url, text: page.text, status: page.status },
