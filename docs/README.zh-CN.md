@@ -8,6 +8,7 @@
 
 ## 当前指南
 
+- [接入聊天](CHAT-CONNECTIONS.zh-CN.md)
 - [本地语音与回复朗读](LOCAL-VOICE.zh-CN.md)
 
 - [评测设计](BENCHMARKS.zh-CN.md)

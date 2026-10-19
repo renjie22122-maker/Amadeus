@@ -70,7 +70,9 @@ export function conversationViewRoutes(app: FastifyInstance, runtime: Runtime) {
           : e;
       }),
       inputs: store.forConversation<any>('input', c.id),
-      attachments: store.attachmentMetadata(c.id),
+      attachments: store
+        .attachmentMetadata(c.id)
+        .filter((a) => !a.remoteInboxId || a.messageEventId),
       teamAutomation:
         (latest ? store.maybe('team-automation', rootRun(store, latest!)) : null) ||
         store.maybe('team-automation-default', c.id),

@@ -1,3 +1,6 @@
+const ChatConnectionsPage = lazy(() =>
+  import('./pages/ChatConnections').then((m) => ({ default: m.ChatConnectionsPage })),
+);
 import { ProcessHistory } from './components/ProcessHistory';
 import { collapsibleProcess } from './conversation-process';
 import { WorkbenchProvider } from './components/Workbench';
@@ -1065,6 +1068,21 @@ export function App() {
                 zh={language === 'zh'}
                 notify={notify}
                 openConversation={(id: string) => {
+                  setSelected(id);
+                  setPage('chat');
+                  void refresh();
+                }}
+              />
+            </Suspense>
+          </div>
+        ) : page === 'chatConnections' ? (
+          <div className="page-scroll">
+            <Suspense fallback={<p>Loading…</p>}>
+              <ChatConnectionsPage
+                conversations={state.conversations}
+                zh={language === 'zh'}
+                notify={notify}
+                openConversation={(id) => {
                   setSelected(id);
                   setPage('chat');
                   void refresh();

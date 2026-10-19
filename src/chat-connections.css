@@ -1,0 +1,67 @@
+.chat-connections-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 28px;
+}
+.chat-connections-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.chat-connections-heading h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chat-connection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+.chat-connection-card {
+  border: 1px solid var(--border, #34343d);
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+.chat-connection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chat-connection-form {
+  max-width: 760px;
+  display: grid;
+  gap: 16px;
+}
+.chat-connection-form label {
+  display: grid;
+  gap: 6px;
+}
+.chat-connection-form .check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.chat-connection-card pre {
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow: auto;
+}
+.chat-connections-page button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+@media (max-width: 600px) {
+  .chat-connections-page {
+    padding: 16px;
+  }
+  .chat-connections-heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}

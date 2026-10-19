@@ -183,9 +183,20 @@ export class Runtime implements TeamPort {
       recoveredFrom?: string;
       controlTicket?: string;
       scheduledTrigger?: { id: string; name: string };
+      attachmentIds?: string[];
     } = {},
   ): Run {
     const c = this.store.get<Conversation>('conversation', conversationId);
+    if (options.attachmentIds)
+      for (const attachmentId of options.attachmentIds) {
+        const attachment = this.store.get<Attachment>('attachment', attachmentId);
+        assert(
+          attachment.conversationId === conversationId && !attachment.messageEventId,
+          'ATTACHMENT_SCOPE',
+          'Attachment is unavailable or belongs to another message.',
+        );
+      }
+
     assert(
       !c.projectId || !this.store.get<Project>('project', c.projectId).removedAt,
       'PROJECT_REMOVED',
@@ -259,6 +270,7 @@ export class Runtime implements TeamPort {
       message,
       false,
       options.scheduledTrigger,
+      options.attachmentIds,
     );
     this.steering.set(run.id, [queued]);
     this.execution.enqueue(run.id);
@@ -278,13 +290,20 @@ export class Runtime implements TeamPort {
     content: string,
     steering = false,
     scheduledTrigger?: { id: string; name: string },
+    attachmentIds?: string[],
   ) {
     return this.store.transaction(() => {
       const attachments = scheduledTrigger
         ? []
         : this.store
             .forConversation<Attachment>('attachment', conversationId)
-            .filter((a) => !a.messageEventId);
+            .filter(
+              (a) =>
+                !a.messageEventId &&
+                (attachmentIds === undefined
+                  ? !(a as any).remoteInboxId
+                  : attachmentIds.includes(a.id)),
+            );
       const event = this.store.event(conversationId, runId, 'user.message', {
         text: content,
         scheduledTrigger,

@@ -1,3 +1,6 @@
+import { ChatConnections } from '../services/chat-connections.js';
+import { ChatTransports } from '../services/chat-transports.js';
+import { chatConnectionRoutes } from './chat-connections.js';
 import { localVoiceRoutes } from './local-voice.js';
 import { configureLocalVoice } from '../services/local-voice.js';
 import { scheduledWorkRoutes } from './scheduled-work.js';
@@ -53,6 +56,8 @@ export async function createApp(options: { directory: string; dist?: string; run
   if (!options.runtime) store.recover();
   const runtime = options.runtime || new Runtime(store, config, directory),
     skills = new Skills(store);
+  const chatConnections = new ChatConnections(store, runtime, directory);
+  const chatTransports = new ChatTransports(chatConnections);
   runtime.startTeamMaintenance();
   const { memoryLearning, knowledgeEmbedding, maintenance, scheduledWork } =
     startMaintenanceServices(store, config, runtime, directory);
@@ -228,6 +233,8 @@ export async function createApp(options: { directory: string; dist?: string; run
     return { runId, conversationId: c.id };
   });
   scheduledWorkRoutes(app, store, config);
+  chatConnectionRoutes(app, chatConnections);
+  app.addHook('onReady', async () => chatTransports.start());
   app.post('/api/conversations', async (req) => {
     const data = z
       .object({
@@ -913,7 +920,7 @@ export async function createApp(options: { directory: string; dist?: string; run
   app.delete<{ Params: { id: string } }>('/api/attachments/:id', async (req) => {
     const a = store.get<Attachment>('attachment', req.params.id);
     assert(
-      !a.messageEventId,
+      !a.messageEventId && !(a as any).remoteInboxId,
       'ATTACHMENT_SENT',
       'Sent attachments belong to message history and cannot be removed from the draft.',
       409,
@@ -1108,6 +1115,7 @@ export async function createApp(options: { directory: string; dist?: string; run
   }
   app.addHook('onClose', async () => {
     scheduledWork.close();
+    await chatTransports.close();
     closeLocalEmbedding();
     await maintenance.close();
     await memoryLearning.close();

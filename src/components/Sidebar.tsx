@@ -10,6 +10,7 @@ import {
   FolderPlus,
   Library as LibraryIcon,
   Moon,
+  MessageCircle,
   MoreHorizontal,
   PanelLeftClose,
   Plus,
@@ -210,6 +211,7 @@ export function Sidebar({
           ['memory', Brain],
           ['background', LibraryIcon],
           ['settings', Settings],
+          ['chatConnections', MessageCircle],
         ].map(([key, Icon]: any) => (
           <button className={page === key ? 'selected' : ''} key={key} onClick={() => setPage(key)}>
             <Icon size={17} />

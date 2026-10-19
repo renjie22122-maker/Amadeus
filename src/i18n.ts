@@ -5,6 +5,7 @@ const words: Record<string, [string, string]> = {
   projects: ['Projects', '项目'],
   chats: ['Chats', '对话'],
   settings: ['Settings', '设置'],
+  chatConnections: ['Chat connections', '接入聊天'],
   knowledge: ['Knowledge', '知识库'],
   skills: ['Skills', '技能'],
   memory: ['Memory', '记忆'],

@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## Chat connections and remote media
+
+Added opt-in private-chat adapters for Telegram, WhatsApp Business, VK, official QQ and WeCom, plus local OneBot bridges; bound-account approvals, media input/output, isolated attachments and durable delivery review. See [setup and limitations](docs/CHAT-CONNECTIONS.md). Live platform testing requires credentials.
+
 ## 2026-10-19 — Local voice compatibility and reference voice management
 
 Separate Whisper from Torch to avoid native/OpenMP conflicts, pin compatible ASR dependencies, prefer GPU with bounded CPU fallback and terminate timed-out worker trees. Reuse independently copied compatible GPU runtimes, split read-aloud for CPU latency, and block implicit inference downloads. Add Settings reference-voice upload, Chinese/English preview and default selection with next-request refresh. Both CPU and GPU bilingual HTTP smoke tests passed; see local voice documentation for timings and limitations. Setup adds an optional CUDA flag. Benchmark environments and ComfyUI remain unchanged.
