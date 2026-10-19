@@ -91,3 +91,5 @@ Runtime 从启用目录按任务相关性推荐最多 12 个技能元数据（�
 无需新增依赖、迁移配置或修改启动脚本。现有启动与首次启动脚本会重建变更源码；重启服务后生效。
 
 设计参考：[Codex 技能渐进加载](https://learn.chatgpt.com/docs/build-skills)、[Claude Code Skills](https://code.claude.com/docs/en/skills)。不宣称完整兼容它们的调用控制或权限字段。
+
+OpenAI Chat 与 Responses 的工具定义对所有提供商（包括本地兼容端点）采用稳定的工具名和对象键排序，枚举及元组数组保留语义顺序。稳定序列化不代表提供商支持缓存，也不保证缓存命中。

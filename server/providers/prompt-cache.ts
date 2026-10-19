@@ -19,8 +19,8 @@ function canonical(value: unknown): unknown {
     );
   return value;
 }
-export function cacheStableTools(profile: Profile, tools: ToolSpec[]): ToolSpec[] {
-  if (promptCacheMode(profile) !== 'deepseek-automatic-prefix') return tools;
+export function cacheStableTools(_profile: Profile, tools: ToolSpec[]): ToolSpec[] {
+  // Stable serialization is provider-independent; cache support remains observational.
   return [...tools]
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     .map((t) => ({ ...t, parameters: canonical(t.parameters) as ToolSpec['parameters'] }));

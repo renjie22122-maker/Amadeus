@@ -91,3 +91,5 @@ Managed commands retain the same process and timeout when yielding. Even `yieldA
 No new dependencies, configuration migration or launcher edits are required. Existing startup and first-start scripts rebuild changed sources; restart the service to activate this update.
 
 Design references: [Codex progressive skill disclosure](https://learn.chatgpt.com/docs/build-skills), [Claude Code skills](https://code.claude.com/docs/en/skills). This is not complete compatibility with either product's invocation or permission fields.
+
+Tool-definition serialization for OpenAI Chat and Responses uses stable tool-name and object-key ordering for every provider, including local compatible endpoints. Enum and tuple arrays retain their semantic order. Stable serialization does not assert provider cache support or guarantee a cache hit.

@@ -281,7 +281,9 @@ test('DeepSeek canonical schemas preserve array semantics and telemetry matches 
     promptCacheMode({ ...p, baseUrl: 'https://api.deepseek.com.attacker.test' }),
     'provider-managed-or-unknown',
   );
-  assert.equal(cacheStableTools(profile, a), a);
+  assert.deepEqual(cacheStableTools(profile, a), cacheStableTools(p, b));
+  assert.deepEqual(cacheStableTools({ ...profile, baseUrl: 'http://localhost:9000/v1' }, a), cacheStableTools(p, b));
+  assert.equal(a[0].name, 'z');
   assert.equal('cache_control' in request(a), false);
   assert.deepEqual(
     standardUsage({
