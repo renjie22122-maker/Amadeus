@@ -1,3 +1,5 @@
+import { mediaCapabilityTarget, mediaReferenceBudget } from '../../shared/media-capabilities.js';
+import type { MediaConnection } from '../../shared/media.js';
 import { createReadStream } from 'node:fs';
 import { saveMediaStream } from './media-stream.js';
 import { attachmentMediaType, mediaAttachmentText } from './attachment-media.js';
@@ -290,16 +292,42 @@ export class MediaService {
     conversationId: string,
     options: Record<string, unknown>,
     references: Record<string, string[]> = {},
+    connection?: MediaConnection,
   ) {
     const out = { ...options };
+    if (!Object.keys(references).length) return out;
+    const limits = connection?.capabilities?.references;
+    assert(
+      !limits || limits.target === mediaCapabilityTarget(connection!),
+      'MEDIA_CAPABILITY_CHANGED',
+      'Reference capabilities must be confirmed again after changing the model or endpoint.',
+    );
+    const total = Object.values(references).reduce((sum, ids) => sum + ids.length, 0);
+    assert(
+      total <= mediaReferenceBudget.count,
+      'MEDIA_REFERENCE_BUDGET',
+      'Inline reference count exceeds the application resource budget (64).',
+    );
+    assert(
+      !limits?.maxTotal || total <= limits.maxTotal,
+      'MEDIA_MODEL_REFERENCE_LIMIT',
+      'Reference count exceeds the configured model limit.',
+    );
+    let totalBytes = 0;
     for (const [field, ids] of Object.entries(references)) {
       assert(
-        /^[a-zA-Z][\w]*$/.test(field) && ids.length > 0 && ids.length <= 9,
+        /^[a-zA-Z][\w]*$/.test(field) && ids.length > 0 && ids.length <= mediaReferenceBudget.count,
         'MEDIA_REFERENCE',
         'Invalid reference field/count.',
       );
       assert(
-        field.endsWith('s') || ids.length === 1,
+        !limits?.maxPerField || ids.length <= limits.maxPerField,
+        'MEDIA_MODEL_REFERENCE_LIMIT',
+        'Reference field exceeds the configured model limit.',
+      );
+      const arrayField = limits?.arrayFields?.includes(field) || field.endsWith('s');
+      assert(
+        arrayField || ids.length === 1,
         'MEDIA_REFERENCE',
         'A singular reference field accepts exactly one asset.',
       );
@@ -321,13 +349,19 @@ export class MediaService {
           'Reference must be an image, audio or video.',
         );
         assert(
-          bytes.length <= 25 * 1024 * 1024,
+          bytes.length <= mediaReferenceBudget.perFileBytes,
           'MEDIA_SIZE',
           'Inline media reference exceeds 25 MB; export it and use a provider-supported upload flow.',
         );
+        totalBytes += bytes.length;
+        assert(
+          totalBytes <= mediaReferenceBudget.bytes,
+          'MEDIA_REFERENCE_BUDGET',
+          'Combined inline references exceed 100 MiB; use a provider-supported upload flow.',
+        );
         values.push('data:' + mime + ';base64,' + bytes.toString('base64'));
       }
-      out[field] = field.endsWith('s') ? values : values[0];
+      out[field] = arrayField ? values : values[0];
     }
     return out;
   }
@@ -359,6 +393,7 @@ export class MediaService {
       args.conversationId,
       args.options || {},
       args.references,
+      c,
     );
     assert(
       c.kind !== 'transcription' || args.audio,

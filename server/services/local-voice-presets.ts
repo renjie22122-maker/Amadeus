@@ -1,3 +1,4 @@
+import { localVoiceConfig } from './local-voice.js';
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -190,8 +191,8 @@ export async function previewLocalVoice(root: string, raw: unknown) {
     'VOICE_NOT_FOUND',
     'Choose a configured voice.',
   );
-  const { data } = local(root);
-  const response = await fetch('http://127.0.0.1:8812/v1/audio/speech', {
+  const data = localVoiceConfig(root);
+  const response = await fetch(data.baseUrl + '/audio/speech', {
     method: 'POST',
     redirect: 'error',
     signal: AbortSignal.timeout(155000),

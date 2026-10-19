@@ -1,3 +1,4 @@
+from policy import listen_port
 """Portable local-voice installation/start. Never touches the app or benchmark environment."""
 import argparse
 import json
@@ -21,7 +22,7 @@ def python_in(folder):
 
 
 def health(config):
-    request = urllib.request.Request("http://127.0.0.1:8812/health", headers={"Authorization": "Bearer " + config["token"]})
+    request = urllib.request.Request("http://127.0.0.1:" + str(listen_port(config)) + "/health", headers={"Authorization": "Bearer " + config["token"]})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=2) as response:
         return json.loads(response.read(65536))
 
@@ -89,8 +90,8 @@ def start():
         pass
     probe = socket.socket()
     try:
-        if probe.connect_ex(("127.0.0.1", 8812)) == 0:
-            raise RuntimeError("Port 8812 already occupied or voice token changed. Inspect the existing service; no process was stopped.")
+        if probe.connect_ex(("127.0.0.1", listen_port(config))) == 0:
+            raise RuntimeError(f"Port {listen_port(config)} already occupied or voice token changed. Inspect the existing service; no process was stopped.")
     finally:
         probe.close()
     options = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS} if os.name == "nt" else {"start_new_session": True}

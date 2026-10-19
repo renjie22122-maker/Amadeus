@@ -1,3 +1,4 @@
+import { migrateLegacyVoice } from '../../shared/media-capabilities.js';
 import {
   protectSettings,
   restoreSettings,
@@ -128,6 +129,24 @@ const schema = z.object({
             enabled: z.boolean().default(false),
             defaults: z.record(z.string(), z.unknown()).default({}),
             estimatedUsd: z.number().nonnegative().nullable().default(null),
+            capabilities: z
+              .object({
+                readAloud: z
+                  .object({ protocol: z.literal('wav-ndjson-v1'), target: z.string().max(4000) })
+                  .optional(),
+                references: z
+                  .object({
+                    target: z.string().max(4000),
+                    maxPerField: z.number().int().min(1).max(64).optional(),
+                    maxTotal: z.number().int().min(1).max(64).optional(),
+                    arrayFields: z
+                      .array(z.string().regex(/^[a-zA-Z][\w]*$/))
+                      .max(64)
+                      .optional(),
+                  })
+                  .optional(),
+              })
+              .optional(),
           }),
         )
         .default([]),
@@ -246,6 +265,7 @@ export class Configuration {
           ...restoreSettings(JSON.parse(readFileSync(path, 'utf8')), this.codec()),
         })
       : schema.parse({ profiles: [], defaultProfileId: '' });
+    for (const c of this.value.media?.connections || []) migrateLegacyVoice(c);
     // Upgrade only the former default brand; retain user-selected identities.
     if (this.value.agentName === 'AgentDemo') this.value.agentName = 'Amadeus';
   }

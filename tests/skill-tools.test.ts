@@ -75,7 +75,15 @@ test('skill discovery is paginated, prioritizes selection and never exposes priv
         source: 'private-secret-path',
         enabled: id !== 'off',
       });
-    const ctx = { store, run: { id: 'r' }, conversation: { skillIds: ['b'] } };
+    const ctx = {
+      store,
+      run: { id: 'r' },
+      conversation: { skillIds: ['b'] },
+      config: {
+        get: () => ({ embedding: { backend: 'remote', baseUrl: '', model: '', apiKey: '' } }),
+      },
+      signal: new AbortController().signal,
+    };
     const first = JSON.parse(
       (await defs.get('find_skills').run({ query: 'pdf', offset: 0, limit: 1 }, ctx)).content,
     );

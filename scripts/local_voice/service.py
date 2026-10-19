@@ -1,3 +1,4 @@
+from policy import listen_port
 """Loopback, authenticated OpenAI-compatible local speech bridge. No model imports here."""
 import argparse
 import base64
@@ -244,4 +245,4 @@ if __name__ == "__main__":
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
     config = json.loads(Path(args.config).read_text(encoding="utf-8-sig"))
-    create_server(config, config_path=args.config).serve_forever()
+    create_server(config, port=listen_port(config), config_path=args.config).serve_forever()

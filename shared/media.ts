@@ -31,6 +31,15 @@ export interface MediaConnection {
   enabled: boolean;
   defaults: Record<string, unknown>;
   estimatedUsd: number | null;
+  capabilities?: {
+    readAloud?: { protocol: 'wav-ndjson-v1'; target: string };
+    references?: {
+      target: string;
+      maxPerField?: number;
+      maxTotal?: number;
+      arrayFields?: string[];
+    };
+  };
 }
 export interface MediaJob {
   id: string;

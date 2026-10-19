@@ -1,3 +1,4 @@
+import { mediaCapabilityTarget } from '../shared/media-capabilities.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
@@ -21,10 +22,24 @@ test('native read-aloud proxy scopes access, requires capability and does not cr
     },
     media: {
       connection: () => ({
-        id: local ? 'amadeus-local-cosyvoice' : 'remote',
+        id: 'custom-stream-provider',
+        model: 'custom-voice',
+        capabilities: local
+          ? {
+              readAloud: {
+                protocol: 'wav-ndjson-v1',
+                target: mediaCapabilityTarget({
+                  baseUrl: 'http://127.0.0.1:9765/v1',
+                  model: 'custom-voice',
+                  kind: 'speech',
+                  protocol: 'openai-speech',
+                }),
+              },
+            }
+          : undefined,
         kind: 'speech',
         protocol: 'openai-speech',
-        baseUrl: 'http://127.0.0.1:8812/v1',
+        baseUrl: 'http://127.0.0.1:9765/v1',
         apiKey: 'private-fixture',
         defaults: { voice: 'voice' },
       }),
@@ -39,10 +54,12 @@ test('native read-aloud proxy scopes access, requires capability and does not cr
   );
   globalThis.fetch = (async (url, options) => {
     calls++;
+    assert(String(url).startsWith('http://127.0.0.1:9765/'));
     assert.equal((options?.headers as any).Authorization, 'Bearer private-fixture');
     if (String(url).endsWith('/health')) return Response.json({ streaming: supported });
     const body = JSON.parse(String(options?.body));
     assert.equal(body.stream, true);
+    assert.equal(body.model, 'custom-voice');
     assert.equal(body.voice, 'voice');
     return new Response('{"type":"waiting"}\n{"type":"done","chunks":1}\n', {
       headers: { 'Content-Type': 'application/x-ndjson' },

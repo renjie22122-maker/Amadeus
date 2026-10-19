@@ -1,3 +1,4 @@
+import { mediaCapabilityTarget } from '../../shared/media-capabilities.js';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -5,13 +6,20 @@ import type { MediaConnection } from '../../shared/media.js';
 import type { Configuration } from './settings.js';
 import { assert } from '../core/errors.js';
 
-export function localVoiceConnections(root: string): MediaConnection[] {
+export function localVoiceConfig(root: string) {
   const path = join(root, 'voice-service/config.json');
   assert(existsSync(path), 'LOCAL_VOICE_SETUP', 'Run Setup-Local-Voice.cmd first.');
   const local = z
-    .object({ token: z.string().min(32) })
+    .object({
+      token: z.string().min(32),
+      listenPort: z.number().int().min(1).max(65535).default(8812),
+    })
     .parse(JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')));
-  return [
+  return { ...local, baseUrl: `http://127.0.0.1:${local.listenPort}/v1` };
+}
+export function localVoiceConnections(root: string): MediaConnection[] {
+  const local = localVoiceConfig(root);
+  const connections = [
     {
       id: 'amadeus-local-sensevoice',
       name: 'Local SenseVoice · 中英转写',
@@ -35,13 +43,19 @@ export function localVoiceConnections(root: string): MediaConnection[] {
     },
   ].map((c) => ({
     ...c,
-    baseUrl: 'http://127.0.0.1:8812/v1',
+    baseUrl: local.baseUrl,
     apiKey: local.token,
     enabled: true,
     defaults:
       c.kind === 'speech' ? { voice: 'default', response_format: 'wav', read_aloud_units: 20 } : {},
     estimatedUsd: 0,
   })) as MediaConnection[];
+  for (const c of connections)
+    if (c.kind === 'speech')
+      c.capabilities = {
+        readAloud: { protocol: 'wav-ndjson-v1', target: mediaCapabilityTarget(c) },
+      };
+  return connections;
 }
 
 export function configureLocalVoice(config: Configuration, root: string) {

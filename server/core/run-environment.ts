@@ -1,7 +1,7 @@
 import { collaborationPolicy } from '../services/collaboration-policy.js';
 import { delegationModels } from '../services/delegation-models.js';
 import { knowledgeDiscovery } from '../services/knowledge-discovery.js';
-import { taskSkills } from '../services/skill-discovery.js';
+import { discoverTaskSkills } from '../services/skill-discovery.js';
 import { MemoryChecks } from '../services/memory-checks.js';
 import { planningPolicy } from '../services/planning-policy.js';
 import { executionSettings } from '../../shared/execution.js';
@@ -137,12 +137,14 @@ export class RunEnvironment {
         isolatedCopy: !!ctx.conversation.isolationId,
         selectedSkills: skills.slice(0, 100).map(({ id, name }) => ({ id, name })),
         selectedSkillsOmitted: Math.max(0, skills.length - 100),
-        taskSkills: taskSkills(
+        taskSkills: await discoverTaskSkills(
           this.store,
           run.id,
           run.conversationId,
           ctx.conversation.skillIds,
           query,
+          this.config.get().embedding,
+          ctx.signal,
         ),
         selectedSkillCount: skills.length,
         skillDiscovery:

@@ -26,3 +26,10 @@ def select_device(config):
         if mode == "auto":
             return "cpu", "GPU admission unavailable; using CPU: " + str(error)[:180]
         raise RuntimeError("GPU_BUSY: " + str(error)) from error
+
+
+def listen_port(config):
+    port = config.get("listenPort", 8812)
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError("listenPort must be an integer between 1 and 65535")
+    return port

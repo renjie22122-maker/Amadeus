@@ -39,6 +39,13 @@ class VoiceTests(unittest.TestCase):
         except HTTPError as error:
             return error.code, error.read(), error.headers.get("Content-Type")
 
+    def test_listener_port_is_configurable_and_validated(self):
+        self.assertEqual(policy.listen_port({}), 8812)
+        self.assertEqual(policy.listen_port({"listenPort": 9876}), 9876)
+        for port in (0, -1, 65536, True, "8812"):
+            with self.assertRaises(ValueError):
+                policy.listen_port({"listenPort": port})
+
     def test_auth_and_health_do_not_load_models(self):
         with patch.object(service, "run_worker", side_effect=AssertionError("must not launch")):
             self.assertEqual(self.request("/health", token=False)[0], 401)

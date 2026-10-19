@@ -1,3 +1,4 @@
+import { extractionProfile } from '../server/services/rag-profile.js';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -9,6 +10,8 @@ const path = join(dataRoot, 'retrieval-service/config.json');
 const old = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
 const option = (name: string) => {
   const i = process.argv.indexOf(name);
+  if (i >= 0 && (!process.argv[i + 1] || process.argv[i + 1].startsWith('--')))
+    throw Error('Missing value for ' + name);
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
 const embeddingModel =
@@ -22,22 +25,21 @@ if (
 )
   throw Error('Unsupported E5 model');
 const settings = new Configuration(join(dataRoot, 'settings.json')).get();
-const profile =
-  settings.profiles.find((p) => p.id === option('--profile')) ||
-  settings.profiles.find(
-    (p) => p.transport === 'openai-chat' && new URL(p.baseUrl).hostname === 'api.deepseek.com',
-  );
+const explicit = option('--profile');
+const profile = extractionProfile(settings, explicit);
 writePrivate(
   path,
   JSON.stringify({
     ...old,
     token: old.token || randomBytes(32).toString('hex'),
     embeddingModel,
-    embeddingPath: option('--embedding-path') || old.embeddingPath,
+    embeddingPath:
+      option('--embedding-path') ||
+      (embeddingModel === old.embeddingModel ? old.embeddingPath : undefined),
     rerankPath: option('--rerank-path') || old.rerankPath,
     rerankModel: 'BAAI/bge-reranker-v2-m3',
     extraction:
-      old.extraction ||
+      (explicit === undefined ? old.extraction : undefined) ||
       (profile
         ? { model: profile.model, baseUrl: profile.baseUrl, apiKey: profile.apiKey }
         : undefined),
@@ -46,3 +48,8 @@ writePrivate(
 console.log(
   'Private local RAG configuration prepared. No application settings or corpus were changed.',
 );
+
+if (!profile && !old.extraction)
+  console.log(
+    'No unambiguous compatible extraction connection. Set --profile explicitly to enable extraction; local embedding/reranking remain available.',
+  );

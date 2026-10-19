@@ -1,6 +1,6 @@
 import { modelStepBudget } from '../services/model-step-budget.js';
 import { ConversationTitles, shortTitle } from '../services/conversation-titles.js';
-import { taskSkills } from '../services/skill-discovery.js';
+import { discoverTaskSkills } from '../services/skill-discovery.js';
 import { providerFailureDiagnostic } from '../providers/failure.js';
 import { completeModel, accountModelUsage } from './model-session.js';
 import { createRuntimeServices } from './runtime-services.js';
@@ -523,12 +523,14 @@ export class Runtime implements TeamPort {
           }
         }
         if (pending.some((m) => m.steering)) {
-          const relevantSkills = taskSkills(
+          const relevantSkills = await discoverTaskSkills(
             this.store,
             run.id,
             run.conversationId,
             ctx.conversation.skillIds,
             pending.map((m) => m.content).join('\n'),
+            this.config.get().embedding,
+            ctx.signal,
           );
           if (relevantSkills)
             run.checkpoints.push({

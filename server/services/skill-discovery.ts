@@ -71,19 +71,23 @@ export function rankSkills(
         b.score - a.score || Number(b.selected) - Number(a.selected) || a.id.localeCompare(b.id),
     );
 }
+export function enabledSkillMetadata(store: Store) {
+  return store.db
+    .prepare(
+      "SELECT json_extract(data,'$.id') AS id, json_extract(data,'$.name') AS name, json_extract(data,'$.description') AS description, 1 AS enabled FROM records WHERE kind='skill' AND json_extract(data,'$.enabled')=1",
+    )
+    .all() as unknown as Pick<Skill, 'id' | 'name' | 'description' | 'enabled'>[];
+}
 export function taskSkills(
   store: Store,
   runId: string,
   conversationId: string,
   selected: string[],
   query: string,
+  discovery?: { results: ReturnType<typeof rankSkills>; method: string; semanticStatus: string },
 ) {
-  const enabled = store.db
-    .prepare(
-      "SELECT json_extract(data,'$.id') AS id, json_extract(data,'$.name') AS name, json_extract(data,'$.description') AS description, 1 AS enabled FROM records WHERE kind='skill' AND json_extract(data,'$.enabled')=1",
-    )
-    .all() as unknown as Pick<Skill, 'id' | 'name' | 'description' | 'enabled'>[];
-  const ranked = rankSkills(enabled, selected, query.slice(-12000));
+  const enabled = enabledSkillMetadata(store);
+  const ranked = discovery?.results || rankSkills(enabled, selected, query.slice(-12000));
   const recommended = ranked.slice(0, 12).map((s) => ({
     id: s.id,
     name: s.name,
@@ -103,13 +107,31 @@ export function taskSkills(
     recommended: recommended.map((s) => s.id),
     loaded: loaded.map(({ id, sha256 }) => ({ id, sha256 })),
     enabledCount: enabled.length,
-    method: 'task-ranked-local',
+    method: discovery?.method || 'task-ranked-local',
+    semanticStatus: discovery?.semanticStatus,
   });
   return {
     enabledCount: enabled.length,
+    method: discovery?.method || 'lexical',
+    semanticStatus: discovery?.semanticStatus,
     recommended,
     loaded,
     guidance:
       'Task-ranked metadata only, not instructions or permission grants. Decide applicability, then read_skill before using it. Read supporting reference files before mode-specific actions; inspect_skill_readiness checks read coverage, not semantic correctness. For omitted/large skills or missing matches use find_skills/read_skill. No match does not prove no applicable skill. Do not force a skill onto unrelated tasks.',
   };
+}
+
+export async function discoverTaskSkills(
+  store: Store,
+  runId: string,
+  conversationId: string,
+  selected: string[],
+  query: string,
+  settings: import('../../shared/types.js').Settings['embedding'],
+  signal: AbortSignal,
+) {
+  const { discoverSkills } = await import('./skill-semantic.js');
+  const metadata = enabledSkillMetadata(store);
+  const discovery = await discoverSkills(metadata, selected, query, settings, signal);
+  return taskSkills(store, runId, conversationId, selected, query, discovery);
 }

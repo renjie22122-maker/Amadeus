@@ -1,3 +1,9 @@
+import {
+  supportsReadAloud,
+  speechStreamEndpoints,
+  mediaReferenceBudget,
+} from '../../shared/media-capabilities.js';
+import { boundedBytes } from '../services/media-adapters.js';
 import { Readable } from 'node:stream';
 import { mediaRange } from '../services/media-inspection.js';
 import type { FastifyInstance } from 'fastify';
@@ -10,7 +16,7 @@ const generation = z.object({
   serviceId: z.string(),
   prompt: z.string().max(20000).default(''),
   options: z.record(z.string(), z.unknown()).default({}),
-  references: z.record(z.string(), z.array(z.string()).max(9)).default({}),
+  references: z.record(z.string(), z.array(z.string()).max(mediaReferenceBudget.count)).default({}),
   operationKey: z.string().min(1).max(160),
 });
 export function mediaRoutes(app: FastifyInstance, runtime: Runtime) {
@@ -28,25 +34,23 @@ export function mediaRoutes(app: FastifyInstance, runtime: Runtime) {
       .parse(req.body);
     const connection = media.connection(a.serviceId);
     assert(
-      connection.id === 'amadeus-local-cosyvoice' &&
-        connection.kind === 'speech' &&
-        connection.protocol === 'openai-speech' &&
-        connection.baseUrl.replace(/\/$/, '') === 'http://127.0.0.1:8812/v1',
+      supportsReadAloud(connection),
       'VOICE_STREAM_UNAVAILABLE',
       'Native streaming is unavailable for this service.',
       409,
     );
+    const endpoints = speechStreamEndpoints(connection);
     const headers = {
       Authorization: 'Bearer ' + connection.apiKey,
       'Content-Type': 'application/json',
     };
-    const health = await fetch('http://127.0.0.1:8812/health', {
+    const health = await fetch(endpoints.health, {
       headers,
       redirect: 'error',
       signal: AbortSignal.timeout(5000),
     });
     assert(
-      health.ok && ((await health.json()) as any).streaming === true,
+      health.ok && JSON.parse((await boundedBytes(health, 65536)).toString()).streaming === true,
       'VOICE_STREAM_UNAVAILABLE',
       'Restart the updated local voice service to enable streaming.',
       409,
@@ -55,13 +59,13 @@ export function mediaRoutes(app: FastifyInstance, runtime: Runtime) {
     const close = () => abort.abort();
     reply.raw.once('close', close);
     try {
-      const response = await fetch('http://127.0.0.1:8812/v1/audio/speech', {
+      const response = await fetch(endpoints.speech, {
         method: 'POST',
         headers,
         redirect: 'error',
         signal: AbortSignal.any([abort.signal, AbortSignal.timeout(610000)]),
         body: JSON.stringify({
-          model: 'cosyvoice',
+          model: connection.model,
           input: a.text,
           voice: connection.defaults.voice || 'default',
           response_format: 'wav',

@@ -14,7 +14,7 @@ test('local voice setup is idempotent and preserves existing microphone and othe
   await mkdir(join(root, 'voice-service'));
   await writeFile(
     join(root, 'voice-service/config.json'),
-    '\uFEFF' + JSON.stringify({ token: 'x'.repeat(40) }),
+    '\uFEFF' + JSON.stringify({ token: 'x'.repeat(40), listenPort: 9876 }),
   );
   const settings = config.get();
   settings.media!.transcriptionId = 'existing';
@@ -24,6 +24,8 @@ test('local voice setup is idempotent and preserves existing microphone and othe
   assert.equal(config.get().media!.transcriptionId, 'existing');
   assert.equal(config.get().media!.connections.length, 3);
   const speech = config.get().media!.connections.find((c) => c.kind === 'speech')!;
+  assert.equal(speech.baseUrl, 'http://127.0.0.1:9876/v1');
+  assert.equal(speech.capabilities?.readAloud?.protocol, 'wav-ndjson-v1');
   let sent: any;
   const output = await submitMedia(
     speech,

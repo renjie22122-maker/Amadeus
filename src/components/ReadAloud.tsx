@@ -1,3 +1,4 @@
+import { supportsReadAloud } from '../../shared/media-capabilities';
 import { useEffect, useRef, useState } from 'react';
 import { Volume2, Square, Play, Pause, Settings2, Loader2 } from 'lucide-react';
 import { api } from '../api';
@@ -117,12 +118,10 @@ export function ReadAloud({
           zh ? '请先在设置中启用语音合成服务。' : 'Enable a speech service in Settings first.',
         );
       const service =
-        list.find((c) => c.id === selected) ||
-        list.find((c) => c.id === 'amadeus-local-cosyvoice') ||
-        list[0];
+        list.find((c) => c.id === selected) || list.find(supportsReadAloud) || list[0];
       setServices(list);
       setSelected(service.id);
-      if (service.id === 'amadeus-local-cosyvoice' && context.current) {
+      if (supportsReadAloud(service) && context.current) {
         const parts = speechChunks(text, 2500);
         native.current = true;
         for (let i = 0; i < parts.length; i++) {
@@ -305,9 +304,7 @@ export function ReadAloud({
               .then((list) => {
                 const speech = list.filter((c) => c.kind === 'speech');
                 setServices(speech);
-                setSelected(
-                  speech.find((c) => c.id === 'amadeus-local-cosyvoice')?.id || speech[0]?.id || '',
-                );
+                setSelected(speech.find(supportsReadAloud)?.id || speech[0]?.id || '');
               })
               .catch((error) => notify(String(error)));
         }}

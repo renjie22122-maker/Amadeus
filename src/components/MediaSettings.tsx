@@ -1,3 +1,4 @@
+import { mediaCapabilityTarget, supportsReadAloud } from '../../shared/media-capabilities';
 import { LocalVoiceSettings } from './LocalVoiceSettings';
 import { useState } from 'react';
 import { api } from '../api';
@@ -157,6 +158,111 @@ export function MediaSettings({ value, setValue, zh }: any) {
               />
             </label>
           </div>
+          <details>
+            <summary>
+              {zh ? '协议能力与参考文件限制' : 'Protocol capabilities and reference limits'}
+            </summary>
+            {c.kind === 'speech' && c.protocol === 'openai-speech' && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  style={{ width: 'auto', flexShrink: 0 }}
+                  checked={supportsReadAloud(c)}
+                  onChange={(e) =>
+                    change(c.id, {
+                      capabilities: {
+                        ...c.capabilities,
+                        readAloud: e.target.checked
+                          ? { protocol: 'wav-ndjson-v1', target: mediaCapabilityTarget(c) }
+                          : undefined,
+                      },
+                    })
+                  }
+                />
+                {zh
+                  ? '此服务支持 WAV NDJSON v1 流式朗读（不是普通 OpenAI 音频流）'
+                  : 'This service supports WAV NDJSON v1 read-aloud (not ordinary OpenAI audio streaming)'}
+              </label>
+            )}
+            <p className="muted">
+              {zh
+                ? '能力只对当前地址和模型有效；更换后重新确认。参考数量留空表示模型上限未知，应用仍限制合计 64 项、100 MiB，每文件 25 MiB。'
+                : 'Capabilities apply only to this endpoint and model; reconfirm after changes. Blank counts mean unknown model limits; app budgets remain 64 total, 100 MiB combined and 25 MiB per file.'}
+            </p>
+            <div className="form-grid">
+              {(['maxPerField', 'maxTotal'] as const).map((key) => (
+                <label key={key}>
+                  {key === 'maxPerField'
+                    ? zh
+                      ? '模型每字段参考数量上限'
+                      : 'Model references per field'
+                    : zh
+                      ? '模型参考总数上限'
+                      : 'Model total references'}
+                  <input
+                    type="number"
+                    min="1"
+                    max="64"
+                    value={c.capabilities?.references?.[key] ?? ''}
+                    onChange={(e) =>
+                      change(c.id, {
+                        capabilities: {
+                          ...c.capabilities,
+                          references: {
+                            ...c.capabilities?.references,
+                            target: mediaCapabilityTarget(c),
+                            [key]: e.target.value ? Number(e.target.value) : undefined,
+                          },
+                        },
+                      })
+                    }
+                  />
+                </label>
+              ))}
+              <label>
+                {zh
+                  ? '额外数组字段（逗号分隔，例如 reference_image）'
+                  : 'Additional array fields (comma separated, e.g. reference_image)'}
+                <input
+                  value={c.capabilities?.references?.arrayFields?.join(', ') || ''}
+                  onChange={(e) =>
+                    change(c.id, {
+                      capabilities: {
+                        ...c.capabilities,
+                        references: {
+                          ...c.capabilities?.references,
+                          target: mediaCapabilityTarget(c),
+                          arrayFields: e.target.value
+                            .split(',')
+                            .map((x) => x.trim())
+                            .filter(Boolean),
+                        },
+                      },
+                    })
+                  }
+                />
+              </label>
+            </div>
+            {c.capabilities?.references &&
+              c.capabilities.references.target !== mediaCapabilityTarget(c) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    change(c.id, {
+                      capabilities: {
+                        ...c.capabilities,
+                        references: {
+                          ...c.capabilities.references,
+                          target: mediaCapabilityTarget(c),
+                        },
+                      },
+                    })
+                  }
+                >
+                  {zh ? '确认这些限制适用于当前模型' : 'Confirm limits for current model'}
+                </button>
+              )}
+          </details>
           <label>
             {zh
               ? '模型参数 JSON（例如时长、分辨率、voiceId）'

@@ -1,3 +1,4 @@
+import { mediaReferenceBudget } from '../../shared/media-capabilities.js';
 import { approvalSnapshot } from './approval-snapshot.js';
 import { basename } from 'node:path';
 import { z } from 'zod';
@@ -121,7 +122,9 @@ export function installMedia(registry: ToolRegistry) {
       serviceId: z.string(),
       prompt: z.string().max(20000).default(''),
       options: z.record(z.string(), z.unknown()).default({}),
-      references: z.record(z.string(), z.array(z.string()).max(9)).default({}),
+      references: z
+        .record(z.string(), z.array(z.string()).max(mediaReferenceBudget.count))
+        .default({}),
       reason: z.string().min(1),
     }),
     run: async (a, c) => {

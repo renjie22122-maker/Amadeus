@@ -1,4 +1,5 @@
-import { rankSkills } from '../services/skill-discovery.js';
+import { enabledSkillMetadata } from '../services/skill-discovery.js';
+import { discoverSkills } from '../services/skill-semantic.js';
 import { diagnoseFailure } from '../services/failure-diagnosis.js';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -178,12 +179,16 @@ export function installSkills(registry: ToolRegistry) {
       offset: z.number().int().min(0).default(0),
       limit: z.number().int().min(1).max(30).default(10),
     }),
-    run: (a, c) => {
-      const matches = rankSkills(
-        c.store.list<Skill>('skill'),
+    run: async (a, c) => {
+      const discovery = await discoverSkills(
+        enabledSkillMetadata(c.store),
         c.conversation.skillIds,
         a.query,
-      ).map(({ id, name, description, selected, score }) => ({
+        c.config.get().embedding,
+        c.signal,
+        15000,
+      );
+      const matches = discovery.results.map(({ id, name, description, selected, score }) => ({
         id,
         name,
         description,
@@ -192,6 +197,8 @@ export function installSkills(registry: ToolRegistry) {
       }));
       return text({
         total: matches.length,
+        method: discovery.method,
+        semanticStatus: discovery.semanticStatus,
         skills: matches.slice(a.offset, a.offset + a.limit),
         nextOffset: a.offset + a.limit < matches.length ? a.offset + a.limit : null,
       });
