@@ -21,8 +21,8 @@ export function MediaSettings({ value, setValue, zh }: any) {
       </p>
       <p className="muted">
         {zh
-          ? '本地中英语音：先运行 Setup-Local-Voice.cmd。配置后随应用启动，模型仅在请求时加载；优先 GPU，ComfyUI 忙碌、显存不足或 GPU 不可用时回退 CPU。下方可添加参考音色。'
-          : 'Local Chinese/English voice: run Setup-Local-Voice.cmd first. The service starts with the app; models load per request. GPU preferred; busy ComfyUI, low memory or unavailable CUDA falls back to CPU. Add reference voices below.'}
+          ? '本地中英语音：先运行 Setup-Local-Voice.cmd。配置后随应用启动，模型仅在请求时加载；优先 GPU，按可用显存选择，显存不足或 GPU 不可用时回退 CPU。下方可添加参考音色。'
+          : 'Local Chinese/English voice: run Setup-Local-Voice.cmd first. The service starts with the app; models load per request. GPU preferred; available GPU memory determines admission; low memory or unavailable CUDA falls back to CPU. Add reference voices below.'}
       </p>
       <button
         type="button"

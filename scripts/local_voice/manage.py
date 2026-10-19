@@ -41,7 +41,7 @@ def setup(args):
     source = HOME / "CosyVoice"
     config = json.loads(CONFIG.read_text(encoding="utf-8-sig")) if CONFIG.exists() else {
         "token": secrets.token_urlsafe(32), "device": "auto", "cpuThreads": 2,
-        "gpuIndex": 0, "minFreeMiB": 8192, "comfyUrls": ["http://127.0.0.1:8188"],
+        "gpuIndex": 0, "minFreeMiB": 8192,
         "asrPython": asr, "ttsPython": tts, "cosySource": str(source),
         "models": {name: str(HOME / "models" / name) for name in ("sensevoice", "whisper", "cosyvoice")}, "voices": {},
     }

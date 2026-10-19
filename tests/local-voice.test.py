@@ -123,21 +123,19 @@ class VoiceTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("VOICE_OFFLINE", result.stderr)
 
-    def test_gpu_admission_busy_and_low_memory_fall_back(self):
-        def response(running):
-            handle = MagicMock()
-            handle.__enter__.return_value.read.return_value = json.dumps({"queue_running": running, "queue_pending": []}).encode()
-            return handle
-        opener = MagicMock()
-        with patch.object(policy.urllib.request, "build_opener", return_value=opener), patch.object(policy.subprocess, "run") as probe:
-            opener.open.return_value = response([1])
+    def test_gpu_admission_uses_memory_not_application_state(self):
+        with patch.object(policy.subprocess, "run") as probe, patch.object(urllib.request, "build_opener", side_effect=AssertionError("no application probes")):
+            probe.return_value.stdout = "8191"
             self.assertEqual(policy.select_device({"device": "auto"})[0], "cpu")
-            probe.assert_not_called()
-            opener.open.return_value = response([])
-            probe.return_value.stdout = "1024"
-            self.assertEqual(policy.select_device({"device": "auto"})[0], "cpu")
-            probe.return_value.stdout = "16000"
-            self.assertEqual(policy.select_device({"device": "auto"})[0], "cuda")
+            probe.return_value.stdout = "8192"
+            device, reason = policy.select_device({"device": "auto", "comfyUrls": ["http://invalid"], "gpuIndex": 1})
+            self.assertEqual(device, "cuda")
+            self.assertIn("8192 MiB free", reason)
+            self.assertEqual(probe.call_args.args[0][2], "1")
+            probe.return_value.stdout = "4096"
+            self.assertEqual(policy.select_device({"device": "auto", "minFreeMiB": 4096})[0], "cuda")
+            with self.assertRaisesRegex(RuntimeError, "GPU_BUSY"):
+                policy.select_device({"device": "cuda"})
 
     def test_windows_timeout_targets_only_owned_worker_tree(self):
         process = MagicMock()
@@ -220,18 +218,17 @@ class VoiceTests(unittest.TestCase):
 
 
 
-    def test_closed_comfy_endpoint_allows_gpu_but_timeout_and_low_vram_do_not(self):
-        opener = MagicMock()
-        with patch.object(policy.urllib.request, "build_opener", return_value=opener), patch.object(policy.subprocess, "run") as probe:
-            opener.open.side_effect = policy.urllib.error.URLError(ConnectionRefusedError(10061, "closed"))
-            probe.return_value.stdout = "20000"
-            self.assertEqual(policy.select_device({"device": "auto"})[0], "cuda")
-            probe.return_value.stdout = "1024"
-            self.assertEqual(policy.select_device({"device": "auto"})[0], "cpu")
-            opener.open.side_effect = policy.urllib.error.URLError(TimeoutError("unknown state"))
-            probe.reset_mock()
-            self.assertEqual(policy.select_device({"device": "auto"})[0], "cpu")
-            probe.assert_not_called()
+    def test_gpu_probe_errors_and_invalid_memory_fail_closed(self):
+        with patch.object(policy.subprocess, "run") as probe:
+            for value in ("N/A", "", "16000\n16000", "-1"):
+                probe.return_value.stdout = value
+                self.assertEqual(policy.select_device({"device": "auto"})[0], "cpu")
+            for error in (FileNotFoundError("nvidia-smi"), subprocess.TimeoutExpired("nvidia-smi", 3)):
+                probe.side_effect = error
+                self.assertEqual(policy.select_device({"device": "auto"})[0], "cpu")
+                with self.assertRaisesRegex(RuntimeError, "GPU_BUSY"):
+                    policy.select_device({"device": "cuda"})
+
 
 
 if __name__ == "__main__":
