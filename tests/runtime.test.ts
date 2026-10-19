@@ -153,7 +153,7 @@ test('steering arrives at a model boundary and is not lost at completion', async
   await f.runtime.shutdown();
   f.store.close();
 });
-test('child receives parent session knowledge, minimal context and no write tools', async () => {
+test('child receives parent session knowledge, minimal context and no write tools', async (t) => {
   let parentCalls = 0;
   const f = await setup({
     complete: async (r) => {
@@ -179,14 +179,21 @@ test('child receives parent session knowledge, minimal context and no write tool
       return result('Parent incorporates child');
     },
   });
+  t.after(async () => {
+    await f.runtime.shutdown();
+    f.store.close();
+  });
   f.runtime.knowledge.import('session:chat', 'notes', 'cobalt = blue');
   const r = f.runtime.start('chat', 'Delegate this evidence check');
-  await until(() => f.store.get<any>('run', r.id).status === 'completed', 5000);
+  // This tests scope/tool isolation, not a five-second latency SLA on a shared CI host.
+  await until(
+    () => ['completed', 'failed', 'interrupted'].includes(f.store.get<any>('run', r.id).status),
+    30000,
+  );
+  assert.equal(f.store.get<any>('run', r.id).status, 'completed');
   const children = f.store.runs().filter((x) => x.parentRunId === r.id);
   assert.equal(children.length, 1);
   assert.equal(children[0].status, 'completed');
-  await f.runtime.shutdown();
-  f.store.close();
 });
 test('service recovery marks live tasks interrupted and does not replay', async () => {
   const f = await setup({ complete: async () => result('unused') });
