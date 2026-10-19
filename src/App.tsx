@@ -80,6 +80,7 @@ export function App() {
   const reconnect = useRef<() => void>(() => {});
   const [anchor, setAnchor] = useState('');
   const [visibleTurns, setVisibleTurns] = useState(6);
+  const [expandedProcesses, setExpandedProcesses] = useState<Record<string, boolean>>({});
   const jump = useCallback((conversation: string, input: string) => {
     stick.current = false;
     setPage('chat');
@@ -692,7 +693,10 @@ export function App() {
         </button>,
       );
     const folded = collapsibleProcess(all, currentRuns);
-    const processes = new Map<string, { index: number; nodes: any[]; events: AgentEvent[] }>();
+    const processes = new Map<
+      string,
+      { index: number; segments: { index: number; nodes: any[] }[]; events: AgentEvent[] }
+    >();
     for (const e of all.slice(offset)) {
       if (folded.has(e.id)) flush();
       const start = nodes.length;
@@ -809,11 +813,17 @@ export function App() {
         if (rendered.length) {
           let group = processes.get(e.runId);
           if (!group) {
-            group = { index: nodes.length, nodes: [], events: [] };
+            group = { index: nodes.length, segments: [], events: [] };
             processes.set(e.runId, group);
             nodes.push(null);
           }
-          group.nodes.push(...rendered);
+          let segment = group.segments.at(-1);
+          if (!segment || nodes.length !== segment.index + 1) {
+            segment = { index: nodes.length, nodes: [] };
+            group.segments.push(segment);
+            nodes.push(null);
+          }
+          segment.nodes.push(...rendered);
           group.events.push(e);
         }
       }
@@ -837,31 +847,46 @@ export function App() {
       const messages = group.events.filter((e) => e.type === 'assistant.message').length;
       const tools = group.events.filter((e) => e.type === 'tool.started').length;
       const count = group.events.length;
-      const contents: any[] = [];
-      for (const node of group.nodes) {
-        const previous = contents.at(-1);
-        if (node.type === Activity && previous?.type === Activity) {
-          contents[contents.length - 1] = (
-            <Activity
-              key={previous.key}
-              events={[...previous.props.events, ...node.props.events]}
-              t={t}
-              quiet
-            />
-          );
-        } else contents.push(node);
+      for (const segment of group.segments) {
+        const contents: any[] = [];
+        for (const node of segment.nodes) {
+          const previous = contents.at(-1);
+          if (node.type === Activity && previous?.type === Activity) {
+            contents[contents.length - 1] = (
+              <Activity
+                key={previous.key}
+                events={[...previous.props.events, ...node.props.events]}
+                t={t}
+                quiet
+              />
+            );
+          } else contents.push(node);
+        }
+        nodes[segment.index] = (
+          <div
+            key={'segment-' + runId + '-' + segment.index}
+            id={'segment-' + runId + '-' + segment.index}
+            className="process-segment"
+            hidden={!expandedProcesses[runId]}
+          >
+            {expandedProcesses[runId] ? contents : null}
+          </div>
+        );
       }
       nodes[group.index] = (
         <ProcessHistory
           key={'process-' + runId}
+          open={!!expandedProcesses[runId]}
+          onChange={(open) => setExpandedProcesses((previous) => ({ ...previous, [runId]: open }))}
+          controls={group.segments
+            .map((segment) => 'segment-' + runId + '-' + segment.index)
+            .join(' ')}
           label={
             language === 'zh'
               ? `此前过程 · ${count} 条记录${messages ? ` · ${messages} 条模型回复` : ''}${tools ? ` · ${tools} 次工具调用` : ''}`
               : `${count} previous events${messages ? ` · ${messages} assistant messages` : ''}${tools ? ` · ${tools} tool calls` : ''}`
           }
-        >
-          {contents}
-        </ProcessHistory>
+        />
       );
     }
     return nodes;

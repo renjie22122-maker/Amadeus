@@ -148,3 +148,5 @@ Attachment cards offer **Open** in a side panel plus the original download. Mark
 Process summaries are grouped by run, not by adjacent event batches. Internal bookkeeping, file receipts and user steering do not split one run into repeated disclosures. All intermediate assistant replies remain readable on expansion; user messages and the final answer stay outside. Counts refer to loaded events, not all-time totals.
 
 Inside expanded process history, assistant progress remains visible while consecutive tool records share a collapsed Activity group. Opening Activity reveals bounded summaries; individual records expose complete details. Long tool payloads cannot enlarge the flex layout beyond the conversation viewport.
+
+The single run control toggles process segments **in their original timeline positions**. User steering is never moved: expansion restores assistant progress → user follow-up → subsequent actions/replies. Collapsing hides only process segments, not the intervening user messages.

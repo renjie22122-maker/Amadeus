@@ -4482,7 +4482,7 @@ input.team-switch:checked::after {
   margin: 12px 0;
   border-bottom: 1px solid var(--border);
 }
-.completed-process > summary {
+.completed-process > .process-toggle {
   cursor: pointer;
   color: var(--muted);
   padding: 12px 0;
@@ -4618,6 +4618,17 @@ input.team-switch:checked::after {
   display: none;
 }
 .completed-process {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.process-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+}
+.process-segment {
   min-width: 0;
   max-width: 100%;
 }

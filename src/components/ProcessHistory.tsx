@@ -1,15 +1,26 @@
-import { useState, type ReactNode } from 'react';
-export function ProcessHistory({ children, label }: { children: ReactNode; label: string }) {
-  const [open, setOpen] = useState(false);
+import { ChevronRight } from 'lucide-react';
+export function ProcessHistory({
+  label,
+  open,
+  onChange,
+  controls,
+}: {
+  label: string;
+  open: boolean;
+  onChange: (open: boolean) => void;
+  controls: string;
+}) {
   return (
-    <details
-      className="completed-process"
-      onToggle={(e) => {
-        if (e.target === e.currentTarget) setOpen(e.currentTarget.open);
-      }}
-    >
-      <summary>{label}</summary>
-      {open ? children : null}
-    </details>
+    <div className="completed-process">
+      <button
+        className="process-toggle"
+        aria-expanded={open}
+        aria-controls={controls}
+        onClick={() => onChange(!open)}
+      >
+        <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : undefined }} />
+        {label}
+      </button>
+    </div>
   );
 }

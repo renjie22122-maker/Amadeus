@@ -118,26 +118,35 @@ test(
         0,
       );
       assert.equal(await page.locator('.completed-process').count(), 1);
-      assert.equal(await page.locator('.completed-process .message.user').count(), 0);
+      assert.equal(await page.locator('.process-segment .message.user').count(), 0);
       await page.getByText('Keep my follow-up outside', { exact: true }).waitFor();
-      await page.locator('.completed-process summary').first().click();
+      await page.locator('.completed-process .process-toggle').first().click();
       await page
         .getByText('Intermediate progress hidden until expanded', { exact: true })
         .waitFor();
       await page.getByText('Second progress after steering', { exact: true }).waitFor();
-      assert.equal(await page.locator('.completed-process .activity').count(), 1);
-      assert.equal(await page.locator('.completed-process .activity[open]').count(), 0);
-      await page.locator('.completed-process .activity > summary').click();
-      assert.ok((await page.locator('.completed-process .activity-full details').count()) > 0);
-      await page.locator('.completed-process .activity-full details > summary').first().click();
+      const ordered = await page.locator('.conversation-width .message-body').allTextContents();
+      assert.ok(
+        ordered.findIndex((t) => t.includes('Intermediate progress')) <
+          ordered.findIndex((t) => t.includes('Keep my follow-up outside')),
+      );
+      assert.ok(
+        ordered.findIndex((t) => t.includes('Keep my follow-up outside')) <
+          ordered.findIndex((t) => t.includes('Second progress after steering')),
+      );
+      assert.ok((await page.locator('.process-segment .activity').count()) >= 1);
+      assert.equal(await page.locator('.process-segment .activity[open]').count(), 0);
+      await page.locator('.process-segment .activity > summary').first().click();
+      assert.ok((await page.locator('.process-segment .activity-full details').count()) > 0);
+      await page.locator('.process-segment .activity-full details > summary').first().click();
       if (process.env.AMADEUS_WORKBENCH_SCREENSHOT)
         await page.screenshot({ path: process.env.AMADEUS_WORKBENCH_SCREENSHOT });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       const box = await page.locator('.conversation-scroll').boundingBox();
       assert.ok(box && box.x + box.width <= 1441);
-      await page.locator('.completed-process .activity > summary').click();
-      assert.equal(await page.locator('.completed-process .message.user').count(), 0);
-      await page.locator('.completed-process summary').first().click();
+      await page.locator('.process-segment .activity > summary').first().click();
+      assert.equal(await page.locator('.process-segment .message.user').count(), 0);
+      await page.locator('.completed-process .process-toggle').first().click();
       await page.getByRole('button', { name: '打开 / Open · report.md', exact: true }).click();
       await page.getByRole('heading', { name: 'Report preview', exact: true }).waitFor();
       assert.equal(await page.evaluate(() => (window as any).pwned), undefined);
