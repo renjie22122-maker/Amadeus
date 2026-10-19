@@ -79,3 +79,5 @@ OneBot 11 can recover a legacy message only when its ID was already observed in 
 `read_chat_media` now returns actual image pixels (up to three) when the current model declares vision, with explicit per-file states for unsupported vision or decoding failure. Additional images remain available through read_image. GIF previews show the first frame. Audio still requires transcription and documents require extraction. This does not force downloading all group images every turn.
 
 Permission fix: discovery and pre-execution revalidation apply the same effective ordinary-remote-chat policy, so an old persisted tool list cannot spuriously produce CAPABILITY_CHANGED. Actual permission, workspace, remote-chat mode or shared-knowledge changes still stop execution. Regression coverage invokes ToolRegistry, not just the media helper.
+
+See [Bot startup and independent status notices](BOT-STARTUP.md) for optional Windows launch tasks and OneBot 11 fallback notices.

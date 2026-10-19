@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "taskPrefix": "Amadeus-Bot",
+  "agentRoot": "C:/YOUR/Amadeus",
+  "node": "C:/Program Files/nodejs/node.exe",
+  "powershell": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+  "logDirectory": "C:/YOUR/private-bot/logs",
+  "agentPage": "http://127.0.0.1:8810",
+  "bridgePage": "http://127.0.0.1:6099",
+  "agent": { "healthUrl": "http://127.0.0.1:8810/api/health" },
+  "bridge": {
+    "executable": "C:/YOUR/NapCat/NapCatWinBootMain.exe",
+    "arguments": "\"C:/YOUR/QQ/QQ.exe\" \"C:/YOUR/NapCat/NapCatWinBootHook.dll\" YOUR_BOT_ACCOUNT",
+    "processArgument": "YOUR_BOT_ACCOUNT",
+    "workingDirectory": "C:/YOUR/NapCat",
+    "port": 3011,
+    "environment": {
+      "NAPCAT_PATCH_PACKAGE": "C:/YOUR/NapCat/qqnt.json",
+      "NAPCAT_LOAD_PATH": "C:/YOUR/NapCat/loadNapCat.js",
+      "NAPCAT_INJECT_PATH": "C:/YOUR/NapCat/NapCatWinBootHook.dll",
+      "NAPCAT_LAUNCHER_PATH": "C:/YOUR/NapCat/NapCatWinBootMain.exe",
+      "NAPCAT_MAIN_PATH": "C:/YOUR/NapCat/napcat.mjs"
+    }
+  },
+  "offline": {
+    "version": 1,
+    "accountId": "YOUR_BOT_ACCOUNT",
+    "database": "C:/YOUR/Amadeus/.data/agent.sqlite",
+    "bridgeUrl": "ws://127.0.0.1:3011",
+    "healthUrl": "http://127.0.0.1:8810/api/health",
+    "tokenFile": "C:/YOUR/NapCat/config/onebot11_YOUR_BOT_ACCOUNT.json",
+    "tokenPath": ["network", "websocketServers", 0, "token"],
+    "statusFile": "C:/YOUR/private-bot/status.json",
+    "ledgerFile": "C:/YOUR/private-bot/notice-ledger.json",
+    "lockFile": "C:/YOUR/private-bot/watcher.pid"
+  }
+}

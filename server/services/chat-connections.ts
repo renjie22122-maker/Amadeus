@@ -363,6 +363,12 @@ export class ChatConnections {
   pause(key: string) {
     const c = this.get(key);
     this.store.put('chat-connection', { ...c, enabled: false, revision: c.revision + 1 });
+    this.store.put('chat-transport-state', {
+      id: c.id,
+      status: 'paused',
+      reason: 'manual',
+      updatedAt: Date.now(),
+    });
     this.store.db
       .prepare(
         "UPDATE chat_inbox SET state='cancelled',text='',media=NULL WHERE connection_id=? AND state IN ('queued','receiving','downloading')",
@@ -639,7 +645,16 @@ export class ChatConnections {
           'approval:' + q.id,
           'Amadeus needs a local decision. Request ' +
             q.id +
-            '. The payload is not sent because remote review is disabled, too large, sensitive, or requires recovery inspection.',
+            '. ' +
+            (!c.remoteApprovals
+              ? c.accessMode === 'chat'
+                ? 'Ordinary chat uses local approval. Review this request in Amadeus. Saying yes in chat does not approve it; do not grant the whole group computer-control access.'
+                : 'Remote approval is disabled for this connection. Review locally, or enable remote approval in Chat Connections for the bound controller. Saying yes is not an approval command.'
+              : q.payload.action === 'resolve-effect'
+                ? 'Recovery inspection requires local review.'
+                : payload.length > 6500
+                  ? 'The full operation exceeds the remote review size limit. Review locally.'
+                  : 'The operation may contain credentials; review locally.'),
         );
         continue;
       }
@@ -921,8 +936,9 @@ export class ChatConnections {
     }
   }
   private connectionStatus(c: ChatConnection) {
-    if (!c.enabled) return { status: 'paused' };
     const own = this.store.maybe<any>('chat-transport-state', c.id);
+    if (!c.enabled)
+      return own?.status === 'reauthorize' ? own : { status: 'paused', reason: 'manual' };
     if (own) return own;
     const peer = this.list().find(
       (x) =>

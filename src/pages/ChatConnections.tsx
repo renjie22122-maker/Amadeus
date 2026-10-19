@@ -122,13 +122,33 @@ export function ChatConnectionsPage({
           <article className="chat-connection-card" key={c.id}>
             <div className="chat-connections-heading">
               <strong>{c.name}</strong>
-              <span className="pill">{c.enabled ? c.status.status : tr('已暂停', 'Paused')}</span>
+              <span className="pill">
+                {c.status.status === 'reauthorize'
+                  ? tr('待重新授权', 'Reauthorization required')
+                  : !c.enabled
+                    ? tr('已手动停用', 'Manually disabled')
+                    : c.status.status === 'connected'
+                      ? tr('已连接', 'Connected')
+                      : c.status.status === 'disconnected'
+                        ? tr('连接断开', 'Disconnected')
+                        : c.status.status}
+              </span>
             </div>
             <p>
               {chatPlatforms.find((p) => p.transport === c.transport)?.name} · {c.senderId}
             </p>
             <p className="muted">
-              {c.status.error ||
+              {(c.status.status === 'reauthorize'
+                ? tr(
+                    '会话权限、模型或资料范围已变化。核对后重新启用并保存；不会自动恢复授权。',
+                    'Conversation permissions, model or scope changed. Review, enable and save again; authorization is not restored automatically.',
+                  )
+                : !c.enabled
+                  ? tr(
+                      '此入口已停用，不接收新任务。',
+                      'This connection is disabled and accepts no new tasks.',
+                    )
+                  : c.status.error) ||
                 tr(
                   '等待平台消息；保存配置不代表已经连通。',
                   'Waiting for messages; saving configuration does not prove connectivity.',

@@ -465,3 +465,13 @@ test('imported media is owned by its inbox and filenames cannot escape attachmen
     ),
   );
 });
+test('reauthorization remains visible; explicit pause clears its notice reason', (t) => {
+  const { store, channel, c } = fixture(t);
+  store.put('conversation', { id: 'chat', profileId: 'model', permission: 'auto' });
+  channel.tick();
+  assert.equal(channel.get(c.id).enabled, false);
+  assert.equal(channel.overview()[0].status.status, 'reauthorize');
+  channel.pause(c.id);
+  assert.equal(channel.overview()[0].status.status, 'paused');
+  assert.equal(store.get<any>('chat-transport-state', c.id).reason, 'manual');
+});
