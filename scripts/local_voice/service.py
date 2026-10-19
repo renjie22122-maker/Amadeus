@@ -1,5 +1,6 @@
 """Loopback, authenticated OpenAI-compatible local speech bridge. No model imports here."""
 import argparse
+import base64
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,13 +19,22 @@ from policy import select_device
 MAX_BODY = 25 * 1024 * 1024
 
 
-def run_worker(command, *, stdout, stderr, env, timeout, check=False):
+def run_worker(command, *, stdout, stderr, env, timeout, check=False, on_tick=None):
     """Bound the whole worker tree, including Windows venv redirectors."""
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
     process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=env, **options)
     try:
-        return process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
+        if on_tick is None:
+            return process.wait(timeout=timeout)
+        deadline = time.monotonic() + timeout
+        while process.poll() is None:
+            on_tick()
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(command, timeout)
+            time.sleep(.1)
+        on_tick()
+        return process.returncode
+    except BaseException:
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=10)
         else:
@@ -67,7 +77,9 @@ def validate_job(fields, speech):
             raise ValueError("Local speech supports response_format=wav")
     elif fields.get("response_format", "json") not in ("json", "verbose_json"):
         raise ValueError("Transcription supports json or verbose_json")
-    return {k: fields[k] for k in ("model", "language", "input", "voice") if k in fields}
+    if "stream" in fields and (not speech or not isinstance(fields["stream"], bool)):
+        raise ValueError("stream must be a boolean for speech")
+    return {k: fields[k] for k in ("model", "language", "input", "voice", "stream") if k in fields}
 
 
 def create_server(config, host="127.0.0.1", port=8812, config_path=None):
@@ -84,7 +96,21 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
             super().setup()
             self.connection.settimeout(20)
 
+        def stream_event(self, data):
+            if not getattr(self, "stream_started", False):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.stream_started = True
+                self.close_connection = True
+            self.wfile.write(json.dumps(data).encode() + b"\n")
+            self.wfile.flush()
+
         def reply(self, status, data, mime="application/json"):
+            if getattr(self, "stream_started", False):
+                return self.stream_event({"type": "error", "error": data.get("error", "VOICE_STREAM_FAILED")})
             payload = json.dumps(data, ensure_ascii=False).encode() if mime == "application/json" else data
             self.send_response(status)
             self.send_header("Content-Type", mime)
@@ -101,7 +127,7 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                 return self.reply(404, {"error": "not_found"})
             if not self.authorized():
                 return self.reply(401, {"error": "unauthorized"})
-            return self.reply(200, {"application": "Amadeus Local Voice", "modelLoaded": False if not state["busy"] else None, "state": state, "models": {k: Path(v).is_dir() for k, v in config.get("models", {}).items()}, "devicePolicy": config.get("device", "cpu"), "voiceConfigured": bool(config.get("voices")), "readyMeaning": "Paths only; inference and dependencies require smoke testing"})
+            return self.reply(200, {"application": "Amadeus Local Voice", "modelLoaded": False if not state["busy"] else None, "state": state, "models": {k: Path(v).is_dir() for k, v in config.get("models", {}).items()}, "devicePolicy": config.get("device", "cpu"), "voiceConfigured": bool(config.get("voices")), "streaming": True, "readyMeaning": "Paths only; inference and dependencies require smoke testing"})
 
         def do_POST(self):
             if not self.authorized():
@@ -148,24 +174,52 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                         env = {**os.environ, "PYTHONUTF8": "1"}
                         # GPU admission can race another application. Retry only a typed
                         # GPU failure, once on CPU, after the failed process has exited.
-                        deadline = time.monotonic() + 150
+                        streaming = speech and bool(job.get("stream"))
+                        emitted = 0
+                        last_audio = time.monotonic()
+                        last_heartbeat = 0
+                        def pump():
+                            nonlocal emitted, last_audio, last_heartbeat
+                            chunk = directory / "chunks" / (str(emitted) + ".wav")
+                            while chunk.is_file():
+                                if chunk.stat().st_size > 4 * 1024 * 1024:
+                                    raise ValueError("VOICE_STREAM_CHUNK: oversized audio chunk")
+                                payload = chunk.read_bytes()
+                                self.stream_event({"type": "audio", "sequence": emitted, "audio": base64.b64encode(payload).decode()})
+                                chunk.unlink()
+                                emitted += 1
+                                last_audio = time.monotonic()
+                                chunk = directory / "chunks" / (str(emitted) + ".wav")
+                            now = time.monotonic()
+                            if now - last_audio > 150:
+                                raise subprocess.TimeoutExpired("voice stream stalled", 150)
+                            if now - last_heartbeat > 2:
+                                self.stream_event({"type": "waiting"})
+                                last_heartbeat = now
+                        deadline = time.monotonic() + (600 if streaming else 150)
                         for attempt in range(2):
                             request.write_text(json.dumps(job), encoding="utf-8")
                             with (directory / "worker.log").open("ab") as logs:
-                                returncode = run_worker([python, "-X", "utf8", str(Path(__file__).with_name("worker.py")), str(request)], stdout=logs, stderr=logs, env=env, timeout=max(.1, deadline - time.monotonic()), check=False)
+                                returncode = run_worker([python, "-X", "utf8", str(Path(__file__).with_name("worker.py")), str(request)], stdout=logs, stderr=logs, env=env, timeout=max(.1, deadline - time.monotonic()), check=False, **({"on_tick": pump} if streaming else {}))
                             result_path = Path(job["result"])
                             if not result_path.is_file():
                                 return self.reply(503, {"error": "VOICE_WORKER_FAILED: model worker exited without a result (exit " + str(returncode) + "); check native dependencies"})
                             result = json.loads(result_path.read_text(encoding="utf-8"))
                             if "error" not in result:
                                 break
-                            if attempt == 0 and config.get("device") == "auto" and device == "cuda" and result.get("code") in ("GPU_OOM", "GPU_UNAVAILABLE"):
+                            if attempt == 0 and emitted == 0 and config.get("device") == "auto" and device == "cuda" and result.get("code") in ("GPU_OOM", "GPU_UNAVAILABLE"):
                                 device = job["device"] = "cpu"
                                 state.update(device="cpu", reason="GPU worker unavailable; retrying once on CPU")
                                 result_path.unlink()
                                 Path(job["output"]).unlink(missing_ok=True)
                                 continue
                             return self.reply(503, {"error": result["error"]})
+                        if streaming:
+                            pump()
+                            if not emitted:
+                                return self.reply(503, {"error": "VOICE_STREAM_EMPTY: no audio chunks"})
+                            self.stream_event({"type": "done", "chunks": emitted})
+                            return
                         payload = Path(job["output"]).read_bytes() if speech else {**result, "device": device}
                     return self.reply(200, payload, "audio/wav" if speech else "application/json")
                 finally:

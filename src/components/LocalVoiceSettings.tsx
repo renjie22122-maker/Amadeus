@@ -1,13 +1,36 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../api';
 
-type Voice = { id: string; name: string; text: string };
+type Voice = {
+  id: string;
+  name: string;
+  text: string;
+  language?: string;
+  quality?: { duration: number; warnings: string[] };
+};
+type Capabilities = {
+  recommendedReferenceSeconds: number;
+  maxReferenceSeconds: number;
+  maxUploadBytes: number;
+};
 export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: string) => void }) {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [selected, setSelected] = useState('default');
   const [name, setName] = useState('');
+  const [language, setLanguage] = useState('auto');
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+  const [referenceAudio, setReferenceAudio] = useState('');
   const [text, setText] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  useEffect(() => {
+    if (!file) {
+      setReferenceAudio('');
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setReferenceAudio(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -24,8 +47,11 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
     }
   };
   const refresh = async () => {
-    const next = await api<{ voices: Voice[]; selected: string }>('/media/local-voice/voices');
+    const next = await api<{ voices: Voice[]; selected: string; capabilities: Capabilities }>(
+      '/media/local-voice/voices',
+    );
     setVoices(next.voices);
+    setCapabilities(next.capabilities);
     setSelected(next.selected);
   };
   return (
@@ -40,10 +66,17 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
       </summary>
       <p className="muted">
         {zh
-          ? '上传清晰的单人录音（3–30 秒，最多 25 MiB），填写录音的准确文字。录音只保存在本机；这是参考音色合成，不是训练新模型。保存后即时可用。'
-          : 'Upload clear single-speaker audio (3–30 seconds, up to 25 MiB) and its exact transcript. Stored locally; reference-conditioned synthesis, not training a new model. Saved voices are immediately available.'}
+          ? '上传清晰的单人录音并填写逐字对应的原文。参考语言与输出语言可以不同；不要把日语原文翻译成中文填入。录音只保存在本机，这是参考音色合成，不是训练新模型。跨语言音色与口音需要试听确认。'
+          : 'Upload clear single-speaker audio and its exact original-language transcript, not a translation. Reference and output languages may differ. Stored locally; reference-conditioned synthesis, not model training. Check voice similarity and accent by listening.'}
       </p>
-      <fieldset disabled={busy} style={{ border: 0, padding: 0, minWidth: 0 }}>
+      {capabilities && (
+        <p className="muted">
+          {zh
+            ? `CosyVoice 参考音频硬上限 ${capabilities.maxReferenceSeconds} 秒；建议至少 ${capabilities.recommendedReferenceSeconds} 秒，较短录音仅提示；上传保护上限 ${capabilities.maxUploadBytes / 1048576} MiB。长录音请先选取片段并填写对应原文；不会自动截断。这不是朗读长度上限。`
+            : `CosyVoice reference maximum: ${capabilities.maxReferenceSeconds}s. Recommended minimum: ${capabilities.recommendedReferenceSeconds}s; shorter references receive a warning. Upload limit: ${capabilities.maxUploadBytes / 1048576} MiB. Select an excerpt and matching transcript from longer recordings; no silent truncation. This is not the read-aloud length limit.`}
+        </p>
+      )}
+      <fieldset disabled={busy || !capabilities} style={{ border: 0, padding: 0, minWidth: 0 }}>
         <div className="form-grid">
           <label>
             {zh ? '音色名称' : 'Voice name'}
@@ -56,8 +89,8 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
               accept="audio/*"
               onChange={(e) => {
                 const next = e.target.files?.[0] || null;
-                if (next && next.size > 25 * 1024 * 1024) {
-                  setMessage(zh ? '录音超过 25 MiB。' : 'Recording exceeds 25 MiB.');
+                if (next && capabilities && next.size > capabilities.maxUploadBytes) {
+                  setMessage(zh ? '录音超过上传保护上限。' : 'Recording exceeds the upload limit.');
                   e.target.value = '';
                   setFile(null);
                 } else setFile(next);
@@ -65,6 +98,36 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
             />
           </label>
         </div>
+        {referenceAudio && (
+          <audio controls preload="metadata" src={referenceAudio} style={{ maxWidth: '100%' }} />
+        )}
+        <label>
+          {zh
+            ? '参考录音语言（记录用途，不强制输出语言）'
+            : 'Reference language (metadata, not output-language control)'}
+          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+            {['auto', 'zh', 'en', 'ja', 'ko', 'de', 'es', 'fr', 'it', 'ru'].map((code) => (
+              <option key={code} value={code}>
+                {
+                  (
+                    {
+                      auto: zh ? '未指定／混合' : 'Unspecified / mixed',
+                      zh: '中文',
+                      en: 'English',
+                      ja: '日本語',
+                      ko: '한국어',
+                      de: 'Deutsch',
+                      es: 'Español',
+                      fr: 'Français',
+                      it: 'Italiano',
+                      ru: 'Русский',
+                    } as Record<string, string>
+                  )[code]
+                }
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           {zh ? '录音原文（逐字一致）' : 'Exact recording transcript'}
           <textarea
@@ -75,8 +138,13 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
             style={{ width: '100%', boxSizing: 'border-box' }}
           />
         </label>
-        <label>
-          <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            style={{ width: 'auto', margin: 0 }}
+            type="checkbox"
+            checked={consent}
+            onChange={(e) => setConsent(e.target.checked)}
+          />
           {zh ? '我有权使用此录音及音色' : 'I have permission to use this recording and voice'}
         </label>
         <button
@@ -88,6 +156,7 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
               const form = new FormData();
               form.set('name', name);
               form.set('text', text);
+              form.set('language', language);
               form.set('consent', 'true');
               form.set('audio', file);
               const saved = await api<Voice>('/media/local-voice/voices', form);
@@ -121,6 +190,31 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
             ))}
           </select>
         </label>
+        {voices.find((v) => v.id === selected)?.quality && (
+          <p className="muted">
+            {zh
+              ? '技术检查仅检查静音、音量和削波，不验证说话人、转写或音色相似度。'
+              : 'Technical checks cover silence, level and clipping, not speaker identity, transcript accuracy or voice similarity.'}
+            {voices
+              .find((v) => v.id === selected)
+              ?.quality?.warnings.map((warning) => (
+                <span key={warning}>
+                  {' '}
+                  {warning === 'short'
+                    ? zh
+                      ? '录音较短，音色稳定性可能不足。'
+                      : 'Short recording; voice consistency may be limited.'
+                    : warning === 'quiet'
+                      ? zh
+                        ? '音量偏低，建议更换录音。'
+                        : 'Low volume; consider another recording.'
+                      : zh
+                        ? '检测到削波，建议更换录音。'
+                        : 'Clipping detected; consider another recording.'}
+                </span>
+              ))}
+          </p>
+        )}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
           <button type="button" onClick={() => void action(refresh)}>
             {zh ? '刷新' : 'Refresh'}
@@ -142,7 +236,7 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
           >
             {zh ? '设为默认朗读音色' : 'Use for read-aloud'}
           </button>
-          {(['zh', 'en'] as const).map((language) => (
+          {(['zh', 'en', 'ja'] as const).map((language) => (
             <button
               key={language}
               type="button"
@@ -166,13 +260,17 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
                 })
               }
             >
-              {language === 'zh'
+              {language === 'ja'
                 ? zh
-                  ? '中文试听'
-                  : 'Chinese preview'
-                : zh
-                  ? '英文试听'
-                  : 'English preview'}
+                  ? '日语试听'
+                  : 'Japanese preview'
+                : language === 'zh'
+                  ? zh
+                    ? '中文试听'
+                    : 'Chinese preview'
+                  : zh
+                    ? '英文试听'
+                    : 'English preview'}
             </button>
           ))}
         </div>

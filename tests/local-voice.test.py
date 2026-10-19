@@ -172,5 +172,67 @@ class VoiceTests(unittest.TestCase):
         self.assertEqual(audio, b"RIFF\x00\xff")
 
 
+    def test_stream_delivers_audio_before_worker_finishes_and_has_terminal_receipt(self):
+        received = threading.Event()
+        def worker(args, **kwargs):
+            job = json.loads(Path(args[-1]).read_text())
+            self.assertTrue(job["stream"])
+            folder = Path(job["output"]).parent / "chunks"
+            folder.mkdir()
+            (folder / "0.wav").write_bytes(b"RIFFfixture")
+            kwargs["on_tick"]()
+            self.assertTrue(received.wait(2), "audio must reach client before inference completes")
+            Path(job["result"]).write_text(json.dumps({"mime": "audio/wav"}))
+            return 0
+        request = urllib.request.Request(self.base + "/v1/audio/speech", data=json.dumps({"model": "cosyvoice", "input": "hello", "stream": True}).encode(), headers={"Authorization": "Bearer " + self.config["token"], "Content-Type": "application/json"})
+        with patch.object(service, "run_worker", side_effect=worker):
+            with urllib.request.urlopen(request, timeout=5) as response:
+                first = json.loads(response.readline())
+                self.assertEqual(first["type"], "audio")
+                self.assertEqual(first["sequence"], 0)
+                received.set()
+                frames = [json.loads(line) for line in response.readlines()]
+                self.assertEqual(frames[-1], {"type": "done", "chunks": 1})
+        self.assertFalse(json.loads(self.request('/health')[1])["state"]["busy"])
+
+    def test_stream_partial_gpu_failure_is_not_replayed_on_cpu(self):
+        self.config["device"] = "auto"
+        def worker(args, **kwargs):
+            job = json.loads(Path(args[-1]).read_text())
+            folder = Path(job["output"]).parent / "chunks"
+            folder.mkdir(); (folder / "0.wav").write_bytes(b"RIFFfirst")
+            kwargs["on_tick"]()
+            Path(job["result"]).write_text(json.dumps({"error": "CUDA out of memory", "code": "GPU_OOM"}))
+            return 1
+        with patch.object(service, "select_device", return_value=("cuda", "idle")), patch.object(service, "run_worker", side_effect=worker) as launch:
+            status, body, mime = self.request('/v1/audio/speech', {"model": "cosyvoice", "input": "hello", "stream": True})
+            self.assertEqual(status, 200)
+            self.assertEqual(mime, 'application/x-ndjson')
+            self.assertEqual(json.loads(body.splitlines()[-1])["type"], "error")
+            self.assertEqual(launch.call_count, 1)
+
+    def test_stream_disconnect_terminates_only_owned_worker(self):
+        process = MagicMock(); process.pid = 12345; process.poll.return_value = None
+        with patch.object(service.os, "name", "nt"), patch.object(service.subprocess, "CREATE_NO_WINDOW", 0, create=True), patch.object(service.subprocess, "Popen", return_value=process), patch.object(service.subprocess, "run") as terminate:
+            with self.assertRaises(BrokenPipeError):
+                service.run_worker(["python", "worker.py"], stdout=None, stderr=None, env={}, timeout=1, on_tick=lambda: (_ for _ in ()).throw(BrokenPipeError()))
+            self.assertEqual(terminate.call_args.args[0], ["taskkill", "/PID", "12345", "/T", "/F"])
+
+
+
+    def test_closed_comfy_endpoint_allows_gpu_but_timeout_and_low_vram_do_not(self):
+        opener = MagicMock()
+        with patch.object(policy.urllib.request, "build_opener", return_value=opener), patch.object(policy.subprocess, "run") as probe:
+            opener.open.side_effect = policy.urllib.error.URLError(ConnectionRefusedError(10061, "closed"))
+            probe.return_value.stdout = "20000"
+            self.assertEqual(policy.select_device({"device": "auto"})[0], "cuda")
+            probe.return_value.stdout = "1024"
+            self.assertEqual(policy.select_device({"device": "auto"})[0], "cpu")
+            opener.open.side_effect = policy.urllib.error.URLError(TimeoutError("unknown state"))
+            probe.reset_mock()
+            self.assertEqual(policy.select_device({"device": "auto"})[0], "cpu")
+            probe.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

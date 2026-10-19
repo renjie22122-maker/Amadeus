@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { MediaJob } from '../../shared/media.js';
 import type { Conversation } from '../../shared/types.js';
 import type { Runtime } from '../core/runtime.js';
 import { assert } from '../core/errors.js';
@@ -38,15 +39,36 @@ export function conversationViewRoutes(app: FastifyInstance, runtime: Runtime) {
     const taskBoard = latest ? boardService.get(latest) : null;
     const members = latest ? boardService.members(latest) : [];
     const page = limit && !after ? store.eventPage(c.id, limit, before) : null;
+    const mediaPurpose = new Map<string, string | undefined>();
     return {
       ...(page ? { hasOlderEvents: page.hasOlderEvents } : {}),
       conversation: c,
       deliveries: Object.fromEntries(deliveries),
-      events: (page?.events || store.events(c.id, after)).map((e) =>
-        e.type === 'user.message' && deliveries.has(e.id)
+      events: (page?.events || store.events(c.id, after)).map((e) => {
+        // Historical receipts predate purpose metadata; enrich only presentation, never rewrite events.
+        if (e.type === 'media.updated' && e.data.job?.id && !e.data.job.purpose) {
+          const key = e.data.job.id;
+          if (!mediaPurpose.has(key)) {
+            const job = store.maybe<MediaJob>('media-job', key);
+            mediaPurpose.set(
+              key,
+              job?.conversationId === c.id &&
+                job.kind === 'speech' &&
+                job.operationKey?.startsWith('ui:read-aloud:')
+                ? 'read-aloud'
+                : undefined,
+            );
+          }
+          if (mediaPurpose.get(key))
+            return {
+              ...e,
+              data: { ...e.data, job: { ...e.data.job, purpose: mediaPurpose.get(key) } },
+            };
+        }
+        return e.type === 'user.message' && deliveries.has(e.id)
           ? { ...e, data: { ...e.data, delivery: deliveries.get(e.id) } }
-          : e,
-      ),
+          : e;
+      }),
       inputs: store.forConversation<any>('input', c.id),
       attachments: store.attachmentMetadata(c.id),
       teamAutomation:

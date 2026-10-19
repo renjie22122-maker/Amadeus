@@ -20,3 +20,20 @@ test('media stays at creation event across followups while progress updates in p
   assert.equal(index.has(4), false);
   assert.equal(mediaTimeline([]).size, 0);
 });
+
+test('read-aloud receipts stay out of the chat gallery while generated speech remains', () => {
+  const events = [
+    { id: 1, type: 'media.updated', data: { job: { id: 'read', kind: 'speech' } } },
+    {
+      id: 2,
+      type: 'media.updated',
+      data: { job: { id: 'read', kind: 'speech', purpose: 'read-aloud' } },
+    },
+    {
+      id: 3,
+      type: 'media.updated',
+      data: { job: { id: 'generated', kind: 'speech', purpose: 'generation' } },
+    },
+  ].map((e) => ({ ...e, conversationId: 'chat', runId: null, createdAt: e.id })) as AgentEvent[];
+  assert.deepEqual([...mediaTimeline(events).keys()], [3]);
+});

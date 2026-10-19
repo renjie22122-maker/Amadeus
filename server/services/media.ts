@@ -70,6 +70,10 @@ export class MediaService {
     const { statusUrl, resultUrl, cancelUrl, origin, baseUrl, operationKey, ...rest } = j;
     return {
       ...rest,
+      purpose:
+        j.kind === 'speech' && j.operationKey?.startsWith('ui:read-aloud:')
+          ? 'read-aloud'
+          : 'generation',
       outputs: rest.outputs.map((f) => ({
         ...f,
         reference: 'media:' + j.id + ':' + f.id,

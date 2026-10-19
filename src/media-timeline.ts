@@ -10,5 +10,9 @@ export function mediaTimeline(events: AgentEvent[]) {
     if (!first.has(job.id)) first.set(job.id, event.id);
     latest.set(job.id, job);
   }
-  return new Map([...first].map(([id, eventId]) => [eventId, latest.get(id)!]));
+  return new Map(
+    [...first]
+      .filter(([id]) => latest.get(id)?.purpose !== 'read-aloud')
+      .map(([id, eventId]) => [eventId, latest.get(id)!]),
+  );
 }

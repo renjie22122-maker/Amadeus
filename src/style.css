@@ -4438,3 +4438,42 @@ input.team-switch:checked::after {
   max-width: 320px;
   height: 32px;
 }
+
+/* Read-aloud is one message action, not a gallery of generated segments. */
+.read-aloud {
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.read-aloud-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.read-aloud-status small {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+.read-aloud-options {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 280px;
+  background: var(--panel, #191c24);
+  box-shadow: 0 6px 24px #0003;
+  z-index: 20;
+}
+.read-aloud-spinner {
+  animation: read-aloud-spin 1s linear infinite;
+}
+@keyframes read-aloud-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .read-aloud-spinner {
+    animation: none;
+  }
+}

@@ -84,16 +84,22 @@ def run(job):
         raise ValueError("VOICE_NOT_READY: configure a local reference recording and its transcript")
     engine = AutoModel(model_dir=model_path)
     prompt = "You are a helpful assistant.<|endofprompt|>" + voice["text"]
-    chunks = engine.inference_zero_shot(job["input"], prompt, voice["audio"], stream=False)
+    chunks = engine.inference_zero_shot(job["input"], prompt, voice["audio"], stream=bool(job.get("stream")))
     # Write incrementally; do not accumulate an entire long narration in RAM.
     with soundfile.SoundFile(job["output"], mode="w", samplerate=engine.sample_rate, channels=1, subtype="PCM_16") as output:
         written = 0
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks):
             samples = chunk["tts_speech"].detach().cpu().numpy().reshape(-1)
             written += len(samples)
             if written > engine.sample_rate * 600:
                 raise ValueError("Audio exceeds ten-minute request limit; split into sections")
             output.write(samples)
+            if job.get("stream"):
+                folder = Path(job["output"]).parent / "chunks"
+                folder.mkdir(exist_ok=True)
+                pending = folder / (str(index) + ".tmp")
+                soundfile.write(str(pending), samples, engine.sample_rate, format="WAV", subtype="PCM_16")
+                pending.replace(folder / (str(index) + ".wav"))
     if not written:
         raise ValueError("Model returned no audio")
     return {"mime": "audio/wav"}

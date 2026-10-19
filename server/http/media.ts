@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { mediaRange } from '../services/media-inspection.js';
 import type { FastifyInstance } from 'fastify';
 import { readFile } from 'node:fs/promises';
@@ -15,6 +16,77 @@ const generation = z.object({
 export function mediaRoutes(app: FastifyInstance, runtime: Runtime) {
   const { store, media } = runtime;
   app.get('/api/media/services', async () => media.connections());
+  app.post<{ Params: { id: string } }>('/api/conversations/:id/read-aloud', async (req, reply) => {
+    const c = store.get<Conversation>('conversation', req.params.id);
+    assert(
+      c.permission !== 'read-only',
+      'MEDIA_READONLY',
+      'Select a writable permission mode before generating speech.',
+    );
+    const a = z
+      .object({ serviceId: z.string(), text: z.string().trim().min(1).max(4000) })
+      .parse(req.body);
+    const connection = media.connection(a.serviceId);
+    assert(
+      connection.id === 'amadeus-local-cosyvoice' &&
+        connection.kind === 'speech' &&
+        connection.protocol === 'openai-speech' &&
+        connection.baseUrl.replace(/\/$/, '') === 'http://127.0.0.1:8812/v1',
+      'VOICE_STREAM_UNAVAILABLE',
+      'Native streaming is unavailable for this service.',
+      409,
+    );
+    const headers = {
+      Authorization: 'Bearer ' + connection.apiKey,
+      'Content-Type': 'application/json',
+    };
+    const health = await fetch('http://127.0.0.1:8812/health', {
+      headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(5000),
+    });
+    assert(
+      health.ok && ((await health.json()) as any).streaming === true,
+      'VOICE_STREAM_UNAVAILABLE',
+      'Restart the updated local voice service to enable streaming.',
+      409,
+    );
+    const abort = new AbortController();
+    const close = () => abort.abort();
+    reply.raw.once('close', close);
+    try {
+      const response = await fetch('http://127.0.0.1:8812/v1/audio/speech', {
+        method: 'POST',
+        headers,
+        redirect: 'error',
+        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(610000)]),
+        body: JSON.stringify({
+          model: 'cosyvoice',
+          input: a.text,
+          voice: connection.defaults.voice || 'default',
+          response_format: 'wav',
+          stream: true,
+        }),
+      });
+      assert(
+        response.ok &&
+          response.body &&
+          response.headers.get('content-type')?.startsWith('application/x-ndjson'),
+        'VOICE_STREAM_FAILED',
+        `Local speech unavailable (${response.status}); no automatic resubmission.`,
+        503,
+      );
+      reply
+        .header('Content-Type', 'application/x-ndjson')
+        .header('Cache-Control', 'no-store')
+        .header('X-Accel-Buffering', 'no');
+      return reply.send(Readable.fromWeb(response.body as any));
+    } catch (error) {
+      close();
+      reply.raw.off('close', close);
+      throw error;
+    }
+  });
   app.get<{ Params: { id: string } }>('/api/conversations/:id/media', async (req) => {
     store.get('conversation', req.params.id);
     return media.list(req.params.id);

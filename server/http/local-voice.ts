@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Configuration } from '../services/settings.js';
 import {
   listLocalVoices,
+  localVoiceCapabilities,
   saveLocalVoice,
   useLocalVoice,
   previewLocalVoice,
@@ -11,6 +12,7 @@ import { z } from 'zod';
 export function localVoiceRoutes(app: FastifyInstance, config: Configuration, root: string) {
   app.get('/api/media/local-voice/voices', async () => ({
     voices: listLocalVoices(root),
+    capabilities: localVoiceCapabilities,
     selected:
       config.get().media?.connections.find((c) => c.id === 'amadeus-local-cosyvoice')?.defaults
         .voice || 'default',
@@ -19,7 +21,13 @@ export function localVoiceRoutes(app: FastifyInstance, config: Configuration, ro
     const fields: Record<string, string> = {};
     let audio: Buffer | undefined;
     for await (const part of req.parts({
-      limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 3, fieldSize: 8000, parts: 4 },
+      limits: {
+        fileSize: localVoiceCapabilities.maxUploadBytes,
+        files: 1,
+        fields: 4,
+        fieldSize: 8000,
+        parts: 5,
+      },
     })) {
       if (part.type === 'file') {
         assert(
@@ -30,7 +38,7 @@ export function localVoiceRoutes(app: FastifyInstance, config: Configuration, ro
         audio = await part.toBuffer();
       } else {
         assert(
-          ['name', 'text', 'consent'].includes(part.fieldname),
+          ['name', 'text', 'consent', 'language'].includes(part.fieldname),
           'VOICE_FIELD',
           'Unsupported voice field.',
         );

@@ -8,10 +8,50 @@ import { z } from 'zod';
 import { assert } from '../core/errors.js';
 import type { Configuration } from './settings.js';
 const execute = promisify(execFile);
+// CosyVoice frontend._extract_speech_token explicitly rejects references >30s.
+// Recommended duration and upload bytes are application guidance/safeguards, not model limits.
+export const localVoiceCapabilities = Object.freeze({
+  model: 'cosyvoice',
+  maxReferenceSeconds: 30,
+  minReferenceSeconds: 0,
+  recommendedReferenceSeconds: 3,
+  maxUploadBytes: 25 * 1024 * 1024,
+  limitSource: 'cosyvoice/cli/frontend.py::_extract_speech_token',
+  previewLanguages: ['zh', 'en', 'ja'],
+});
+const referenceLanguage = z.enum(['auto', 'zh', 'en', 'ja', 'ko', 'de', 'es', 'fr', 'it', 'ru']);
+export function inspectReferencePcm(bytes: Buffer) {
+  const duration = bytes.length / 48000;
+  assert(
+    bytes.length % 2 === 0 &&
+      duration > localVoiceCapabilities.minReferenceSeconds &&
+      duration <= localVoiceCapabilities.maxReferenceSeconds,
+    'VOICE_DURATION',
+    'CosyVoice accepts non-empty audio up to 30 seconds. Select a matching excerpt and transcript; audio is not silently truncated.',
+  );
+  let squared = 0,
+    clipped = 0,
+    peak = 0;
+  for (let i = 0; i < bytes.length; i += 2) {
+    const value = Math.abs(bytes.readInt16LE(i)) / 32768;
+    squared += value * value;
+    peak = Math.max(peak, value);
+    if (value >= 0.999) clipped++;
+  }
+  assert(peak > 0, 'VOICE_SILENT', 'Reference recording is silent. Choose audible speech.');
+  const rmsDb = 10 * Math.log10(squared / (bytes.length / 2));
+  const clippingRatio = clipped / (bytes.length / 2);
+  const warnings: string[] = [];
+  if (duration < localVoiceCapabilities.recommendedReferenceSeconds) warnings.push('short');
+  if (rmsDb < -40) warnings.push('quiet');
+  if (clippingRatio > 0.01) warnings.push('clipping');
+  return { duration, rmsDb, clippingRatio, warnings };
+}
 const fields = z.object({
   name: z.string().trim().min(1).max(80),
   text: z.string().trim().min(1).max(1500),
   consent: z.literal('true'),
+  language: referenceLanguage.default('auto'),
 });
 function local(root: string) {
   const path = join(root, 'voice-service/config.json');
@@ -25,6 +65,8 @@ export function listLocalVoices(root: string) {
       id,
       name: voice.name || (id === 'default' ? 'Default / 默认' : id),
       text: voice.text || '',
+      language: voice.language || 'auto',
+      quality: voice.quality || null,
     };
   });
 }
@@ -49,7 +91,7 @@ export async function normalizeVoice(input: string, output: string) {
       '-ar',
       '24000',
       '-t',
-      '31',
+      String(localVoiceCapabilities.maxReferenceSeconds + 1),
       '-f',
       's16le',
       output,
@@ -65,7 +107,7 @@ export async function saveLocalVoice(
 ) {
   const input = fields.parse(raw);
   assert(
-    audio.length > 0 && audio.length <= 25 * 1024 * 1024,
+    audio.length > 0 && audio.length <= localVoiceCapabilities.maxUploadBytes,
     'VOICE_SIZE',
     'Reference recording must be 1 byte–25 MiB.',
   );
@@ -79,12 +121,8 @@ export async function saveLocalVoice(
     await writeFile(source, audio);
     await normalize(source, pcm);
     const bytes = await readFile(pcm);
-    const duration = bytes.length / 48000;
-    assert(
-      duration >= 3 && duration <= 30 && bytes.length % 2 === 0,
-      'VOICE_DURATION',
-      'Use a clear 3–30 second reference recording; long audio is rejected, not truncated.',
-    );
+    const quality = inspectReferencePcm(bytes);
+    const { duration } = quality;
     const header = Buffer.alloc(44);
     header.write('RIFF');
     header.writeUInt32LE(36 + bytes.length, 4);
@@ -105,7 +143,14 @@ export async function saveLocalVoice(
     const { path, data } = local(root);
     data.voices = {
       ...data.voices,
-      [id]: { name: input.name, audio: target, text: input.text, source: 'user-upload' },
+      [id]: {
+        name: input.name,
+        audio: target,
+        text: input.text,
+        language: input.language,
+        quality,
+        source: 'user-upload',
+      },
     };
     const pending = path + '.' + randomUUID() + '.tmp';
     try {
@@ -116,7 +161,7 @@ export async function saveLocalVoice(
       await rm(pending, { force: true });
       throw error;
     }
-    return { id, name: input.name, text: input.text, duration };
+    return { id, name: input.name, text: input.text, language: input.language, duration, quality };
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -138,7 +183,7 @@ export function useLocalVoice(config: Configuration, root: string, id: string) {
 }
 export async function previewLocalVoice(root: string, raw: unknown) {
   const { id, language } = z
-    .object({ id: z.string().min(1), language: z.enum(['zh', 'en']) })
+    .object({ id: z.string().min(1), language: z.enum(['zh', 'en', 'ja']) })
     .parse(raw);
   assert(
     listLocalVoices(root).some((voice) => voice.id === id),
@@ -154,7 +199,11 @@ export async function previewLocalVoice(root: string, raw: unknown) {
     body: JSON.stringify({
       model: 'cosyvoice',
       input:
-        language === 'zh' ? '你好，这是本地音色试听。' : 'Hello. This is a local voice preview.',
+        language === 'zh'
+          ? '你好，这是本地音色试听。'
+          : language === 'ja'
+            ? 'こんにちは。これは音声のテストです。'
+            : 'Hello. This is a local voice preview.',
       voice: id,
       response_format: 'wav',
     }),

@@ -1,4 +1,17 @@
 let csrf = '';
+export function streamReadAloud(
+  conversationId: string,
+  serviceId: string,
+  text: string,
+  signal: AbortSignal,
+) {
+  return fetch('/api/conversations/' + encodeURIComponent(conversationId) + '/read-aloud', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+    body: JSON.stringify({ serviceId, text }),
+    signal,
+  });
+}
 export async function api<T = any>(
   path: string,
   body?: unknown,

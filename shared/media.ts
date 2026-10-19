@@ -37,6 +37,7 @@ export interface MediaJob {
   conversationId: string;
   runId?: string;
   operationKey: string;
+  purpose?: 'read-aloud' | 'generation';
   connectionId: string;
   protocol: MediaProtocol;
   kind: MediaKind;

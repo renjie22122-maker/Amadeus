@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   saveLocalVoice,
+  inspectReferencePcm,
+  localVoiceCapabilities,
   listLocalVoices,
   useLocalVoice,
   previewLocalVoice,
@@ -29,13 +31,15 @@ test('voice import normalizes to an owned UUID WAV and preserves secrets and exi
   try {
     const saved = await saveLocalVoice(
       root,
-      { name: '../../reference', text: 'exact words', consent: 'true' },
+      { name: '../../reference', text: 'こんにちは。', consent: 'true', language: 'ja' },
       Buffer.from('encoded'),
       async (_, output) => {
-        await writeFile(output, Buffer.alloc(48000 * 4));
+        await writeFile(output, Buffer.alloc(48000 * 4, 12));
       },
     );
     assert.equal(saved.duration, 4);
+    assert.equal(saved.language, 'ja');
+    assert.equal(saved.text, 'こんにちは。');
     const config = JSON.parse(await readFile(join(root, 'voice-service/config.json'), 'utf8'));
     assert.equal(config.token, 'x'.repeat(40));
     assert.equal(config.device, 'auto');
@@ -73,7 +77,7 @@ test('invalid, overlong and undecodable voice uploads do not create usable prese
       saveLocalVoice(root, fields, Buffer.from('audio'), async (_, output) => {
         await writeFile(output, Buffer.alloc(48000 * 31));
       }),
-      /3–30/,
+      /30 seconds/,
     );
     await assert.rejects(
       saveLocalVoice(root, fields, Buffer.from('audio'), async () => {
@@ -109,8 +113,24 @@ test('voice preview uses a configured ID and fixed authenticated loopback endpoi
     const result = await previewLocalVoice(root, { id: 'default', language: 'en' });
     assert.equal(Buffer.from(result.audio, 'base64').toString(), 'RIFFtest');
     assert.equal(calls, 1);
+    await previewLocalVoice(root, { id: 'default', language: 'ja' });
+    assert.equal(calls, 2);
   } finally {
     globalThis.fetch = original;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('reference limits follow CosyVoice and technical checks distinguish silence from quiet audio', () => {
+  assert.equal(localVoiceCapabilities.maxReferenceSeconds, 30);
+  assert.throws(() => inspectReferencePcm(Buffer.alloc(48000 * 3)), /silent/);
+  assert.throws(() => inspectReferencePcm(Buffer.alloc(48000 * 30 + 2, 1)), /30 seconds/);
+  const quiet = Buffer.alloc(48000 * 3);
+  for (let i = 0; i < quiet.length; i += 2) quiet.writeInt16LE(10, i);
+  assert.deepEqual(inspectReferencePcm(quiet).warnings, ['quiet']);
+  const clipped = Buffer.alloc(48000 * 30);
+  for (let i = 0; i < clipped.length; i += 2) clipped.writeInt16LE(32767, i);
+  assert(inspectReferencePcm(clipped).warnings.includes('clipping'));
+  assert.equal(inspectReferencePcm(clipped).duration, 30);
+  assert(inspectReferencePcm(Buffer.alloc(48000, 12)).warnings.includes('short'));
 });
