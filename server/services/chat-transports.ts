@@ -145,9 +145,43 @@ export class ChatTransports {
   private async importChatMedia(c: ChatConnection, messageId: string): Promise<string[]> {
     const s = this.chatSession(c),
       store = this.channels.store;
-    const envelope = store.db
+    let envelope = store.db
       .prepare('SELECT payload FROM chat_received WHERE connection_id=? AND message_id=? AND at>?')
       .get(c.id, messageId, Date.now() - 86400000) as any;
+    if (!envelope && c.transport === 'onebot11' && c.peerType === 'group') {
+      // Only recover IDs already received in this route, never arbitrary historical messages.
+      const observed = store.db
+        .prepare(
+          'SELECT sender FROM chat_group_context WHERE connection_id=? AND message_id=? AND at>?',
+        )
+        .get(c.id, messageId, Date.now() - 86400000) as any;
+      assert(observed, 'CHAT_MEDIA_SCOPE', 'Message was not observed in this group.');
+      const raw = await this.socketRequest(c, s, 'get_msg', { message_id: messageId });
+      assert(
+        this.current(c, s) &&
+          raw?.message_type === 'group' &&
+          String(raw.group_id) === c.peerId &&
+          String(raw.message_id) === messageId &&
+          String(raw.user_id ?? raw.sender?.user_id) === observed.sender,
+        'CHAT_MEDIA_SCOPE',
+        'Recovered message does not match the observed group, message and sender.',
+      );
+      const parsed = incoming(c, {
+        ...raw,
+        post_type: 'message',
+        self_id: c.accountId,
+        user_id: raw.user_id ?? raw.sender?.user_id,
+      })[0];
+      assert(
+        parsed && chatSenderAllowed(c, parsed),
+        'CHAT_MEDIA_SCOPE',
+        'Recovered message is not permitted.',
+      );
+      envelope = { payload: JSON.stringify(parsed) };
+      store.db
+        .prepare('INSERT OR IGNORE INTO chat_received VALUES(?,?,?,?,?)')
+        .run(c.id, messageId, parsed.senderId, envelope.payload, Date.now());
+    }
     assert(envelope, 'CHAT_MEDIA_SCOPE', 'Message is not available in this chat.');
     const m = JSON.parse(envelope.payload),
       key = createHash('sha256')

@@ -1587,3 +1587,38 @@ test('execution rejects unknown parameters consistently with preflight, before r
   await registry.invoke('contract_probe', { value: 'x', options: { custom: 'allowed' } }, f.ctx);
   assert.equal(invoked, 1);
 });
+
+test('remote chat execution revalidation uses the same effective allowlist as discovery', async (t) => {
+  const f = fixture(t);
+  const { restrictedChat } = await import('../server/services/chat-access.js');
+  f.store.put('conversation', {
+    ...f.conversation,
+    projectId: null,
+    remoteChatOnly: true,
+    allowedTools: ['read_image'],
+  });
+  const ctx = { ...f.ctx, conversation: restrictedChat(f.store.get<any>('conversation', 'c')) };
+  const registry = new ToolRegistry();
+  let invoked = false;
+  registry.add({
+    name: 'read_chat_media',
+    effect: 'read',
+    schema: z.object({}),
+    description: 'fixture',
+    run: () => {
+      invoked = true;
+      return { content: 'media read' };
+    },
+  });
+  assert.ok(registry.specs(ctx).some((s) => s.name === 'read_chat_media'));
+  assert.equal((await registry.invoke('read_chat_media', {}, ctx)).content, 'media read');
+  assert.ok(invoked);
+  registry.add({
+    name: 'run_command',
+    effect: 'execute',
+    schema: z.object({}),
+    description: 'fixture',
+    run: () => ({ content: 'forbidden' }),
+  });
+  await assert.rejects(() => registry.invoke('run_command', {}, ctx), /Tool unavailable/);
+});

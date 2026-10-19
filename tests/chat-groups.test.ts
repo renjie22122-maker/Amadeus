@@ -752,3 +752,63 @@ test('voice import requests converted audio bytes even when the source has a URL
   assert.equal(action, 'get_record');
   assert.equal(refs.length, 1);
 });
+
+test('legacy observed media recovery verifies group and sender, and read_chat_media returns pixels', async (t) => {
+  const { store, channels, c } = setup(t);
+  c.accessMode = 'chat';
+  c.groupContext = true;
+  store.put('chat-connection', c);
+  const transport: any = new ChatTransports(channels);
+  transport.chatSession = () => ({ abort: new AbortController(), pending: new Map() });
+  store.db
+    .prepare('INSERT INTO chat_group_context VALUES(?,?,?,?,?)')
+    .run(c.id, 'old', '123', 'Please inspect the attached media.', Date.now());
+  assert.match(channels.groups.text(c), /legacy-metadata-missing/);
+  const sharp = (await import('sharp')).default;
+  const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#ff0000' } })
+    .png()
+    .toBuffer();
+  let foreign = true;
+  transport.socketRequest = async (_c: any, _s: any, action: string) =>
+    action === 'get_msg'
+      ? {
+          message_id: 'old',
+          group_id: foreign ? 'other' : c.peerId,
+          message_type: 'group',
+          user_id: 123,
+          time: Date.now() / 1000,
+          message: [{ type: 'image', data: { file: 'opaque' } }],
+        }
+      : { base64: png.toString('base64') };
+  await assert.rejects(() => transport.importChatMedia(c, 'old'), /does not match/);
+  await assert.rejects(() => transport.importChatMedia(c, 'unobserved'), /not observed/);
+  foreign = false;
+  const refs = await transport.importChatMedia(c, 'old');
+  assert.equal(refs.length, 1);
+  assert.match(channels.groups.text(c), /available-via-read_chat_media/);
+  store.db
+    .prepare(
+      "INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id) VALUES('active',?,?,'running','','r')",
+    )
+    .run(c.id, Date.now());
+  const definitions: any[] = [];
+  (await import('../server/tools/chat-tools.js')).installChatTools({
+    add: (d: any) => definitions.push(d),
+  } as any);
+  const tool = definitions.find((d) => d.name === 'read_chat_media');
+  const ctx: any = {
+    store,
+    conversation: { id: c.conversationId },
+    run: { id: 'r', profileId: 'test' },
+    config: { profile: () => ({ vision: true }) },
+    media: { output: async () => ({ bytes: png, mime: 'image/png' }) },
+  };
+  const result = await tool.run({ messageId: 'old' }, ctx);
+  assert.equal(result.images.length, 1);
+  assert.match(result.images[0], /^data:image\//);
+  assert.equal(JSON.parse(result.content).results[0].status, 'pixels-attached');
+  ctx.config.profile = () => ({ vision: false });
+  const noVision = await tool.run({ messageId: 'old' }, ctx);
+  assert.equal(noVision.images, undefined);
+  assert.match(noVision.content, /model-does-not-declare-vision/);
+});

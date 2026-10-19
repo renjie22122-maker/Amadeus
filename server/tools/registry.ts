@@ -1,3 +1,4 @@
+import { restrictedChat } from '../services/chat-access.js';
 import { installChatTools } from './chat-tools.js';
 import { rootRun } from '../services/task-board.js';
 import { installScheduledTools } from './scheduled-tools.js';
@@ -294,18 +295,22 @@ export class ToolRegistry {
       if (
         !this.specs({
           ...ctx,
-          conversation: ctx.store.get<Conversation>('conversation', ctx.conversation.id),
+          conversation: restrictedChat(
+            ctx.store.get<Conversation>('conversation', ctx.conversation.id),
+          ),
         }).some((d) => d.name === name)
       )
         throw new NotStartedError('PERMISSION_CHANGED', 'Permissions changed while waiting.');
     }
     const currentConversation =
       ctx.store.maybe<Conversation>('conversation', ctx.conversation.id) ?? ctx.conversation;
-    const currentContext = { ...ctx, conversation: currentConversation };
+    const currentContext = { ...ctx, conversation: restrictedChat(currentConversation) };
     const admission = capabilityDecision(currentContext, name, def.effect);
     if (
       !admission.allowed ||
       currentConversation.permission !== admittedConversation.permission ||
+      currentConversation.remoteChatOnly !== admittedConversation.remoteChatOnly ||
+      currentConversation.remoteSharedKnowledge !== admittedConversation.remoteSharedKnowledge ||
       JSON.stringify(executionSettings(ctx.config.get(), currentConversation)) !==
         admittedSettings ||
       currentConversation.projectId !== admittedConversation.projectId ||
