@@ -1,3 +1,4 @@
+import { validateReplyPlan, type ChatReplyPlan } from './chat-interaction.js';
 import { chatPlainText } from './chat-format.js';
 import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -50,6 +51,9 @@ export class ChatConnections {
     readonly directory: string,
   ) {
     this.groups = new ChatGroupContext(store);
+    store.db.exec(
+      'CREATE TABLE IF NOT EXISTS chat_received(connection_id TEXT NOT NULL,message_id TEXT NOT NULL,sender_id TEXT NOT NULL,payload TEXT NOT NULL,at INTEGER NOT NULL,PRIMARY KEY(connection_id,message_id)); CREATE INDEX IF NOT EXISTS chat_received_recent ON chat_received(connection_id,at);',
+    );
     store.db.exec(`CREATE TABLE IF NOT EXISTS chat_inbox(
       id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, received_at INTEGER NOT NULL, state TEXT NOT NULL,
       text TEXT NOT NULL, run_id TEXT, notice TEXT);
@@ -65,6 +69,7 @@ export class ChatConnections {
       ['chat_inbox', 'sender_id', 'TEXT'],
       ['chat_inbox', 'attachment_ids', "TEXT NOT NULL DEFAULT '[]'"],
       ['chat_outbox', 'reference', 'TEXT'],
+      ['chat_outbox', 'reply_plan', 'TEXT'],
     ] as const) {
       if (
         !(store.db.prepare('PRAGMA table_info(' + table + ')').all() as any[]).some(
@@ -372,6 +377,8 @@ export class ChatConnections {
       'Pause and stop/wait for the conversation first.',
     );
     this.groups.clear(key);
+    this.store.db.prepare('DELETE FROM chat_received WHERE connection_id=?').run(key);
+    this.store.remove('chat-member-cache', key);
     this.store.remove('chat-group-authorization', key);
     this.store.remove('chat-connection', key);
     this.store.remove('chat-transport-state', key);
@@ -455,6 +462,14 @@ export class ChatConnections {
       'CHAT_MESSAGE',
       'Stale or invalid message.',
     );
+    this.store.db
+      .prepare('INSERT OR IGNORE INTO chat_received VALUES(?,?,?,?,?)')
+      .run(c.id, m.id, m.senderId, JSON.stringify(m), now);
+    this.store.db
+      .prepare(
+        'DELETE FROM chat_received WHERE connection_id=? AND (at<? OR rowid NOT IN (SELECT rowid FROM chat_received WHERE connection_id=? ORDER BY at DESC,rowid DESC LIMIT 40))',
+      )
+      .run(c.id, now - 86400000, c.id);
     if (c.peerType === 'group') {
       this.groups.observe(c, m, now);
       const prefix = c.groupPrefix || '/amadeus';
@@ -549,13 +564,20 @@ export class ChatConnections {
     }
     return command ? 'done' : 'queued';
   }
-  reply(c: ChatConnection, key: string, text: string) {
+  reply(c: ChatConnection, key: string, text: string, plan?: ChatReplyPlan) {
     for (const [n, part] of messageParts(text).entries())
       this.store.db
         .prepare(
-          'INSERT OR IGNORE INTO chat_outbox (id,connection_id,state,text,created_at) VALUES(?,?,?,?,?)',
+          'INSERT OR IGNORE INTO chat_outbox (id,connection_id,state,text,created_at,reply_plan) VALUES(?,?,?,?,?,?)',
         )
-        .run(key + ':' + n, c.id, 'pending', part, Date.now());
+        .run(
+          key + ':' + n,
+          c.id,
+          'pending',
+          part,
+          Date.now(),
+          n === 0 && plan ? JSON.stringify(plan) : null,
+        );
   }
   private belongs(c: ChatConnection, runId: string): boolean {
     let key: string | null = runId;
@@ -730,6 +752,33 @@ export class ChatConnections {
           const silent =
             !!this.store.maybe('chat-proactive-run', run.id) &&
             (!result?.data.text || result.data.text.trim() === '[NO_REPLY]');
+          let plan = this.store.maybe<any>('chat-reply-plan', run.id);
+          if (plan) {
+            try {
+              if (plan.connectionId !== c.id || plan.revision !== c.revision)
+                throw Error('Changed target');
+              validateReplyPlan(this.store, c, plan);
+            } catch {
+              plan = undefined;
+              this.store.event(c.conversationId, run.id, 'chat.reply.warning', {
+                reason: 'Reply metadata expired or target changed; sent text only.',
+              });
+            }
+          }
+          if (!silent && plan)
+            for (const reference of plan.references || [])
+              this.store.db
+                .prepare(
+                  'INSERT OR IGNORE INTO chat_outbox(id,connection_id,state,text,created_at,reference) VALUES(?,?,?,?,?,?)',
+                )
+                .run(
+                  c.id + ':' + reference + ':' + run.id,
+                  c.id,
+                  'pending',
+                  '',
+                  Date.now(),
+                  reference,
+                );
           if (!silent)
             this.reply(
               c,
@@ -737,10 +786,12 @@ export class ChatConnections {
               result?.data.text
                 ? chatPlainText(result.data.text)
                 : `Task ${run.status}. Inspect the local conversation for details.`,
+              plan,
             );
           this.store.db
             .prepare("UPDATE chat_inbox SET state='done',text='' WHERE id=?")
             .run(row.id);
+          this.store.remove('chat-reply-plan', run.id);
         } else if (
           ['waiting_user', 'waiting_approval'].includes(run.status) &&
           row.notice !== run.status
@@ -804,10 +855,16 @@ export class ChatConnections {
         .prepare("UPDATE chat_inbox SET state='dispatching',run_id=? WHERE id=?")
         .run(runId, next.id);
       try {
-        this.runtime.start(c.conversationId, next.text, 0, {
-          runId,
-          attachmentIds: JSON.parse(next.attachment_ids),
-        });
+        this.runtime.start(
+          c.conversationId,
+          `[Chat transport: ${c.transport}; ${c.peerType || 'private'} ID: ${c.peerId}. Use inspect_chat for current group/members/media and prepare_chat_reply for native mentions, quotes or stickers. Never infer real identity from display names.]\n` +
+            next.text,
+          0,
+          {
+            runId,
+            attachmentIds: JSON.parse(next.attachment_ids),
+          },
+        );
         this.store.event(c.conversationId, runId, 'chat.origin', {
           connectionId: c.id,
           transport: c.transport,
@@ -824,6 +881,7 @@ export class ChatConnections {
       }
     }
     this.store.db.prepare('DELETE FROM chat_group_context WHERE at<?').run(Date.now() - 86400000);
+    this.store.db.prepare('DELETE FROM chat_received WHERE at<?').run(Date.now() - 86400000);
     // Bounded operational history; a 24-hour ingress window prevents old delivery replay.
     this.store.db
       .prepare("DELETE FROM chat_inbox WHERE state IN ('done','cancelled') AND received_at<?")

@@ -21,6 +21,10 @@ export async function downloadChatBytes(
   limit = chatMediaLimit,
 ) {
   const url = new URL(input);
+  if (url.protocol === 'http:' && (!url.port || url.port === '80')) {
+    url.protocol = 'https:';
+    url.port = '';
+  }
   assert(
     url.protocol === 'https:' &&
       !url.username &&

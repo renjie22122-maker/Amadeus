@@ -1,3 +1,4 @@
+import { installChatTools } from './chat-tools.js';
 import { rootRun } from '../services/task-board.js';
 import { installScheduledTools } from './scheduled-tools.js';
 import type { SourcePolicy } from '../services/source-policy.js';
@@ -1182,6 +1183,7 @@ export function tools() {
         }),
       ),
   });
+  installChatTools(registry);
   installScheduledTools(registry);
   installSkills(registry);
   registry.add({

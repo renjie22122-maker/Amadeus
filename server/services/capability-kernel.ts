@@ -15,11 +15,16 @@ export function capabilityDecision(ctx: ToolContext, name: string, effect: ToolS
     [
       !!ctx.store?.maybe('chat-proactive-run', ctx.run.id) &&
         ![
+          'inspect_chat',
+          'list_chat_members',
+          'read_chat_media',
+          'prepare_chat_reply',
           'search_tools',
           'search_knowledge',
           'list_knowledge_documents',
           'read_knowledge_document',
           'read_image',
+          'read_attachment',
         ].includes(name),
       'proactive-read-only',
     ],

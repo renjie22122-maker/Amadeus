@@ -612,3 +612,143 @@ test('new routes display the authenticated shared connection without masking rou
   channels.pause(other.id);
   assert.equal(channels.overview().find((x) => x.id === other.id)!.status.status, 'paused');
 });
+
+test('native replies carry structured mentions, quotes and faces without parsing CQ text', () => {
+  const c = group();
+  const action = onebotAction(c, 'literal [CQ:at,qq=all]', 'e', {
+    mentions: ['123'],
+    replyTo: 'm1',
+    faces: ['14'],
+  });
+  assert.deepEqual(
+    action.params.message.map((p: any) => p.type),
+    ['reply', 'at', 'text', 'face'],
+  );
+  assert.equal(action.params.group_id, 789);
+  const wechat = onebotAction(group('onebot12'), 'hello', 'e', {
+    mentions: ['123'],
+    replyTo: 'm1',
+  });
+  assert.deepEqual(wechat.params.message[0], { type: 'reply', data: { message_id: 'm1' } });
+  assert.deepEqual(wechat.params.message[1], { type: 'mention', data: { user_id: '123' } });
+});
+test('group file notices and mixed unsupported segments preserve downloadable media', () => {
+  const c = group();
+  const file = incoming(c, {
+    post_type: 'notice',
+    notice_type: 'group_upload',
+    self_id: 456,
+    group_id: 789,
+    user_id: 123,
+    time: Date.now() / 1000,
+    file: { id: 'file123', name: 'notes.pdf', url: 'https://example.org/file' },
+  })[0];
+  assert.equal(file.peerId, '789');
+  assert.equal(file.media?.[0].kind, 'file');
+  const mixed = incoming(c, {
+    post_type: 'message',
+    message_type: 'group',
+    self_id: 456,
+    group_id: 789,
+    user_id: 123,
+    message_id: 1,
+    time: Date.now() / 1000,
+    message: [
+      { type: 'json', data: { data: 'bad' } },
+      { type: 'image', data: { file: 'abc', url: 'https://example.org/image' } },
+    ],
+  })[0];
+  assert.equal(mixed.media?.length, 1);
+  assert.match(mixed.text, /attached media/);
+});
+test('reply plans cannot target another group or promote a claimed identity', async (t) => {
+  const { store, channels, c } = setup(t);
+  const { validateReplyPlan, currentChat } = await import('../server/services/chat-interaction.js');
+  new ChatTransports(channels);
+  const m = {
+    id: 'm1',
+    senderId: '123',
+    peerId: c.peerId,
+    peerType: 'group' as const,
+    text: '/amadeus hello',
+    timestamp: Date.now(),
+  };
+  channels.receive(c.id, m);
+  validateReplyPlan(store, c, { mentions: ['123'], replyTo: 'm1' });
+  assert.throws(() => validateReplyPlan(store, c, { mentions: ['all'] }));
+  assert.throws(() => validateReplyPlan(store, c, { mentions: ['999'] }));
+  assert.throws(() => validateReplyPlan(store, { ...c, id: 'other' }, { replyTo: 'm1' }));
+  assert.throws(() => currentChat(store, c.conversationId, 'local-run'));
+  store.db
+    .prepare("UPDATE chat_inbox SET run_id='r',state='running' WHERE connection_id=?")
+    .run(c.id);
+  assert.equal(currentChat(store, c.conversationId, 'r').c.peerId, c.peerId);
+  assert.throws(() => currentChat(store, 'other-conversation', 'r'));
+});
+test('passive media can be imported once without starting a model turn or reading host paths', async (t) => {
+  const { store, channels, c } = setup(t);
+  c.accessMode = 'chat';
+  c.groupContext = true;
+  c.allGroupMembers = true;
+  store.put('chat-connection', c);
+  const transport: any = new ChatTransports(channels);
+  const session = { abort: new AbortController(), pending: new Map(), downloading: false };
+  transport.chatSession = () => session;
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0d8AAAAASUVORK5CYII=',
+    'base64',
+  );
+  let calls = 0;
+  transport.socketRequest = async () => {
+    calls++;
+    return { base64: png.toString('base64'), url: 'C:/must-not-read' };
+  };
+  channels.receive(c.id, {
+    id: 'pic',
+    senderId: '123',
+    peerId: c.peerId,
+    peerType: 'group',
+    text: 'image',
+    timestamp: Date.now(),
+    media: [{ id: 'encoded-file', kind: 'image', name: 'pic.png' }],
+  });
+  assert.match(channels.groups.text(c), /Media not imported/);
+  const refs = await transport.importChatMedia(c, 'pic');
+  assert.equal(refs.length, 1);
+  const a = store.get<any>('attachment', refs[0].slice(11));
+  assert.equal(a.mime, 'image/png');
+  assert.ok(a.messageEventId);
+  assert.deepEqual(await transport.importChatMedia(c, 'pic'), refs);
+  assert.equal(calls, 1);
+  assert.equal(
+    store.db.prepare("SELECT count(*) AS n FROM chat_inbox WHERE state='queued'").get()!.n,
+    0,
+  );
+  await assert.rejects(() => transport.importChatMedia({ ...c, id: 'other' }, 'pic'));
+});
+test('voice import requests converted audio bytes even when the source has a URL', async (t) => {
+  const { channels, c } = setup(t);
+  const transport: any = new ChatTransports(channels);
+  const session = { abort: new AbortController(), pending: new Map(), downloading: false };
+  transport.chatSession = () => session;
+  let action = '';
+  transport.socketRequest = async (_c: any, _s: any, a: string, params: any) => {
+    action = a;
+    assert.equal(params.out_format, 'mp3');
+    return { base64: Buffer.from('ID3 test audio').toString('base64'), url: 'C:/never-read' };
+  };
+  channels.receive(c.id, {
+    id: 'voice',
+    senderId: '123',
+    peerId: c.peerId,
+    peerType: 'group',
+    text: 'voice',
+    timestamp: Date.now(),
+    media: [
+      { id: 'voice-id', url: 'http://example.org/raw.silk', kind: 'audio', name: 'voice.ogg' },
+    ],
+  });
+  const refs = await transport.importChatMedia(c, 'voice');
+  assert.equal(action, 'get_record');
+  assert.equal(refs.length, 1);
+});

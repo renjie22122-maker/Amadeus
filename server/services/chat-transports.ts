@@ -1,3 +1,4 @@
+import { registerChatInteraction } from './chat-interaction.js';
 import {
   downloadChatBytes,
   decryptWecomFile,
@@ -51,6 +52,7 @@ type Session = {
   sending: boolean;
   lastDelivery?: string;
   downloading?: boolean;
+  querying?: number;
   nextPoll: number;
   nextSend: number;
   pending: Map<string, { resolve: (v: any) => void; reject: () => void }>;
@@ -75,7 +77,137 @@ export class ChatTransports {
       () => this.jobs.delete(job),
     );
   }
-  constructor(readonly channels: ChatConnections) {}
+  constructor(readonly channels: ChatConnections) {
+    registerChatInteraction(channels, {
+      query: (c, k) => this.queryChat(c, k),
+      importMedia: (c, m) => this.importChatMedia(c, m),
+    });
+  }
+  private chatSession(c: ChatConnection) {
+    this.channels.authorize(c);
+    const owner = this.channels
+      .list()
+      .filter((r) => r.enabled && this.accountKey(r) === this.accountKey(c))
+      .sort((a, b) => a.id.localeCompare(b.id))[0];
+    const s = owner ? this.sessions.get(owner.id) : undefined;
+    assert(s && this.current(c, s), 'CHAT_OFFLINE', 'Current chat transport is offline.');
+    return s;
+  }
+  private async queryChat(c: ChatConnection, kind: 'info' | 'members') {
+    assert(
+      c.peerType === 'group' && ['onebot11', 'onebot12'].includes(c.transport),
+      'CHAT_UNSUPPORTED',
+      'This adapter does not expose group/member queries.',
+    );
+    const s = this.chatSession(c);
+    s.querying = (s.querying || 0) + 1;
+    let data: any;
+    try {
+      data = await this.socketRequest(
+        c,
+        s,
+        kind === 'info' ? 'get_group_info' : 'get_group_member_list',
+        { group_id: c.transport === 'onebot11' ? Number(c.peerId) : c.peerId },
+      );
+    } finally {
+      s.querying--;
+    }
+    assert(this.current(c, s), 'CHAT_CHANGED', 'Connection changed during query.');
+    if (kind === 'info') {
+      assert(String(data?.group_id) === c.peerId, 'CHAT_SCOPE', 'Platform returned another group.');
+      return {
+        id: c.peerId,
+        name: String(data.group_name || '').slice(0, 200),
+        memberCount: data.member_count,
+        source: 'platform',
+      };
+    }
+    assert(
+      Array.isArray(data) && data.length <= 20000,
+      'CHAT_MEMBERS',
+      'Invalid or oversized member response.',
+    );
+    return data.map((m: any) => {
+      assert(
+        m.group_id === undefined || String(m.group_id) === c.peerId,
+        'CHAT_SCOPE',
+        'Platform returned another group.',
+      );
+      return {
+        id: String(m.user_id),
+        name: String(m.nickname || m.user_name || '').slice(0, 200),
+        card: String(m.card || m.user_displayname || '').slice(0, 200),
+        role: ['owner', 'admin', 'member'].includes(m.role) ? m.role : 'unknown',
+      };
+    });
+  }
+  private mediaImports = new Map<string, Promise<string[]>>();
+  private async importChatMedia(c: ChatConnection, messageId: string): Promise<string[]> {
+    const s = this.chatSession(c),
+      store = this.channels.store;
+    const envelope = store.db
+      .prepare('SELECT payload FROM chat_received WHERE connection_id=? AND message_id=? AND at>?')
+      .get(c.id, messageId, Date.now() - 86400000) as any;
+    assert(envelope, 'CHAT_MEDIA_SCOPE', 'Message is not available in this chat.');
+    const m = JSON.parse(envelope.payload),
+      key = createHash('sha256')
+        .update(c.id + '\0' + messageId)
+        .digest('hex');
+    assert(m.media?.length, 'CHAT_MEDIA_EMPTY', 'Message contains no downloadable media.');
+    const existing = store.db.prepare('SELECT * FROM chat_inbox WHERE id=?').get(key) as any;
+    if (existing?.attachment_ids && JSON.parse(existing.attachment_ids).length)
+      return JSON.parse(existing.attachment_ids).map((id: string) => 'attachment:' + id);
+    if (this.mediaImports.has(key)) return this.mediaImports.get(key)!;
+    assert(
+      !existing || existing.state === 'media-failed',
+      'CHAT_MEDIA_PENDING',
+      'Media is already being imported; retry after completion.',
+    );
+    assert(
+      this.mediaImports.size < 2 && !s.downloading,
+      'CHAT_MEDIA_BUSY',
+      'Media import capacity reached.',
+    );
+    store.db
+      .prepare(
+        "INSERT OR REPLACE INTO chat_inbox(id,connection_id,received_at,state,text,media,notice) VALUES(?,?,?,'receiving','',?,'context-only')",
+      )
+      .run(key, c.id, Date.now(), JSON.stringify(m.media));
+    const job = (async () => {
+      s.downloading = true;
+      await this.receiveMedia(c, s, {
+        id: key,
+        media: JSON.stringify(m.media),
+        notice: 'context-only',
+      });
+      const row = store.db
+        .prepare('SELECT state,attachment_ids FROM chat_inbox WHERE id=?')
+        .get(key) as any;
+      assert(
+        row?.state === 'done',
+        'CHAT_MEDIA_IMPORT',
+        'Attachment import failed; no content was inspected.',
+      );
+      const ids: string[] = JSON.parse(row.attachment_ids);
+      const event = store.event(c.conversationId, null, 'chat.media.imported', {
+        messageId,
+        attachmentIds: ids,
+      });
+      for (const id of ids) {
+        const a = store.get<any>('attachment', id);
+        store.put('attachment', { ...a, messageEventId: event.id });
+      }
+      return ids.map((id) => 'attachment:' + id);
+    })();
+    this.mediaImports.set(key, job);
+    this.track(job);
+    try {
+      return await job;
+    } finally {
+      this.mediaImports.delete(key);
+      s.downloading = false;
+    }
+  }
   start() {
     this.timer = setInterval(() => {
       try {
@@ -438,7 +570,8 @@ export class ChatTransports {
       if (
         !this.current(c, s) ||
         typeof event.data !== 'string' ||
-        event.data.length > (s.downloading ? 72 * 1024 * 1024 : 256000)
+        event.data.length >
+          (s.downloading ? 72 * 1024 * 1024 : s.querying ? 2 * 1024 * 1024 : 256000)
       )
         return;
       try {
@@ -570,15 +703,25 @@ export class ChatTransports {
             'Unsupported or oversized bridge file.',
           );
           bytes = Buffer.from(f.data, 'base64');
-        } else if (c.transport === 'onebot11' && !url) {
+        } else if (c.transport === 'onebot11' && !!file.id) {
           const action =
             file.kind === 'image' ? 'get_image' : file.kind === 'audio' ? 'get_record' : 'get_file';
           const f = await this.socketRequest(c, s, action, {
             file: file.id,
             file_id: file.id,
+            ...(c.peerType === 'group' ? { group_id: Number(c.peerId) } : {}),
             out_format: 'mp3',
           });
           url = f.url;
+          if (typeof f.base64 === 'string') {
+            assert(
+              f.base64.length <= Math.ceil(chatMediaLimit / 3) * 4 &&
+                /^[A-Za-z0-9+/]*={0,2}$/.test(f.base64),
+              'CHAT_MEDIA_BYTES',
+              'Invalid bridge file bytes.',
+            );
+            bytes = Buffer.from(f.base64, 'base64');
+          }
         }
         if (!bytes) {
           assert(
@@ -622,7 +765,7 @@ export class ChatTransports {
         throw Error('Import cancelled');
       this.channels.store.db
         .prepare(
-          "UPDATE chat_inbox SET state='queued',attachment_ids=?,media=NULL WHERE id=? AND state='downloading'",
+          "UPDATE chat_inbox SET state=CASE WHEN notice='context-only' THEN 'done' ELSE 'queued' END,attachment_ids=?,media=NULL WHERE id=? AND state='downloading'",
         )
         .run(JSON.stringify(ids), row.id);
     } catch {
@@ -637,11 +780,12 @@ export class ChatTransports {
             "UPDATE chat_inbox SET state='media-failed',media=NULL WHERE id=? AND state='downloading'",
           )
           .run(row.id);
-        this.channels.reply(
-          c,
-          row.id + ':media-error',
-          'Attachment could not be imported: unsupported type, size limit, network or parse failure. No task was started. Retry with a smaller supported attachment or inspect Amadeus.',
-        );
+        if (row.notice !== 'context-only')
+          this.channels.reply(
+            c,
+            row.id + ':media-error',
+            'Attachment could not be imported: unsupported type, size limit, network or parse failure. No task was started. Retry with a smaller supported attachment or inspect Amadeus.',
+          );
       }
       // Imported partial attachments are retained as provenance, never picked up by local drafts.
     }
@@ -986,7 +1130,12 @@ export class ChatTransports {
                       markdown: { content: row.text },
                     },
                   }
-                : onebotAction(c, row.text, echo),
+                : onebotAction(
+                    c,
+                    row.text,
+                    echo,
+                    row.reply_plan ? JSON.parse(row.reply_plan) : undefined,
+                  ),
             ),
           );
         } catch {

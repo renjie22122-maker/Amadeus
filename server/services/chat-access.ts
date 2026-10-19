@@ -2,11 +2,16 @@ import type { ChatConnection, ChatIncoming } from '../../shared/chat-connections
 import type { Conversation } from '../../shared/types.js';
 // Explicit capabilities, not effect=read (which can include private files and credentials).
 export const socialChatTools = new Set([
+  'inspect_chat',
+  'list_chat_members',
+  'read_chat_media',
+  'prepare_chat_reply',
   'search_tools',
   'web_search',
   'fetch_url',
   'read_web_evidence',
   'read_image',
+  'read_attachment',
   'search_knowledge',
   'list_knowledge_documents',
   'read_knowledge_document',

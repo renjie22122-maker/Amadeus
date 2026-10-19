@@ -89,6 +89,16 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
     )
       return [];
     const media: ChatRemoteFile[] = [];
+    if (m.sticker)
+      media.push({
+        id: m.sticker.file_id,
+        name: m.sticker.is_video
+          ? 'sticker.webm'
+          : m.sticker.is_animated
+            ? 'sticker.tgs'
+            : 'sticker.webp',
+        kind: m.sticker.is_video ? 'video' : m.sticker.is_animated ? 'file' : 'image',
+      });
     const photo = m.photo?.at(-1);
     if (photo) media.push({ id: photo.file_id, name: 'photo.jpg', kind: 'image' });
     for (const [key, kind, name] of [
@@ -143,7 +153,13 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
           if (m.context?.forwarded || m.context?.frequently_forwarded) return [];
           if (m.type === 'text') return make(m.id, m.from, m.from, m.text?.body, m.timestamp);
           const kind = (
-            { image: 'image', audio: 'audio', video: 'video', document: 'file' } as const
+            {
+              image: 'image',
+              sticker: 'image',
+              audio: 'audio',
+              video: 'video',
+              document: 'file',
+            } as const
           )[m.type as 'image'];
           const part = m[m.type];
           if (!kind || !part?.id) return [];
@@ -235,6 +251,30 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
   }
   if (c.transport === 'onebot11') {
     if (
+      event.post_type === 'notice' &&
+      event.notice_type === 'group_upload' &&
+      c.peerType === 'group' &&
+      String(event.self_id) === c.accountId &&
+      event.file?.id &&
+      event.user_id
+    ) {
+      return make(
+        'upload:' + event.file.id + ':' + event.time,
+        event.user_id,
+        event.group_id,
+        '[Group file upload]',
+        event.time,
+        [
+          {
+            id: String(event.file.id),
+            url: event.file.url,
+            name: String(event.file.name || 'file'),
+            kind: 'file',
+          },
+        ],
+      );
+    }
+    if (
       event.post_type !== 'message' ||
       event.message_type !== (c.peerType || 'private') ||
       String(event.self_id) !== c.accountId ||
@@ -287,8 +327,28 @@ export function messageParts(text: string, limit = 2800) {
   if (part) parts.push(part);
   return parts;
 }
-export function onebotAction(c: ChatConnection, text: string, echo: string) {
-  const message = [{ type: 'text', data: { text } }];
+export function onebotAction(
+  c: ChatConnection,
+  text: string,
+  echo: string,
+  plan?: import('./chat-interaction.js').ChatReplyPlan,
+) {
+  const message: any[] = [];
+  if (plan?.replyTo)
+    message.push({
+      type: 'reply',
+      data: c.transport === 'onebot11' ? { id: plan.replyTo } : { message_id: plan.replyTo },
+    });
+  if (c.peerType === 'group')
+    for (const who of plan?.mentions || [])
+      if (who !== 'all')
+        message.push({
+          type: c.transport === 'onebot11' ? 'at' : 'mention',
+          data: c.transport === 'onebot11' ? { qq: who } : { user_id: who },
+        });
+  message.push({ type: 'text', data: { text } });
+  if (c.transport === 'onebot11')
+    for (const face of plan?.faces || []) message.push({ type: 'face', data: { id: face } });
   return c.transport === 'onebot11'
     ? {
         action: c.peerType === 'group' ? 'send_group_msg' : 'send_private_msg',
@@ -366,9 +426,24 @@ function groupSegments(parts: any, account: string) {
     }
     if (p?.type === 'reply')
       return [
-        { type: 'text', data: { text: ' [Reply message ID: ' + String(p.data?.id ?? '') + '] ' } },
+        {
+          type: 'text',
+          data: {
+            text: ' [Reply message ID: ' + String(p.data?.id ?? p.data?.message_id ?? '') + '] ',
+          },
+        },
       ];
-    if (p?.type === 'face') return [{ type: 'text', data: { text: ' [Emoji] ' } }];
+    if (p?.type === 'face')
+      return [
+        {
+          type: 'text',
+          data: {
+            text: ' [Platform face ID: ' + String(p.data?.id ?? p.data?.message_id ?? '') + '] ',
+          },
+        },
+      ];
+    if (!['text', 'image', 'record', 'audio', 'voice', 'video', 'file'].includes(p?.type))
+      return [];
     return [p];
   });
 }
