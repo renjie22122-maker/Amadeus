@@ -1,3 +1,6 @@
+import { ProcessHistory } from './components/ProcessHistory';
+import { collapsibleProcess } from './conversation-process';
+import { WorkbenchProvider } from './components/Workbench';
 import { useScheduleNotifications } from './useScheduleNotifications';
 import { AttachmentPreview } from './components/AttachmentPreview';
 import { mergeConversationEvents } from './conversation-events';
@@ -681,7 +684,33 @@ export function App() {
           {loadingOlder ? '…' : Math.max(0, starts.length - visibleTurns) || '…'}
         </button>,
       );
+    const folded = collapsibleProcess(all, currentRuns);
+    let processNodes: any[] = [],
+      processEvents: AgentEvent[] = [];
+    const finishProcess = () => {
+      if (!processNodes.length) return;
+      const tools = processEvents.filter((e) => e.type === 'tool.started').length;
+      const messages = processEvents.filter((e) => e.type === 'assistant.message').length;
+      nodes.push(
+        <ProcessHistory
+          key={'process-' + processEvents[0].id}
+          label={
+            language === 'zh'
+              ? `执行过程 · ${tools} 次工具调用 · ${messages} 条进度消息`
+              : `Work · ${tools} tool calls · ${messages} progress messages`
+          }
+        >
+          {processNodes}
+        </ProcessHistory>,
+      );
+      processNodes = [];
+      processEvents = [];
+    };
     for (const e of all.slice(offset)) {
+      if (folded.has(e.id) || processNodes.length) flush();
+      if (!folded.has(e.id) || (processEvents.length && processEvents[0].runId !== e.runId))
+        finishProcess();
+      const start = nodes.length;
       if (e.type === 'user.message' || e.type === 'assistant.message') {
         flush();
         nodes.push(
@@ -789,6 +818,11 @@ export function App() {
           </div>,
         );
       }
+      if (folded.has(e.id)) flush();
+      if (folded.has(e.id)) {
+        processNodes.push(...nodes.splice(start));
+        processEvents.push(e);
+      }
       if (e.runId && lastByRun.get(e.runId) === e.id && detail) {
         flush();
         nodes.push(
@@ -805,6 +839,7 @@ export function App() {
       }
     }
     flush();
+    finishProcess();
     return nodes;
   }
   if (!state)
@@ -992,378 +1027,389 @@ export function App() {
             </Suspense>
           </div>
         ) : (
-          <div className="chat-layout">
-            <div className="chat-main">
-              <div
-                className="conversation-scroll"
-                ref={scroll}
-                onScroll={() => {
-                  const el = scroll.current!;
-                  stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 130;
-                }}
-              >
-                <div className="conversation-width">
-                  {!detail?.events.length ? (
-                    <section className="welcome">
-                      <div className="welcome-icon">
-                        <Sparkles size={32} />
-                      </div>
-                      <div className="eyebrow">{t('A LITTLE SPACE FOR BIG IDEAS')}</div>
-                      <h1>{t('welcome')}</h1>
-                      <p>{t('welcomeSub')}</p>
-                      <div className="suggestions">
-                        {[
-                          [Folder, 'Explore a project', 'Understand code, plan a change'],
-                          [BookOpen, 'Work with documents', 'Find answers grounded in sources'],
-                          [Sparkles, 'Start with a question', 'Think through something together'],
-                        ].map(([Icon, title, sub]: any) => (
-                          <button
-                            key={title}
-                            onClick={() => {
-                              setDraft(
-                                title === 'Explore a project'
-                                  ? 'Help me understand this project.'
-                                  : title === 'Work with documents'
-                                    ? 'Help me analyze the documents I attach.'
-                                    : 'Help me think through an idea.',
-                              );
-                              draftRef.current?.focus();
-                            }}
-                          >
-                            <Icon size={19} />
-                            <strong>{t(title)}</strong>
-                            <span>{t(sub)}</span>
+          <WorkbenchProvider
+            key={selected || 'none'}
+            events={detail?.events || []}
+            zh={language === 'zh'}
+          >
+            <div className="chat-layout">
+              <div className="chat-main">
+                <div
+                  className="conversation-scroll"
+                  ref={scroll}
+                  onScroll={() => {
+                    const el = scroll.current!;
+                    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 130;
+                  }}
+                >
+                  <div className="conversation-width">
+                    {!detail?.events.length ? (
+                      <section className="welcome">
+                        <div className="welcome-icon">
+                          <Sparkles size={32} />
+                        </div>
+                        <div className="eyebrow">{t('A LITTLE SPACE FOR BIG IDEAS')}</div>
+                        <h1>{t('welcome')}</h1>
+                        <p>{t('welcomeSub')}</p>
+                        <div className="suggestions">
+                          {[
+                            [Folder, 'Explore a project', 'Understand code, plan a change'],
+                            [BookOpen, 'Work with documents', 'Find answers grounded in sources'],
+                            [Sparkles, 'Start with a question', 'Think through something together'],
+                          ].map(([Icon, title, sub]: any) => (
+                            <button
+                              key={title}
+                              onClick={() => {
+                                setDraft(
+                                  title === 'Explore a project'
+                                    ? 'Help me understand this project.'
+                                    : title === 'Work with documents'
+                                      ? 'Help me analyze the documents I attach.'
+                                      : 'Help me think through an idea.',
+                                );
+                                draftRef.current?.focus();
+                              }}
+                            >
+                              <Icon size={19} />
+                              <strong>{t(title)}</strong>
+                              <span>{t(sub)}</span>
+                            </button>
+                          ))}
+                        </div>
+                        {!state.settings.profiles.length && (
+                          <button className="primary" onClick={() => setPage('settings')}>
+                            {t('noModel')}
                           </button>
-                        ))}
-                      </div>
-                      {!state.settings.profiles.length && (
-                        <button className="primary" onClick={() => setPage('settings')}>
-                          {t('noModel')}
-                        </button>
-                      )}
-                    </section>
-                  ) : (
-                    timeline()
-                  )}
-                  {conversation && !conversation.parentId && !conversation.isolationId && (
-                    <ConversationSchedules
-                      key={conversation.id}
-                      conversationId={conversation.id}
-                      state={state}
-                      zh={language === 'zh'}
-                      notify={notify}
-                      openConversation={(id: string) => {
-                        setSelected(id);
-                        void refresh();
-                      }}
-                    />
-                  )}
-                  {Object.entries(streams).map(
-                    ([key, s]: any) =>
-                      s.text && (
-                        <article className="message assistant streaming" key={key}>
-                          <div className="message-heading">
-                            <span className="avatar">
-                              <Sparkles size={15} />
-                            </span>
-                            <strong>{t('Amadeus')}</strong>
-                            <span className="working-dot" />
-                          </div>
-                          <div className="message-body">
-                            <Markdown text={s.text} live interaction={{ zh: language === 'zh' }} />
-                          </div>
-                        </article>
-                      ),
-                  )}
-                  {detail?.teamSpace && (
-                    <details className="team-panel">
-                      <summary>
-                        {language === 'zh' ? '团队运行状态' : 'Team lifecycle'} ·{' '}
-                        {detail.teamSpace.mode} · {detail.teamSpace.status}
-                      </summary>
-                      {detail.teamSpace.selection && (
-                        <p>
-                          {language === 'zh' ? '组织方式选择：' : 'Organization choice: '}
-                          {detail.teamSpace.selection.reason}
-                        </p>
-                      )}
-                      {detail.teamSpace.status === 'active' && (
-                        <button
-                          onClick={() =>
+                        )}
+                      </section>
+                    ) : (
+                      timeline()
+                    )}
+                    {conversation && !conversation.parentId && !conversation.isolationId && (
+                      <ConversationSchedules
+                        key={conversation.id}
+                        conversationId={conversation.id}
+                        state={state}
+                        zh={language === 'zh'}
+                        notify={notify}
+                        openConversation={(id: string) => {
+                          setSelected(id);
+                          void refresh();
+                        }}
+                      />
+                    )}
+                    {Object.entries(streams).map(
+                      ([key, s]: any) =>
+                        s.text && (
+                          <article className="message assistant streaming" key={key}>
+                            <div className="message-heading">
+                              <span className="avatar">
+                                <Sparkles size={15} />
+                              </span>
+                              <strong>{t('Amadeus')}</strong>
+                              <span className="working-dot" />
+                            </div>
+                            <div className="message-body">
+                              <Markdown
+                                text={s.text}
+                                live
+                                interaction={{ zh: language === 'zh' }}
+                              />
+                            </div>
+                          </article>
+                        ),
+                    )}
+                    {detail?.teamSpace && (
+                      <details className="team-panel">
+                        <summary>
+                          {language === 'zh' ? '团队运行状态' : 'Team lifecycle'} ·{' '}
+                          {detail.teamSpace.mode} · {detail.teamSpace.status}
+                        </summary>
+                        {detail.teamSpace.selection && (
+                          <p>
+                            {language === 'zh' ? '组织方式选择：' : 'Organization choice: '}
+                            {detail.teamSpace.selection.reason}
+                          </p>
+                        )}
+                        {detail.teamSpace.status === 'active' && (
+                          <button
+                            onClick={() =>
+                              void action(() =>
+                                api('/runs/' + detail.teamSpace!.id + '/stop-team', {}),
+                              )
+                            }
+                          >
+                            {language === 'zh' ? '停止整个团队' : 'Stop entire team'}
+                          </button>
+                        )}
+                        <TeamManagement
+                          team={detail.teamSpace}
+                          members={detail.teamMembers}
+                          zh={language === 'zh'}
+                          onTransfer={(role, targetRunId) =>
                             void action(() =>
-                              api('/runs/' + detail.teamSpace!.id + '/stop-team', {}),
+                              api('/runs/' + detail.teamSpace!.id + '/team-role', {
+                                role,
+                                targetRunId,
+                                revision: detail.teamSpace!.revision,
+                              }),
                             )
                           }
-                        >
-                          {language === 'zh' ? '停止整个团队' : 'Stop entire team'}
-                        </button>
-                      )}
-                      <TeamManagement
-                        team={detail.teamSpace}
-                        members={detail.teamMembers}
-                        zh={language === 'zh'}
-                        onTransfer={(role, targetRunId) =>
-                          void action(() =>
-                            api('/runs/' + detail.teamSpace!.id + '/team-role', {
-                              role,
-                              targetRunId,
-                              revision: detail.teamSpace!.revision,
-                            }),
-                          )
-                        }
-                      />
-                      {detail.teamScheduling?.enabled && (
-                        <div className="notice">
-                          Scheduling 路 max load {detail.teamScheduling.maxLoad}
-                          {detail.teamScheduling.loads?.map((m) => (
-                            <div key={m.runId}>
-                              {m.runId.slice(0, 8)} 路 {m.load}/{detail.teamScheduling!.maxLoad}
-                            </div>
-                          ))}
-                          {detail.teamScheduling.blocked?.map((b) => (
-                            <div key={b.taskId}>
-                              {b.taskId}: {b.reason}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {detail.teamSpace.mode === 'creative' && (
-                        <div>
-                          {language === 'zh'
-                            ? '每成员最多可发送的团队消息数（不是辩论轮次）：'
-                            : 'Discussion message limit per member: '}
-                          {detail.teamSpace.maxMessages}
-                          <form
-                            key={detail.teamSpace.id + ':' + detail.teamSpace.maxMessages}
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              const data = new FormData(e.currentTarget);
-                              void action(() =>
-                                api('/runs/' + detail.teamSpace!.id + '/team-discussion-limit', {
-                                  maxMessages: Number(data.get('maxMessages')),
-                                }),
-                              );
-                            }}
-                          >
-                            <input
-                              aria-label={
-                                language === 'zh' ? '每成员讨论消息预算' : 'Messages per member'
-                              }
-                              name="maxMessages"
-                              type="number"
-                              min="1"
-                              max="1000"
-                              defaultValue={detail.teamSpace.maxMessages}
-                            />
-                            <button type="submit">
-                              {language === 'zh' ? '保存讨论额度' : 'Save discussion budget'}
-                            </button>
-                          </form>
-                          {detail.teamSpace.discussionBudget && (
-                            <span>
-                              {language === 'zh'
-                                ? ' · 当前成员已用 / 剩余：'
-                                : ' · Current member used / remaining: '}
-                              {detail.teamSpace.discussionBudget.used} /{' '}
-                              {detail.teamSpace.discussionBudget.remaining}
-                            </span>
-                          )}
-                          <br />
-                          {detail.teamSpace.autoEnroll
-                            ? language === 'zh'
-                              ? '本团队自动纳入后续成员'
-                              : 'This team automatically enrolls new members'
-                            : language === 'zh'
-                              ? '本团队使用固定成员名单'
-                              : 'This team uses a fixed roster'}
-                        </div>
-                      )}
-                      {detail.teamSpace.blockers.map((b) => (
-                        <p key={b}>{b}</p>
-                      ))}
-                    </details>
-                  )}
-                  {!!detail?.taskBoard?.tasks?.length && (
-                    <details className="team-panel">
-                      <summary>
-                        {language === 'zh'
-                          ? '任务计划（执行者记录）'
-                          : 'Task plan (author-reported)'}{' '}
-                        · {detail.taskBoard.tasks.filter((t: any) => t.status === 'done').length}/
-                        {detail.taskBoard.tasks.length}
-                      </summary>
-                      {detail.taskBoard.tasks.map((task: any) => (
-                        <div
-                          className="notice"
-                          key={task.id}
-                          id={'plan-task-' + task.id}
-                          tabIndex={-1}
-                        >
-                          <strong>{task.title}</strong> <span className="pill">{task.status}</span>
-                          <p>{task.acceptance}</p>
-                          <small>
-                            {language === 'zh' ? '验证' : 'Verification'}:{' '}
-                            {task.verification?.status === 'checked'
-                              ? language === 'zh'
-                                ? '结果已记录并绑定版本（非独立验收）'
-                                : 'Observed result bound to version (not independent review)'
-                              : task.verification?.status === 'stale'
-                                ? language === 'zh'
-                                  ? '已过期，需要重新检查'
-                                  : 'Stale; recheck required'
-                                : language === 'zh'
-                                  ? '执行者声明，未绑定版本'
-                                  : 'Author-reported; no version binding'}
-                          </small>
-                          <small>
-                            {task.id} · {task.dependsOn.join(', ')} · {task.owner || '—'}
-                          </small>
-                          {task.note && <p>{task.note}</p>}
-                          {!!task.evidence.length && (
-                            <p>
-                              {language === 'zh' ? '证据事件' : 'Evidence events'}:{' '}
-                              {task.evidence.join(', ')}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </details>
-                  )}
-                  {!!detail?.unknownEffects.length && (
-                    <details className="notice recovery-card" key={selected}>
-                      <summary>
-                        {language === 'zh'
-                          ? '待核对的中断操作'
-                          : 'Interrupted operations to inspect'}{' '}
-                        · {detail.unknownEffects.length}
-                      </summary>
-                      <p>
-                        {t('settings') !== 'Settings'
-                          ? '可以继续对话并进行只读检查；未知命令不会自动重跑。先自动核对，仍无法判断时再记录人工结论。'
-                          : 'You can continue chatting and inspect safely. Unknown commands are never replayed. Try automatic checks before recording a manual conclusion.'}
-                      </p>
-                      <button
-                        onClick={() =>
-                          void action(async () => {
-                            await api('/conversations/' + selected + '/recovery/check', {});
-                            await load(selected!);
-                          })
-                        }
-                      >
-                        {t('settings') !== 'Settings'
-                          ? '自动核对现有结果'
-                          : 'Check existing results automatically'}
-                      </button>
-                      {detail?.unknownEffects.map((e: any) => (
-                        <div className="notice" key={e.id}>
-                          <strong>{t('inspect')}</strong>
-                          <pre>{e.tool + ' ' + e.args}</pre>
-                          <p className="muted">
-                            {t('settings') !== 'Settings'
-                              ? '上次结果仍未知。允许重新尝试可能重复产生副作用；此按钮不立即执行，后续仍遵守正常权限与审批。'
-                              : 'The previous outcome remains unknown. Retrying may duplicate side effects. This button does not execute anything; normal permissions and approval still apply.'}
-                          </p>
-                          <button
-                            disabled={running}
-                            onClick={() =>
-                              void action(async () => {
-                                await api('/effects/' + e.id + '/allow-retry', {});
-                                await load(selected!);
-                              })
-                            }
-                          >
-                            {t('settings') !== 'Settings'
-                              ? '允许下次重新尝试'
-                              : 'Allow another attempt'}
-                          </button>
-
-                          <button
-                            onClick={() =>
-                              void action(async () => {
-                                const note = prompt(
-                                  'Describe the actual outcome after inspecting the files/processes.',
+                        />
+                        {detail.teamScheduling?.enabled && (
+                          <div className="notice">
+                            Scheduling 路 max load {detail.teamScheduling.maxLoad}
+                            {detail.teamScheduling.loads?.map((m) => (
+                              <div key={m.runId}>
+                                {m.runId.slice(0, 8)} 路 {m.load}/{detail.teamScheduling!.maxLoad}
+                              </div>
+                            ))}
+                            {detail.teamScheduling.blocked?.map((b) => (
+                              <div key={b.taskId}>
+                                {b.taskId}: {b.reason}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {detail.teamSpace.mode === 'creative' && (
+                          <div>
+                            {language === 'zh'
+                              ? '每成员最多可发送的团队消息数（不是辩论轮次）：'
+                              : 'Discussion message limit per member: '}
+                            {detail.teamSpace.maxMessages}
+                            <form
+                              key={detail.teamSpace.id + ':' + detail.teamSpace.maxMessages}
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                const data = new FormData(e.currentTarget);
+                                void action(() =>
+                                  api('/runs/' + detail.teamSpace!.id + '/team-discussion-limit', {
+                                    maxMessages: Number(data.get('maxMessages')),
+                                  }),
                                 );
-                                if (note) {
-                                  await api('/effects/' + e.id + '/resolve', { note });
-                                  await load(selected!);
+                              }}
+                            >
+                              <input
+                                aria-label={
+                                  language === 'zh' ? '每成员讨论消息预算' : 'Messages per member'
                                 }
-                              })
-                            }
+                                name="maxMessages"
+                                type="number"
+                                min="1"
+                                max="1000"
+                                defaultValue={detail.teamSpace.maxMessages}
+                              />
+                              <button type="submit">
+                                {language === 'zh' ? '保存讨论额度' : 'Save discussion budget'}
+                              </button>
+                            </form>
+                            {detail.teamSpace.discussionBudget && (
+                              <span>
+                                {language === 'zh'
+                                  ? ' · 当前成员已用 / 剩余：'
+                                  : ' · Current member used / remaining: '}
+                                {detail.teamSpace.discussionBudget.used} /{' '}
+                                {detail.teamSpace.discussionBudget.remaining}
+                              </span>
+                            )}
+                            <br />
+                            {detail.teamSpace.autoEnroll
+                              ? language === 'zh'
+                                ? '本团队自动纳入后续成员'
+                                : 'This team automatically enrolls new members'
+                              : language === 'zh'
+                                ? '本团队使用固定成员名单'
+                                : 'This team uses a fixed roster'}
+                          </div>
+                        )}
+                        {detail.teamSpace.blockers.map((b) => (
+                          <p key={b}>{b}</p>
+                        ))}
+                      </details>
+                    )}
+                    {!!detail?.taskBoard?.tasks?.length && (
+                      <details className="team-panel">
+                        <summary>
+                          {language === 'zh'
+                            ? '任务计划（执行者记录）'
+                            : 'Task plan (author-reported)'}{' '}
+                          · {detail.taskBoard.tasks.filter((t: any) => t.status === 'done').length}/
+                          {detail.taskBoard.tasks.length}
+                        </summary>
+                        {detail.taskBoard.tasks.map((task: any) => (
+                          <div
+                            className="notice"
+                            key={task.id}
+                            id={'plan-task-' + task.id}
+                            tabIndex={-1}
                           >
-                            {t('Record inspected outcome')}
-                          </button>
-                        </div>
-                      ))}
-                    </details>
-                  )}
-                  {run && !running && (
-                    <div className={'run-result ' + run.status}>
-                      <span className="dot" />
-                      {run.status}
-                      <span>{totalUsage!.modelCalls} model calls 路 parent + children</span>
-                      <span>
-                        {(totalUsage!.inputTokens + totalUsage!.outputTokens).toLocaleString()}{' '}
-                        tokens
-                      </span>
-                      <span>
-                        {totalUsage!.estimatedUsd === null
-                          ? t('unknownCost')
-                          : '~$' + totalUsage!.estimatedUsd!.toFixed(5)}
-                      </span>
-                    </div>
-                  )}
-                  <div ref={bottom} />
+                            <strong>{task.title}</strong>{' '}
+                            <span className="pill">{task.status}</span>
+                            <p>{task.acceptance}</p>
+                            <small>
+                              {language === 'zh' ? '验证' : 'Verification'}:{' '}
+                              {task.verification?.status === 'checked'
+                                ? language === 'zh'
+                                  ? '结果已记录并绑定版本（非独立验收）'
+                                  : 'Observed result bound to version (not independent review)'
+                                : task.verification?.status === 'stale'
+                                  ? language === 'zh'
+                                    ? '已过期，需要重新检查'
+                                    : 'Stale; recheck required'
+                                  : language === 'zh'
+                                    ? '执行者声明，未绑定版本'
+                                    : 'Author-reported; no version binding'}
+                            </small>
+                            <small>
+                              {task.id} · {task.dependsOn.join(', ')} · {task.owner || '—'}
+                            </small>
+                            {task.note && <p>{task.note}</p>}
+                            {!!task.evidence.length && (
+                              <p>
+                                {language === 'zh' ? '证据事件' : 'Evidence events'}:{' '}
+                                {task.evidence.join(', ')}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </details>
+                    )}
+                    {!!detail?.unknownEffects.length && (
+                      <details className="notice recovery-card" key={selected}>
+                        <summary>
+                          {language === 'zh'
+                            ? '待核对的中断操作'
+                            : 'Interrupted operations to inspect'}{' '}
+                          · {detail.unknownEffects.length}
+                        </summary>
+                        <p>
+                          {t('settings') !== 'Settings'
+                            ? '可以继续对话并进行只读检查；未知命令不会自动重跑。先自动核对，仍无法判断时再记录人工结论。'
+                            : 'You can continue chatting and inspect safely. Unknown commands are never replayed. Try automatic checks before recording a manual conclusion.'}
+                        </p>
+                        <button
+                          onClick={() =>
+                            void action(async () => {
+                              await api('/conversations/' + selected + '/recovery/check', {});
+                              await load(selected!);
+                            })
+                          }
+                        >
+                          {t('settings') !== 'Settings'
+                            ? '自动核对现有结果'
+                            : 'Check existing results automatically'}
+                        </button>
+                        {detail?.unknownEffects.map((e: any) => (
+                          <div className="notice" key={e.id}>
+                            <strong>{t('inspect')}</strong>
+                            <pre>{e.tool + ' ' + e.args}</pre>
+                            <p className="muted">
+                              {t('settings') !== 'Settings'
+                                ? '上次结果仍未知。允许重新尝试可能重复产生副作用；此按钮不立即执行，后续仍遵守正常权限与审批。'
+                                : 'The previous outcome remains unknown. Retrying may duplicate side effects. This button does not execute anything; normal permissions and approval still apply.'}
+                            </p>
+                            <button
+                              disabled={running}
+                              onClick={() =>
+                                void action(async () => {
+                                  await api('/effects/' + e.id + '/allow-retry', {});
+                                  await load(selected!);
+                                })
+                              }
+                            >
+                              {t('settings') !== 'Settings'
+                                ? '允许下次重新尝试'
+                                : 'Allow another attempt'}
+                            </button>
+
+                            <button
+                              onClick={() =>
+                                void action(async () => {
+                                  const note = prompt(
+                                    'Describe the actual outcome after inspecting the files/processes.',
+                                  );
+                                  if (note) {
+                                    await api('/effects/' + e.id + '/resolve', { note });
+                                    await load(selected!);
+                                  }
+                                })
+                              }
+                            >
+                              {t('Record inspected outcome')}
+                            </button>
+                          </div>
+                        ))}
+                      </details>
+                    )}
+                    {run && !running && (
+                      <div className={'run-result ' + run.status}>
+                        <span className="dot" />
+                        {run.status}
+                        <span>{totalUsage!.modelCalls} model calls 路 parent + children</span>
+                        <span>
+                          {(totalUsage!.inputTokens + totalUsage!.outputTokens).toLocaleString()}{' '}
+                          tokens
+                        </span>
+                        <span>
+                          {totalUsage!.estimatedUsd === null
+                            ? t('unknownCost')
+                            : '~$' + totalUsage!.estimatedUsd!.toFixed(5)}
+                        </span>
+                      </div>
+                    )}
+                    <div ref={bottom} />
+                  </div>
                 </div>
+                <>
+                  <Composer
+                    onConfigureModels={() => setPage('settings')}
+                    ensureConversation={async () => selected || (await newChat())}
+                    {...{
+                      run,
+                      running,
+                      detail,
+                      send,
+                      draft,
+                      setDraft,
+                      drag,
+                      setDrag,
+                      action,
+                      addFiles,
+                      removeAttachment,
+                      draftRef,
+                      upload,
+                      profile,
+                      state,
+                      conversation,
+                      update,
+                      project,
+                      t,
+                      stick,
+                      bottom,
+                      sending,
+                    }}
+                  />
+                </>
               </div>
-              <>
-                <Composer
-                  onConfigureModels={() => setPage('settings')}
-                  ensureConversation={async () => selected || (await newChat())}
+              {inspector && (
+                <Inspector
                   {...{
-                    run,
-                    running,
-                    detail,
-                    send,
-                    draft,
-                    setDraft,
-                    drag,
-                    setDrag,
-                    action,
-                    addFiles,
-                    removeAttachment,
-                    draftRef,
-                    upload,
-                    profile,
-                    state,
+                    t,
+                    setInspector,
+                    tab: inspectorTab,
+                    setTab: setInspectorTab,
                     conversation,
+                    running,
+                    state,
+                    action,
                     update,
                     project,
-                    t,
-                    stick,
-                    bottom,
-                    sending,
+                    run: totalUsage,
                   }}
                 />
-              </>
+              )}
             </div>
-            {inspector && (
-              <Inspector
-                {...{
-                  t,
-                  setInspector,
-                  tab: inspectorTab,
-                  setTab: setInspectorTab,
-                  conversation,
-                  running,
-                  state,
-                  action,
-                  update,
-                  project,
-                  run: totalUsage,
-                }}
-              />
-            )}
-          </div>
+          </WorkbenchProvider>
         )}
       </main>
       {deleteTarget && (

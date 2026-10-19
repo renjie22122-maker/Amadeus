@@ -1,3 +1,4 @@
+import { Markdown } from './Markdown';
 import { useEffect, useState } from 'react';
 import { Folder, FileText, ArrowUp, RefreshCw } from 'lucide-react';
 import { api } from '../api';
@@ -301,14 +302,18 @@ export function FilesPanel({ id, zh, live }: { id: string; zh: boolean; live: bo
                 <button onClick={() => setPreview(false)} aria-pressed={!preview}>
                   {zh ? '源码' : 'Source'}
                 </button>
-                {/\.html?$/i.test(file) && (
+                {/\.(html?|md|markdown)$/i.test(file) && (
                   <button onClick={() => setPreview(true)} aria-pressed={preview}>
-                    {zh ? '网页预览' : 'Web preview'}
+                    {zh ? '预览' : 'Preview'}
                   </button>
                 )}
               </div>
               {preview ? (
-                <WebPreview id={id} path={file} source={text.data.text} zh={zh} />
+                /\.(md|markdown)$/i.test(file) ? (
+                  <Markdown text={text.data.text} />
+                ) : (
+                  <WebPreview id={id} path={file} source={text.data.text} zh={zh} />
+                )
               ) : (
                 <pre>{text.data.text}</pre>
               )}

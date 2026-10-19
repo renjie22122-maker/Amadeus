@@ -136,3 +136,11 @@ Scheduled tasks are also available in the source conversation, with the same edi
 Unsent text and interactive results stay in the browser draft; scheduled triggers neither submit nor clear that draft.
 
 Conversation follow-ups use compact two-line cards by default. Pause and run navigation stay inline; Manage opens full prompts, history and settings.
+
+## Conversation workbench
+
+Completed runs with an explicit final answer collapse intermediate progress and tool records into expandable summaries. User steering, files, approval requests, incomplete output and tool failures remain visible. Interrupted/failed runs do not masquerade as completed deliveries. Expanded details mount on demand; counters describe the currently loaded history, and older messages remain paginated.
+
+Attachment cards offer **Open** in a side panel plus the original download. Markdown supports preview/source, code and structured text use escaped text, PDFs use the browser PDF viewer, and images/audio/video use existing authenticated endpoints. Text previews are bounded to 256 KiB and label truncation; Office/binary formats without a renderer retain download fallback. This is a viewer, not an Office editor. HTML/SVG attachments are shown as source, never executed in the main origin. Workspace Files retains authorized directory checks and adds Markdown preview.
+
+**Operations** shows real frames returned by approved browser/computer MCP calls, adapter and capture time, and up to 50 recent operations from loaded history. It follows the latest frame unless a historical frame is selected. It is not live video, an embedded OS, a VM, or a manual remote-control channel. Host desktop actions still affect the real host; approval and foreground checks are unchanged. No adapter or screenshot means no frame. Captures are authenticated conversation attachments and deleted with conversation artifacts; they may contain sensitive screen contents. Frame-persistence failure does not replay an already executed operation. No new dependency or first-start step is required; restart the updated Agent to activate routes and UI.

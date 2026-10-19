@@ -5,6 +5,8 @@ import { Store, id } from '../storage/store.js';
 import { saveMediaStream } from './media-stream.js';
 
 export const documentMime: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
   '.pdf': 'application/pdf',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -27,6 +29,7 @@ export async function deliverFile(
   name: string,
   source: AsyncIterable<Uint8Array> | Iterable<Uint8Array>,
   signal?: AbortSignal,
+  presentation?: { event: 'interaction.frame'; adapter: string; capability: string; tool: string },
 ) {
   const key = id(),
     folder = join(dirname(store.path), 'attachments', key);
@@ -73,7 +76,10 @@ export async function deliverFile(
       downloadUrl: '/api/attachments/' + key,
     };
     store.transaction(() => {
-      const event = store.event(conversationId, runId, 'file.attached', { attachment: publicFile });
+      const event = store.event(conversationId, runId, presentation?.event || 'file.attached', {
+        attachment: publicFile,
+        ...(presentation || {}),
+      });
       store.put('attachment', { ...attachment, messageEventId: event.id });
     });
     return publicFile;

@@ -29,7 +29,7 @@ import staticPlugin from '@fastify/static';
 import Fastify from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, readFile, mkdtemp, rm, open } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { z } from 'zod';
 import type { Attachment, Conversation, Project, Skill } from '../../shared/types.js';
@@ -836,57 +836,80 @@ export async function createApp(options: { directory: string; dist?: string; run
       return { id: key, name, size: saved.size };
     },
   );
-  app.get<{ Params: { id: string }; Querystring: { preview?: string; inline?: string } }>(
-    '/api/attachments/:id',
-    async (req, reply) => {
-      const a = store.get<Attachment>('attachment', req.params.id);
-      if (req.query.inline === '1') {
-        const { head, size } = await mediaHeader(a.path);
-        const mime = attachmentMediaType(head);
-        assert(mime, 'MEDIA_TYPE', 'This attachment cannot be played inline.');
-        reply
-          .type(mime)
-          .header('X-Content-Type-Options', 'nosniff')
-          .header('Content-Security-Policy', "default-src 'none'; sandbox")
-          .header('Accept-Ranges', 'bytes');
-        const range = mediaRange(req.headers.range, size);
-        if (range === false)
-          return reply
-            .code(416)
-            .header('Content-Range', 'bytes */' + size)
-            .send();
-        if (range)
-          return reply
-            .code(206)
-            .header('Content-Range', 'bytes ' + range.start + '-' + range.end + '/' + size)
-            .header('Content-Length', range.end - range.start + 1)
-            .send(createReadStream(a.path, { start: range.start, end: range.end }));
-        return reply.header('Content-Length', size).send(createReadStream(a.path));
+  app.get<{
+    Params: { id: string };
+    Querystring: { preview?: string; inline?: string; view?: string };
+  }>('/api/attachments/:id', async (req, reply) => {
+    const a = store.get<Attachment>('attachment', req.params.id);
+    if (req.query.view === 'text') {
+      assert(
+        /\.(txt|md|markdown|csv|tsv|json|jsonl|yaml|yml|xml|html?|svg|tex|log|py|js|jsx|ts|tsx|css|sh|ps1|sql|toml|ini)$/i.test(
+          a.name,
+        ),
+        'PREVIEW_TYPE',
+        'This format requires downloading or a dedicated viewer.',
+      );
+      const handle = await open(a.path, 'r');
+      try {
+        const buffer = Buffer.alloc(256 * 1024);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        const text = buffer.subarray(0, bytesRead).toString('utf8');
+        assert(!text.includes('\0'), 'BINARY_FILE', 'Binary content cannot be previewed as text.');
+        return { text, truncated: (await handle.stat()).size > bytesRead };
+      } finally {
+        await handle.close();
       }
-      if (req.query.preview === '1') {
-        assert(
-          (await mediaHeader(a.path)).size <= 25 * 1024 * 1024,
-          'IMAGE_PREVIEW_SIZE',
-          'Image preview input exceeds decoder budget; download the original.',
-        );
-        const image = await normalizeImage(await readFile(a.path));
-        reply
-          .header(
-            'Content-Type',
-            image.url.startsWith('data:image/png') ? 'image/png' : 'image/jpeg',
-          )
-          .header('X-Content-Type-Options', 'nosniff');
-        return Buffer.from(image.url.split(',')[1], 'base64');
-      }
+    }
+    if (req.query.view === 'pdf') {
+      const { head } = await mediaHeader(a.path);
+      assert(head.subarray(0, 5).toString() === '%PDF-', 'PREVIEW_TYPE', 'Not a PDF document.');
+      return reply
+        .type('application/pdf')
+        .header('X-Content-Type-Options', 'nosniff')
+        .header('Content-Disposition', 'inline')
+        .header('Content-Security-Policy', "sandbox; default-src 'none'")
+        .send(createReadStream(a.path));
+    }
+    if (req.query.inline === '1') {
+      const { head, size } = await mediaHeader(a.path);
+      const mime = attachmentMediaType(head);
+      assert(mime, 'MEDIA_TYPE', 'This attachment cannot be played inline.');
       reply
-        .header('Content-Type', 'application/octet-stream')
-        .header(
-          'Content-Disposition',
-          "attachment; filename*=UTF-8''" + encodeURIComponent(a.name),
-        );
-      return createReadStream(a.path);
-    },
-  );
+        .type(mime)
+        .header('X-Content-Type-Options', 'nosniff')
+        .header('Content-Security-Policy', "default-src 'none'; sandbox")
+        .header('Accept-Ranges', 'bytes');
+      const range = mediaRange(req.headers.range, size);
+      if (range === false)
+        return reply
+          .code(416)
+          .header('Content-Range', 'bytes */' + size)
+          .send();
+      if (range)
+        return reply
+          .code(206)
+          .header('Content-Range', 'bytes ' + range.start + '-' + range.end + '/' + size)
+          .header('Content-Length', range.end - range.start + 1)
+          .send(createReadStream(a.path, { start: range.start, end: range.end }));
+      return reply.header('Content-Length', size).send(createReadStream(a.path));
+    }
+    if (req.query.preview === '1') {
+      assert(
+        (await mediaHeader(a.path)).size <= 25 * 1024 * 1024,
+        'IMAGE_PREVIEW_SIZE',
+        'Image preview input exceeds decoder budget; download the original.',
+      );
+      const image = await normalizeImage(await readFile(a.path));
+      reply
+        .header('Content-Type', image.url.startsWith('data:image/png') ? 'image/png' : 'image/jpeg')
+        .header('X-Content-Type-Options', 'nosniff');
+      return Buffer.from(image.url.split(',')[1], 'base64');
+    }
+    reply
+      .header('Content-Type', 'application/octet-stream')
+      .header('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(a.name));
+    return createReadStream(a.path);
+  });
   app.delete<{ Params: { id: string } }>('/api/attachments/:id', async (req) => {
     const a = store.get<Attachment>('attachment', req.params.id);
     assert(

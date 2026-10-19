@@ -1,3 +1,4 @@
+import { deliverFile } from '../services/file-delivery.js';
 import { z } from 'zod';
 import { basename } from 'node:path';
 import type { Conversation } from '../../shared/types.js';
@@ -206,6 +207,37 @@ export function installMcp(registry: ToolRegistry) {
             }),
           },
         ];
+      }
+      // Capture only actual returned pixels. UI persistence cannot turn an executed tool into a retry.
+      if (['browser', 'computer'].includes(server.builtin || server.capability || 'general')) {
+        const frame = result.content?.find(
+          (b: any) => b.type === 'image' && typeof b.data === 'string' && b.data.length <= 35000000,
+        );
+        if (frame)
+          try {
+            const normalized = await normalizeImage(Buffer.from(frame.data, 'base64'));
+            await deliverFile(
+              c.store,
+              c.conversation.id,
+              c.run.id,
+              'capture-' +
+                Date.now() +
+                (normalized.url.startsWith('data:image/png') ? '.png' : '.jpg'),
+              [Buffer.from(normalized.url.split(',')[1], 'base64')],
+              undefined,
+              {
+                event: 'interaction.frame',
+                adapter: server.name,
+                capability: server.builtin || server.capability || 'general',
+                tool: a.tool,
+              },
+            );
+          } catch {
+            c.store.event(c.conversation.id, c.run.id, 'interaction.capture-unavailable', {
+              adapter: server.name,
+              tool: a.tool,
+            });
+          }
       }
       const images: string[] = [],
         content: any[] = [];
