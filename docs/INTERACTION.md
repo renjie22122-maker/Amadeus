@@ -149,4 +149,4 @@ Process summaries are grouped by run, not by adjacent event batches. Internal bo
 
 Inside expanded process history, assistant progress remains visible while consecutive tool records share a collapsed Activity group. Opening Activity reveals bounded summaries; individual records expose complete details. Long tool payloads cannot enlarge the flex layout beyond the conversation viewport.
 
-The single run control toggles process segments **in their original timeline positions**. User steering is never moved: expansion restores assistant progress → user follow-up → subsequent actions/replies. Collapsing hides only process segments, not the intervening user messages.
+The single run control toggles process segments **in their original timeline positions**. Expansion restores assistant progress → user follow-up → subsequent actions/replies. When collapsed, loaded user messages from that run are grouped in send order immediately after its initial request, before the history control and final answer. This presentation never changes stored event order or groups messages across runs.

@@ -120,6 +120,20 @@ test(
       assert.equal(await page.locator('.completed-process').count(), 1);
       assert.equal(await page.locator('.process-segment .message.user').count(), 0);
       await page.getByText('Keep my follow-up outside', { exact: true }).waitFor();
+      const assertCollapsedUsers = async () => {
+        assert.deepEqual(
+          await page.locator('.collapsed-user-messages .message-body').allTextContents(),
+          ['Create a report', 'Keep my follow-up outside'],
+        );
+        assert.ok(
+          await page.evaluate(() => {
+            const users = document.querySelector('.collapsed-user-messages')!;
+            const history = document.querySelector('.completed-process')!;
+            return !!(users.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING);
+          }),
+        );
+      };
+      await assertCollapsedUsers();
       await page.locator('.completed-process .process-toggle').first().click();
       await page
         .getByText('Intermediate progress hidden until expanded', { exact: true })
@@ -147,6 +161,7 @@ test(
       await page.locator('.process-segment .activity > summary').first().click();
       assert.equal(await page.locator('.process-segment .message.user').count(), 0);
       await page.locator('.completed-process .process-toggle').first().click();
+      await assertCollapsedUsers();
       await page.getByRole('button', { name: '打开 / Open · report.md', exact: true }).click();
       await page.getByRole('heading', { name: 'Report preview', exact: true }).waitFor();
       assert.equal(await page.evaluate(() => (window as any).pwned), undefined);

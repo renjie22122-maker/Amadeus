@@ -889,6 +889,26 @@ export function App() {
         />
       );
     }
+    // Collapsed history presents the user's requests together. Expansion keeps
+    // every event in its original slot; persisted chronology is never changed.
+    for (const runId of processes.keys()) {
+      if (expandedProcesses[runId]) continue;
+      const slots = nodes.flatMap((node, index) =>
+        node?.type === Message &&
+        node.props.event?.type === 'user.message' &&
+        node.props.event.runId === runId
+          ? [index]
+          : [],
+      );
+      if (slots.length < 2) continue;
+      const messages = slots.map((index) => nodes[index]);
+      for (const index of slots) nodes[index] = null;
+      nodes[slots[0]] = (
+        <div key={'users-' + runId} className="collapsed-user-messages">
+          {messages}
+        </div>
+      );
+    }
     return nodes;
   }
   if (!state)
