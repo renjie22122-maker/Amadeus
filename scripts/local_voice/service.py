@@ -17,6 +17,7 @@ import threading
 import time
 import signal
 import uuid
+import stat
 from policy import select_device
 from resident import ResidentWorker
 
@@ -94,7 +95,12 @@ def cleanup_deleted_voices(config_path):
     path = Path(config_path)
     data = json.loads(path.read_text(encoding="utf-8-sig"))
     owned = path.parent / "voices"
-    if owned.is_symlink() or owned.resolve() != owned.absolute():
+    if not owned.exists():
+        return
+    # Windows short names and mapped temp roots can resolve to another spelling.
+    # Inspect this directory entry for links/reparse points instead of comparing strings.
+    info = owned.lstat()
+    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
         raise ValueError("VOICE_PATH: unexpected linked voice directory")
     for identity, voice in data.get("voices", {}).items():
         if not voice.get("deleted") or voice.get("source") != "user-upload":

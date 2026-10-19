@@ -55,6 +55,18 @@ class VoiceTests(unittest.TestCase):
         self.assertEqual(external.read_bytes(),b'keep')
         service.cleanup_deleted_voices(config)  # idempotent
 
+    def test_cleanup_rejects_a_linked_voice_directory(self):
+        import os
+        root = Path(self.tmp.name)
+        outside = root / 'external'; outside.mkdir()
+        try:
+            os.symlink(outside, root / 'voices', target_is_directory=True)
+        except OSError:
+            self.skipTest('directory symlink permission unavailable')
+        config = root / 'config.json'; config.write_text(json.dumps({'voices':{}}))
+        with self.assertRaisesRegex(ValueError, 'VOICE_PATH'):
+            service.cleanup_deleted_voices(config)
+
     def test_listener_port_is_configurable_and_validated(self):
         self.assertEqual(policy.listen_port({}), 8812)
         self.assertEqual(policy.listen_port({"listenPort": 9876}), 9876)
