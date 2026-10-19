@@ -16,6 +16,16 @@ test('knowledge panel renders immediately and polls while vector stats are delay
     t.skip('Browser unavailable: ' + String(e));
     return;
   }
+  let releaseFirst!: () => void, releaseSecond!: () => void, releaseIndex!: () => void;
+  const first = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const second = new Promise<void>((resolve) => {
+    releaseSecond = resolve;
+  });
+  const index = new Promise<void>((resolve) => {
+    releaseIndex = resolve;
+  });
   try {
     const { build } = createRequire(require.resolve('vite/package.json'))('esbuild');
     const bundle = await build({
@@ -39,8 +49,9 @@ test('knowledge panel renders immediately and polls while vector stats are delay
     await page.route('http://fixture.test/**', async (route) => {
       const url = route.request().url();
       if (url.includes('/api/knowledge/maintenance')) {
-        polls++;
-        await new Promise((r) => setTimeout(r, 500));
+        const poll = ++polls;
+        if (poll === 1) await first;
+        if (poll === 2) await second;
         await route.fulfill({
           contentType: 'application/json',
           body: JSON.stringify({
@@ -52,19 +63,19 @@ test('knowledge panel renders immediately and polls while vector stats are delay
               startedAt: Date.now(),
               updatedAt: Date.now(),
               total: 10,
-              completed: polls,
+              completed: poll,
               discovered: 10,
-              imported: polls,
+              imported: poll,
               reused: 0,
               failed: 0,
-              currentFile: 'file-' + polls,
+              currentFile: 'file-' + poll,
             },
           }),
         });
         return;
       }
       if (url.includes('/api/knowledge/index-status')) {
-        await new Promise((r) => setTimeout(r, 8000));
+        await index;
         await route.fulfill({ contentType: 'application/json', body: '{}' }).catch(() => {});
         return;
       }
@@ -73,6 +84,7 @@ test('knowledge panel renders immediately and polls while vector stats are delay
     await page.goto('http://fixture.test/');
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.getByText('Loading maintenance status…').waitFor();
+    releaseFirst();
     await page.getByText('file-1', { exact: true }).waitFor();
     assert.equal(
       await page.getByRole('button', { name: 'Save sources', exact: true }).isDisabled(),
@@ -88,6 +100,7 @@ test('knowledge panel renders immediately and polls while vector stats are delay
     );
     const draft = page.locator('textarea').first();
     await draft.fill('unsaved-new-folder');
+    releaseSecond();
     await page.getByText('file-2', { exact: true }).waitFor({ timeout: 5000 });
     assert.ok(polls >= 2);
     assert.equal(await draft.inputValue(), 'unsaved-new-folder');
@@ -101,6 +114,9 @@ test('knowledge panel renders immediately and polls while vector stats are delay
     );
     await page.close();
   } finally {
+    releaseFirst();
+    releaseSecond();
+    releaseIndex();
     await browser.close();
   }
 });
