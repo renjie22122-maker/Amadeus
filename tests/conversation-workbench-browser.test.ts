@@ -125,6 +125,8 @@ test(
         .getByText('Intermediate progress hidden until expanded', { exact: true })
         .waitFor();
       await page.getByText('Second progress after steering', { exact: true }).waitFor();
+      assert.equal(await page.locator('.completed-process .activity').count(), 0);
+      assert.ok((await page.locator('.completed-process .process-event').count()) > 0);
       assert.equal(await page.locator('.completed-process .message.user').count(), 0);
       await page.locator('.completed-process summary').first().click();
       await page.getByRole('button', { name: '打开 / Open · report.md', exact: true }).click();

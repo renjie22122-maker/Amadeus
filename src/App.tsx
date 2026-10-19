@@ -631,7 +631,14 @@ export function App() {
     let activity: AgentEvent[] = [];
     const flush = () => {
       if (activity.length) {
-        nodes.push(<Activity key={'steps-' + activity[0].id} events={activity} t={t} />);
+        nodes.push(
+          <Activity
+            key={'steps-' + activity[0].id}
+            events={activity}
+            t={t}
+            unfolded={activity.every((e) => folded.has(e.id))}
+          />,
+        );
         activity = [];
       }
     };

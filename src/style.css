@@ -4597,3 +4597,30 @@ input.team-switch:checked::after {
   padding: 8px;
   flex-shrink: 0;
 }
+
+.process-event {
+  margin: 8px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.process-event > summary {
+  display: flex;
+  gap: 12px;
+  cursor: pointer;
+  align-items: baseline;
+}
+.process-event > summary > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.process-event time {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+}
+.process-event pre {
+  overflow: auto;
+  max-height: 420px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -126,7 +126,32 @@ export function Message({
     </article>
   );
 }
-export function Activity({ events, t }: { events: AgentEvent[]; t: (s: string) => string }) {
+function ProcessEvent({ event, label }: { event: AgentEvent; label: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="process-event"
+      onToggle={(e) => {
+        if (e.target === e.currentTarget) setOpen(e.currentTarget.open);
+      }}
+    >
+      <summary>
+        <span>{label}</span>
+        <time>{new Date(event.createdAt).toLocaleTimeString()}</time>
+      </summary>
+      {open && <pre>{JSON.stringify(event.data, null, 2)}</pre>}
+    </details>
+  );
+}
+export function Activity({
+  events,
+  t,
+  unfolded = false,
+}: {
+  events: AgentEvent[];
+  t: (s: string) => string;
+  unfolded?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const label = (e: AgentEvent) =>
     e.type === 'tool.progress'
@@ -205,6 +230,14 @@ export function Activity({ events, t }: { events: AgentEvent[]; t: (s: string) =
                             : e.type === 'child.started'
                               ? 'Delegated · ' + e.data.task
                               : e.type;
+  if (unfolded)
+    return (
+      <div className="process-activity">
+        {events.map((e) => (
+          <ProcessEvent key={e.id} event={e} label={label(e)} />
+        ))}
+      </div>
+    );
   return (
     <details
       className="activity"
