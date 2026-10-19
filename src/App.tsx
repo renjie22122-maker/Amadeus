@@ -636,7 +636,7 @@ export function App() {
             key={'steps-' + activity[0].id}
             events={activity}
             t={t}
-            unfolded={activity.every((e) => folded.has(e.id))}
+            quiet={activity.every((e) => folded.has(e.id))}
           />,
         );
         activity = [];
@@ -837,6 +837,20 @@ export function App() {
       const messages = group.events.filter((e) => e.type === 'assistant.message').length;
       const tools = group.events.filter((e) => e.type === 'tool.started').length;
       const count = group.events.length;
+      const contents: any[] = [];
+      for (const node of group.nodes) {
+        const previous = contents.at(-1);
+        if (node.type === Activity && previous?.type === Activity) {
+          contents[contents.length - 1] = (
+            <Activity
+              key={previous.key}
+              events={[...previous.props.events, ...node.props.events]}
+              t={t}
+              quiet
+            />
+          );
+        } else contents.push(node);
+      }
       nodes[group.index] = (
         <ProcessHistory
           key={'process-' + runId}
@@ -846,7 +860,7 @@ export function App() {
               : `${count} previous events${messages ? ` · ${messages} assistant messages` : ''}${tools ? ` · ${tools} tool calls` : ''}`
           }
         >
-          {group.nodes}
+          {contents}
         </ProcessHistory>
       );
     }

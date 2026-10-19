@@ -4598,29 +4598,26 @@ input.team-switch:checked::after {
   flex-shrink: 0;
 }
 
-.process-event {
-  margin: 8px 0;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-.process-event > summary {
-  display: flex;
-  gap: 12px;
-  cursor: pointer;
-  align-items: baseline;
-}
-.process-event > summary > span {
-  flex: 1;
-  overflow-wrap: anywhere;
+/* Flex items must be allowed to shrink even for unbroken paths/tool payloads. */
+.workbench-shell,
+.workbench-layout,
+.chat-layout,
+.conversation-scroll {
   min-width: 0;
+  max-width: 100%;
 }
-.process-event time {
-  flex-shrink: 0;
-  font-size: 0.75rem;
+.chat-layout {
+  width: 100%;
 }
-.process-event pre {
-  overflow: auto;
-  max-height: 420px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.conversation-width,
+.composer-width {
+  width: 100%;
+  box-sizing: border-box;
+}
+.activity-quiet:not([open]) > .activity-preview {
+  display: none;
+}
+.completed-process {
+  min-width: 0;
+  max-width: 100%;
 }

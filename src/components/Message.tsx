@@ -126,31 +126,14 @@ export function Message({
     </article>
   );
 }
-function ProcessEvent({ event, label }: { event: AgentEvent; label: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <details
-      className="process-event"
-      onToggle={(e) => {
-        if (e.target === e.currentTarget) setOpen(e.currentTarget.open);
-      }}
-    >
-      <summary>
-        <span>{label}</span>
-        <time>{new Date(event.createdAt).toLocaleTimeString()}</time>
-      </summary>
-      {open && <pre>{JSON.stringify(event.data, null, 2)}</pre>}
-    </details>
-  );
-}
 export function Activity({
   events,
   t,
-  unfolded = false,
+  quiet = false,
 }: {
   events: AgentEvent[];
   t: (s: string) => string;
-  unfolded?: boolean;
+  quiet?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const label = (e: AgentEvent) =>
@@ -230,17 +213,9 @@ export function Activity({
                             : e.type === 'child.started'
                               ? 'Delegated · ' + e.data.task
                               : e.type;
-  if (unfolded)
-    return (
-      <div className="process-activity">
-        {events.map((e) => (
-          <ProcessEvent key={e.id} event={e} label={label(e)} />
-        ))}
-      </div>
-    );
   return (
     <details
-      className="activity"
+      className={'activity' + (quiet ? ' activity-quiet' : '')}
       onToggle={(e) => {
         if (e.target === e.currentTarget) setExpanded(e.currentTarget.open);
       }}
@@ -254,7 +229,7 @@ export function Activity({
       </summary>
       <div className="activity-preview">
         {events.slice(-2).map((e) => (
-          <div key={e.id}>{label(e)}</div>
+          <div key={e.id}>{label(e).replace(/\s+/g, ' ').slice(0, 220)}</div>
         ))}
       </div>
       <div className="activity-full">
@@ -263,7 +238,7 @@ export function Activity({
             <details key={e.id}>
               <summary>
                 <span className="dot" />
-                <span>{label(e)}</span>
+                <span>{label(e).replace(/\s+/g, ' ').slice(0, 220)}</span>
                 <time>{new Date(e.createdAt).toLocaleTimeString()}</time>
               </summary>
               <pre>{JSON.stringify(e.data, null, 2)}</pre>
