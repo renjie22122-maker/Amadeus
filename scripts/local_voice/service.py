@@ -16,13 +16,17 @@ import tempfile
 import threading
 import time
 import signal
+import uuid
 from policy import select_device
+from resident import ResidentWorker
 
 MAX_BODY = 25 * 1024 * 1024
 
 
-def run_worker(command, *, stdout, stderr, env, timeout, check=False, on_tick=None):
+def run_worker(command, *, stdout, stderr, env, timeout, check=False, on_tick=None, resident=None):
     """Bound the whole worker tree, including Windows venv redirectors."""
+    if resident is not None:
+        return resident.run(command, stdout=stdout, stderr=stderr, env=env, timeout=timeout, on_tick=on_tick, probe=select_device)
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
     process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=env, **options)
     try:
@@ -84,10 +88,34 @@ def validate_job(fields, speech):
     return {k: fields[k] for k in ("model", "language", "input", "voice", "stream") if k in fields}
 
 
+def cleanup_deleted_voices(config_path):
+    if not config_path:
+        return
+    path = Path(config_path)
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    owned = path.parent / "voices"
+    if owned.is_symlink() or owned.resolve() != owned.absolute():
+        raise ValueError("VOICE_PATH: unexpected linked voice directory")
+    for identity, voice in data.get("voices", {}).items():
+        if not voice.get("deleted") or voice.get("source") != "user-upload":
+            continue
+        try:
+            if str(uuid.UUID(identity)) != identity:
+                continue
+        except (ValueError, AttributeError):
+            continue
+        target = owned / (identity + ".wav")
+        if Path(voice.get("audio", "")).absolute() != target.absolute():
+            continue
+        # Unlink a single owned directory entry; never follow a voice file symlink.
+        target.unlink(missing_ok=True)
+
+
 def create_server(config, host="127.0.0.1", port=8812, config_path=None):
     if len(config.get("token", "")) < 32:
         raise ValueError("A service token of at least 32 characters is required")
     lock = threading.Lock()
+    resident = ResidentWorker()
     state = {"busy": False, "device": None, "reason": None}
 
     class Handler(BaseHTTPRequestHandler):
@@ -129,11 +157,21 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                 return self.reply(404, {"error": "not_found"})
             if not self.authorized():
                 return self.reply(401, {"error": "unauthorized"})
-            return self.reply(200, {"application": "Amadeus Local Voice", "modelLoaded": False if not state["busy"] else None, "state": state, "models": {k: Path(v).is_dir() for k, v in config.get("models", {}).items()}, "devicePolicy": config.get("device", "cpu"), "voiceConfigured": bool(config.get("voices")), "streaming": True, "readyMeaning": "Paths only; inference and dependencies require smoke testing"})
+            return self.reply(200, {"application": "Amadeus Local Voice", "modelLoaded": resident.available() if not state["busy"] else None, "state": state, "models": {k: Path(v).is_dir() for k, v in config.get("models", {}).items()}, "devicePolicy": config.get("device", "cpu"), "voiceConfigured": bool(config.get("voices")), "streaming": True, "readyMeaning": "Paths only; inference and dependencies require smoke testing"})
 
         def do_POST(self):
             if not self.authorized():
                 return self.reply(401, {"error": "unauthorized"})
+            if self.path == "/v1/voices/cleanup":
+                if not lock.acquire(blocking=False):
+                    return self.reply(202, {"cleanupPending": True})
+                try:
+                    cleanup_deleted_voices(config_path)
+                    return self.reply(200, {"cleanupPending": False})
+                except Exception:
+                    return self.reply(503, {"cleanupPending": True})
+                finally:
+                    lock.release()
             if self.path not in ("/v1/audio/transcriptions", "/v1/audio/speech"):
                 return self.reply(404, {"error": "not_found"})
             if self.headers.get("Transfer-Encoding"):
@@ -146,6 +184,7 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                     return self.reply(429, {"error": "VOICE_BUSY: another local voice request is running; retry explicitly later"})
                 state.update(busy=True, device=None, reason=None)
                 try:
+                    cleanup_deleted_voices(config_path)
                     body = self.rfile.read(length)
                     if len(body) != length:
                         raise ValueError("Incomplete upload")
@@ -164,7 +203,9 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                     model_path = config.get("models", {}).get(job["model"])
                     if not model_path or not Path(model_path).is_dir():
                         return self.reply(503, {"error": "MODEL_NOT_READY: run local voice setup and prepare models"})
-                    device, reason = select_device(config)
+                    # A warm model already occupies VRAM: test remaining execution reserve,
+                    # not the full cold-load allowance. Release before a fresh admission.
+                    device, reason = resident.admit(config, job["model"], model_path, speech, select_device)
                     state.update(device=device, reason=reason)
                     with tempfile.TemporaryDirectory(prefix="amadeus-voice-") as folder:
                         directory = Path(folder)
@@ -205,12 +246,13 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                         for attempt in range(2):
                             request.write_text(json.dumps(job), encoding="utf-8")
                             with (directory / "worker.log").open("ab") as logs:
-                                returncode = run_worker([python, "-X", "utf8", str(Path(__file__).with_name("worker.py")), str(request)], stdout=logs, stderr=logs, env=env, timeout=max(.1, deadline - time.monotonic()), check=False, **({"on_tick": pump} if streaming else {}))
+                                returncode = run_worker([python, "-X", "utf8", str(Path(__file__).with_name("worker.py")), str(request)], stdout=logs, stderr=logs, env=env, timeout=max(.1, deadline - time.monotonic()), check=False, resident=resident if speech else None, **({"on_tick": pump} if streaming else {}))
                             result_path = Path(job["result"])
                             if not result_path.is_file():
                                 return self.reply(503, {"error": "VOICE_WORKER_FAILED: model worker exited without a result (exit " + str(returncode) + "); check native dependencies"})
                             result = json.loads(result_path.read_text(encoding="utf-8"))
                             if "error" not in result:
+                                state["lastTiming"] = result.get("timings")
                                 break
                             if attempt == 0 and emitted == 0 and config.get("device") == "auto" and device == "cuda" and result.get("code") in ("GPU_OOM", "GPU_UNAVAILABLE"):
                                 device = job["device"] = "cpu"
@@ -231,6 +273,10 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                         payload = Path(job["output"]).read_bytes() if speech else {**result, "device": device}
                     return self.reply(200, payload, "audio/wav" if speech else "application/json")
                 finally:
+                    try:
+                        cleanup_deleted_voices(config_path)
+                    except Exception:
+                        pass  # Revoked IDs remain unusable; cleanup can retry later.
                     state["busy"] = False
                     lock.release()
             except subprocess.TimeoutExpired:
@@ -244,7 +290,11 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
             except Exception:
                 self.reply(503, {"error": "VOICE_SERVICE_FAILED: check local configuration and dependencies"})
 
-    return ThreadingHTTPServer((host, port), Handler)
+    class VoiceServer(ThreadingHTTPServer):
+        def server_close(self):
+            resident.close()
+            super().server_close()
+    return VoiceServer((host, port), Handler)
 
 
 if __name__ == "__main__":

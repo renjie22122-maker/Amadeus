@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Configuration } from '../services/settings.js';
 import {
   listLocalVoices,
+  deleteLocalVoice,
   localVoiceCapabilities,
   saveLocalVoice,
   useLocalVoice,
@@ -53,6 +54,9 @@ export function localVoiceRoutes(app: FastifyInstance, config: Configuration, ro
     assert(audio, 'VOICE_UPLOAD', 'Choose a reference recording.');
     return saveLocalVoice(root, fields, audio);
   });
+  app.post('/api/media/local-voice/delete', async (req) =>
+    deleteLocalVoice(config, root, z.object({ id: z.string().uuid() }).parse(req.body).id),
+  );
   app.post('/api/media/local-voice/use', async (req) =>
     useLocalVoice(config, root, z.object({ id: z.string().min(1) }).parse(req.body).id),
   );

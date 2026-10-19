@@ -6,6 +6,7 @@ type Voice = {
   name: string;
   text: string;
   source?: string;
+  deletable?: boolean;
   language?: string;
   quality?: { duration: number; warnings: string[] };
 };
@@ -266,6 +267,41 @@ export function LocalVoiceSettings({ zh, onUse }: { zh: boolean; onUse: (id: str
           >
             {zh ? '设为默认朗读音色' : 'Use for read-aloud'}
           </button>
+          {voices.find((v) => v.id === selected)?.deletable && (
+            <button
+              type="button"
+              onClick={() => {
+                const voice = voices.find((v) => v.id === selected);
+                if (
+                  !window.confirm(
+                    zh
+                      ? `删除自建音色“${voice?.name}”？已生成音频保留。`
+                      : `Delete uploaded voice “${voice?.name}”? Generated audio is kept.`,
+                  )
+                )
+                  return;
+                void action(async () => {
+                  const result = await api<{ cleanupPending: boolean }>(
+                    '/media/local-voice/delete',
+                    { id: selected },
+                  );
+                  setAudio('');
+                  await refresh();
+                  setMessage(
+                    result.cleanupPending
+                      ? zh
+                        ? '音色已移除。参考录音将在语音服务空闲且运行时清理；已生成音频保留。'
+                        : 'Voice removed. Reference cleanup waits for an idle running voice service; generated audio is kept.'
+                      : zh
+                        ? '自建音色及参考录音已删除；已生成音频保留。'
+                        : 'Uploaded voice and reference deleted; generated audio is kept.',
+                  );
+                });
+              }}
+            >
+              {zh ? '删除自建音色' : 'Delete uploaded voice'}
+            </button>
+          )}
           {(['zh', 'en', 'ja'] as const).map((language) => (
             <button
               key={language}

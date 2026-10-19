@@ -84,7 +84,7 @@ def start():
     config = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
     try:
         if health(config).get("application") == "Amadeus Local Voice":
-            print("Local voice already running; idle service holds no models.")
+            print("Local voice already running; warm models expire automatically after idle time.")
             return
     except Exception:
         pass

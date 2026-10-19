@@ -1,12 +1,16 @@
-"""One request per process. Exit releases model allocations, including CUDA contexts."""
+"""Single-model worker; optional private request loop. Exit releases CUDA allocations."""
 import json
 import os
 from pathlib import Path
 import sys
 import subprocess
 import ctypes
+import time
+import hashlib
 
 _DLL_HANDLES = []
+_ENGINE = None
+_INITIALIZED = False
 
 
 def deny_network(event, args):
@@ -16,20 +20,26 @@ def deny_network(event, args):
 
 
 def run(job):
+    global _ENGINE, _INITIALIZED
+    started = time.perf_counter()
+    timings = {}
     config = job["config"]
     device = job["device"]
     os.environ["CUDA_VISIBLE_DEVICES"] = str(config.get("gpuIndex", 0)) if device == "cuda" else ""
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["OMP_NUM_THREADS"] = str(config.get("cpuThreads", 2))
-    sys.addaudithook(deny_network)
+    if not _INITIALIZED:
+        sys.addaudithook(deny_network)
+        _INITIALIZED = True
     model = job["model"]
     # CTranslate2 and PyTorch ship different OpenMP runtimes on Windows.
     # Never import PyTorch into the Whisper process.
     if model != "whisper":
         runtime = config.get("torchRuntimePath") if device == "cuda" else None
         if runtime:
-            sys.path.insert(0, str(Path(runtime).resolve()))
+            if str(Path(runtime).resolve()) not in sys.path:
+                sys.path.insert(0, str(Path(runtime).resolve()))
         import torch
         torch.set_num_threads(int(config.get("cpuThreads", 2)))
         if device == "cuda" and not torch.cuda.is_available():
@@ -73,13 +83,21 @@ def run(job):
     if model not in ("cosyvoice", "cosyvoice-sft"):
         raise ValueError("Unsupported model")
     source = Path(config["cosySource"]).resolve()
-    sys.path.insert(0, str(source))
-    sys.path.insert(0, str(source / "third_party/Matcha-TTS"))
+    for entry in (str(source), str(source / "third_party/Matcha-TTS")):
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
     import torch
     import soundfile
     from cosyvoice.cli.cosyvoice import AutoModel
     torch.set_num_threads(int(config.get("cpuThreads", 2)))
-    engine = AutoModel(model_dir=model_path)
+    timings["importsSeconds"] = time.perf_counter() - started
+    load_started = time.perf_counter()
+    reused = _ENGINE is not None
+    if _ENGINE is None:
+        _ENGINE = AutoModel(model_dir=model_path)
+    engine = _ENGINE
+    timings["modelLoadSeconds"] = time.perf_counter() - load_started
+    timings["modelReused"] = reused
     if model == "cosyvoice-sft":
         speaker = job.get("voice", "").removeprefix("preset:")
         if speaker not in engine.list_available_spks():
@@ -87,15 +105,25 @@ def run(job):
         chunks = engine.inference_sft(job["input"], speaker, stream=bool(job.get("stream")))
     else:
         voice = config.get("voices", {}).get(job.get("voice", "default"))
-        if not voice or not Path(voice.get("audio", "")).is_file() or not voice.get("text"):
+        if not voice or voice.get("deleted") or not Path(voice.get("audio", "")).is_file() or not voice.get("text"):
             raise ValueError("VOICE_NOT_READY: configure a local reference recording and its transcript")
-        prompt = "You are a helpful assistant.<|endofprompt|>" + voice["text"]
+        prompt = ("You are a helpful assistant.<|endofprompt|>" if type(engine).__name__ == "CosyVoice3" else "") + voice["text"]
         chunks = engine.inference_zero_shot(job["input"], prompt, voice["audio"], stream=bool(job.get("stream")))
     # Write incrementally; do not accumulate an entire long narration in RAM.
+    events = []
+    iterator = iter(chunks)
     with soundfile.SoundFile(job["output"], mode="w", samplerate=engine.sample_rate, channels=1, subtype="PCM_16") as output:
         written = 0
-        for index, chunk in enumerate(chunks):
+        index = 0
+        while True:
+            generation_start = time.perf_counter()
+            try:
+                chunk = next(iterator)
+            except StopIteration:
+                break
+            generated = time.perf_counter()
             samples = chunk["tts_speech"].detach().cpu().numpy().reshape(-1)
+            copied = time.perf_counter()
             written += len(samples)
             if written > engine.sample_rate * 600:
                 raise ValueError("Audio exceeds ten-minute request limit; split into sections")
@@ -106,18 +134,59 @@ def run(job):
                 pending = folder / (str(index) + ".tmp")
                 soundfile.write(str(pending), samples, engine.sample_rate, format="WAV", subtype="PCM_16")
                 pending.replace(folder / (str(index) + ".wav"))
+            events.append({"sequence": index, "generationSeconds": generated-generation_start, "cpuCopySeconds": copied-generated, "writeSeconds": time.perf_counter()-copied, "readySeconds": time.perf_counter()-started, "audioSeconds": len(samples)/engine.sample_rate})
+            index += 1
     if not written:
         raise ValueError("Model returned no audio")
-    return {"mime": "audio/wav"}
+    return {"mime": "audio/wav", "timings": {**timings, "totalSeconds": time.perf_counter()-started, "chunks": events}, "inputSha256": hashlib.sha256(job["input"].encode()).hexdigest()}
 
 
-if __name__ == "__main__":
-    job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+def execute(path):
+    job = json.loads(Path(path).read_text(encoding="utf-8"))
     try:
         result = run(job)
-        Path(job["result"]).write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     except Exception as error:
         message = str(error)
         code = "GPU_UNAVAILABLE" if message.startswith("GPU_UNAVAILABLE:") else "GPU_OOM" if "CUDA out of memory" in message else None
-        Path(job["result"]).write_text(json.dumps({"error": type(error).__name__ + ": " + message[:500], "code": code}), encoding="utf-8")
-        raise
+        result = {"error": type(error).__name__ + ": " + message[:500], "code": code}
+    target = Path(job["result"])
+    pending = target.with_suffix(".tmp")
+    pending.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    pending.replace(target)
+    return "error" not in result
+
+
+if __name__ == "__main__":
+    if sys.argv[1] == "--serve":
+        # Only the owning bridge writes this private stdin. Never consume stdout as IPC.
+        # Keep stdin consumption on the main thread; model libraries may inspect stdin.
+        import threading
+        owner = int(os.environ.get("AMADEUS_VOICE_OWNER_PID", "0"))
+        def watch_owner():
+            if os.name == "nt":
+                from ctypes import wintypes
+                api = ctypes.WinDLL("kernel32", use_last_error=True)
+                api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                api.OpenProcess.restype = wintypes.HANDLE
+                api.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+                api.CloseHandle.argtypes = [wintypes.HANDLE]
+                handle = api.OpenProcess(0x00100000, False, owner)
+                if not handle:
+                    os._exit(1)
+                api.WaitForSingleObject(handle, 0xffffffff)
+                api.CloseHandle(handle)
+                os._exit(0)
+            else:
+                while True:
+                    try:
+                        os.kill(owner, 0)
+                    except ProcessLookupError:
+                        os._exit(0)
+                    time.sleep(1)
+        if owner:
+            threading.Thread(target=watch_owner, daemon=True).start()
+        for line in sys.stdin:
+            if not execute(json.loads(line)):
+                sys.exit(1)
+    else:
+        sys.exit(0 if execute(sys.argv[1]) else 1)

@@ -61,17 +61,20 @@ function local(root: string) {
 }
 export function listLocalVoices(root: string) {
   const data = local(root).data;
-  const references = Object.entries(data.voices || {}).map(([id, raw]) => {
-    const voice = raw as any;
-    return {
-      id,
-      source: 'reference' as const,
-      name: voice.name || (id === 'default' ? 'Default / 默认' : id),
-      text: voice.text || '',
-      language: voice.language || 'auto',
-      quality: voice.quality || null,
-    };
-  });
+  const references = Object.entries(data.voices || {})
+    .filter(([, raw]) => !(raw as any)?.deleted)
+    .map(([id, raw]) => {
+      const voice = raw as any;
+      return {
+        id,
+        source: 'reference' as const,
+        deletable: voice.source === 'user-upload' && z.string().uuid().safeParse(id).success,
+        name: voice.name || (id === 'default' ? 'Default / 默认' : id),
+        text: voice.text || '',
+        language: voice.language || 'auto',
+        quality: voice.quality || null,
+      };
+    });
   const folder = data.models?.['cosyvoice-sft'];
   const manifest = typeof folder === 'string' ? join(folder, 'preset-voices.json') : '';
   const speakers =
@@ -189,6 +192,57 @@ export async function saveLocalVoice(
     await rm(temporary, { recursive: true, force: true });
   }
 }
+/** Revoke future selection synchronously; the listener cleans owned audio after its active lease. */
+export async function deleteLocalVoice(config: Configuration, root: string, id: string) {
+  z.string().uuid().parse(id);
+  const { path, data } = local(root);
+  const voice = data.voices?.[id];
+  assert(
+    voice?.source === 'user-upload' && !voice.deleted,
+    'VOICE_PROTECTED',
+    'Only uploaded clone voices can be deleted.',
+  );
+  const target = localVoiceConfig(root);
+  const used = config
+    .get()
+    .media?.connections.some(
+      (c) =>
+        c.kind === 'speech' &&
+        c.baseUrl === target.baseUrl &&
+        c.apiKey === target.token &&
+        c.defaults.voice === id,
+    );
+  assert(
+    !used,
+    'VOICE_IN_USE',
+    '请先选择其他默认朗读音色。 Choose another default voice before deleting this clone.',
+  );
+  // Drop transcript/name immediately. Keep only a tombstone until the listener safely unlinks
+  // the application's UUID-owned audio; never unlink external recordings or generated media.
+  data.voices[id] = { deleted: true, audio: voice.audio, source: 'user-upload' };
+  const pending = path + '.' + randomUUID() + '.tmp';
+  try {
+    writeFileSync(pending, JSON.stringify(data, null, 2), { mode: 0o600 });
+    renameSync(pending, path);
+  } catch (error) {
+    await rm(pending, { force: true });
+    throw error;
+  }
+  let cleanupPending = true;
+  try {
+    const response = await fetch(new URL('/v1/voices/cleanup', target.baseUrl), {
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(3000),
+      headers: { Authorization: 'Bearer ' + target.token },
+    });
+    cleanupPending = response.status !== 200;
+  } catch {
+    /* Offline listener cleans revoked references on its next request. */
+  }
+  return { id, deleted: true, cleanupPending };
+}
+
 export function useLocalVoice(config: Configuration, root: string, id: string) {
   assert(
     listLocalVoices(root).some((voice) => voice.id === id),

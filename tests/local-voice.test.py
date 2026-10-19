@@ -39,6 +39,22 @@ class VoiceTests(unittest.TestCase):
         except HTTPError as error:
             return error.code, error.read(), error.headers.get("Content-Type")
 
+    def test_revoked_reference_cleanup_only_unlinks_owned_upload(self):
+        import uuid
+        root = Path(self.tmp.name)
+        voices = root / 'voices'; voices.mkdir()
+        identity = str(uuid.uuid4())
+        target = voices / (identity + '.wav'); target.write_bytes(b'owned')
+        external = root / 'outside.wav'; external.write_bytes(b'keep')
+        other = str(uuid.uuid4())
+        config = root / 'config.json'
+        data = {'voices': {identity: {'deleted':True,'source':'user-upload','audio':str(target)}, other:{'deleted':True,'source':'user-upload','audio':str(external)}, 'default': {'audio':str(external)}}}
+        config.write_text(json.dumps(data))
+        service.cleanup_deleted_voices(config)
+        self.assertFalse(target.exists())
+        self.assertEqual(external.read_bytes(),b'keep')
+        service.cleanup_deleted_voices(config)  # idempotent
+
     def test_listener_port_is_configurable_and_validated(self):
         self.assertEqual(policy.listen_port({}), 8812)
         self.assertEqual(policy.listen_port({"listenPort": 9876}), 9876)
@@ -291,6 +307,58 @@ class VoiceTests(unittest.TestCase):
                     policy.select_device({"device": "cuda"})
 
 
+
+
+class ResidentTests(unittest.TestCase):
+    def test_warm_policy_validation(self):
+        from resident import ResidentWorker
+        for config in ({'warmIdleSeconds':float('nan')}, {'warmIdleSeconds':301}, {'warmIdleSeconds':True}, {'warmReserveMiB':0}):
+            with self.assertRaises(ValueError): ResidentWorker.validate(config)
+        ResidentWorker.validate({})
+
+    def test_reuse_switch_expiry_and_timeout(self):
+        from resident import ResidentWorker
+        import time
+        with tempfile.TemporaryDirectory() as folder:
+            d = Path(folder)
+            script = d / "fake.py"
+            script.write_text("import sys,json,os,time\nfrom pathlib import Path\nfor line in sys.stdin:\n j=json.loads(Path(json.loads(line)).read_text())\n time.sleep(j.get('delay',0))\n p=Path(j['result']); t=p.with_suffix('.tmp'); t.write_text(json.dumps({'pid':os.getpid()})); t.replace(p)\n")
+            pool = ResidentWorker()
+            config = {'models': {'cosyvoice': folder}, 'warmIdleSeconds': 60}
+            request = d / 'job.json'
+            def run(device='cpu', delay=0, timeout=5):
+                result = d / 'result.json'; result.unlink(missing_ok=True)
+                request.write_text(json.dumps({'config': config, 'model':'cosyvoice', 'device':device, 'result':str(result), 'delay':delay}))
+                pool.run([sys.executable, str(script), str(request)], env=None, timeout=timeout, probe=lambda c: ('cuda','ok'))
+                return json.loads(result.read_text())['pid']
+            try:
+                first = run()
+                self.assertEqual(first, run())
+                self.assertTrue(pool.available())
+                second = run('cuda')
+                self.assertNotEqual(first, second)
+                pool._idle(config, lambda c: ('cpu','low memory'))
+                self.assertFalse(pool.available())
+                run()
+                pool._idle({**config, 'warmIdleSeconds':0}, lambda c: ('cuda','ok'))
+                self.assertFalse(pool.available())
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    run(delay=5,timeout=.1)
+                self.assertFalse(pool.available())
+            finally:
+                pool.close()
+
+    def test_disconnect_discards_worker_without_replay(self):
+        from resident import ResidentWorker
+        pool = ResidentWorker()
+        with tempfile.TemporaryDirectory() as folder:
+            d=Path(folder); request=d/'job.json'
+            request.write_text(json.dumps({'config':{'models':{'cosyvoice':folder}},'model':'cosyvoice','device':'cpu','result':str(d/'result.json')}))
+            script=d/'fake.py';script.write_text('import time;time.sleep(20)')
+            def disconnected(): raise BrokenPipeError('closed')
+            with self.assertRaises(BrokenPipeError):
+                pool.run([sys.executable,str(script),str(request)], env=None, timeout=5, probe=lambda c:('cpu',''),on_tick=disconnected)
+            self.assertFalse(pool.available())
 
 if __name__ == "__main__":
     unittest.main()

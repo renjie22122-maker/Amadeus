@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   saveLocalVoice,
+  deleteLocalVoice,
   inspectReferencePcm,
   localVoiceCapabilities,
   listLocalVoices,
@@ -167,6 +168,45 @@ test('pretrained and reference voices share a catalog without changing reference
       'preset:speaker-b',
     );
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('only uploaded clones can be revoked; defaults, presets and generated audio remain protected', async () => {
+  const root = await fixture();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 202 });
+  try {
+    const voice = await saveLocalVoice(
+      root,
+      { name: 'test clone', text: 'ordinary reference', consent: 'true' },
+      Buffer.from('audio'),
+      async (_, output) => {
+        await writeFile(output, Buffer.alloc(48000, 12));
+      },
+    );
+    const settings = new Configuration(join(root, 'settings.json'));
+    configureLocalVoice(settings, root);
+    useLocalVoice(settings, root, voice.id);
+    await assert.rejects(deleteLocalVoice(settings, root, voice.id), /another default/);
+    await assert.rejects(deleteLocalVoice(settings, root, 'default'));
+    await assert.rejects(deleteLocalVoice(settings, root, 'preset:Chinese'));
+    useLocalVoice(settings, root, 'default');
+    const receipt = await deleteLocalVoice(settings, root, voice.id);
+    assert.equal(receipt.cleanupPending, true);
+    assert(!listLocalVoices(root).some((v) => v.id === voice.id));
+    assert.throws(() => useLocalVoice(settings, root, voice.id), /configured voice/);
+    const saved = JSON.parse(await readFile(join(root, 'voice-service/config.json'), 'utf8'));
+    assert.equal(saved.voices[voice.id].text, undefined);
+    assert.equal(saved.voices[voice.id].deleted, true);
+    assert.equal(saved.voices.default.text, 'source transcript');
+    assert.equal(saved.token, 'x'.repeat(40));
+    assert(
+      (await readFile(saved.voices[voice.id].audio)).length > 0,
+      'reference remains until active worker releases it',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
     await rm(root, { recursive: true, force: true });
   }
 });
