@@ -63,6 +63,15 @@ export interface ChatConnection {
   apiVersion: string;
   webhookPort: number;
   remoteApprovals: boolean;
+  peerType?: 'private' | 'group';
+  accessMode?: 'chat' | 'work';
+  allowedSenders?: string[];
+  allGroupMembers?: boolean;
+  groupPrefix?: string;
+  sharedKnowledge?: boolean;
+  groupContext?: boolean;
+  groupReplyMode?: 'mentions' | 'participate';
+  autoInviteGroups?: boolean;
   authorizedTarget: string;
   activatedAt: number;
   revision: number;
@@ -73,7 +82,9 @@ export interface ChatIncoming {
   peerId: string;
   text: string;
   timestamp: number;
+  peerType?: 'private' | 'group';
   media?: ChatRemoteFile[];
+  addressed?: boolean;
 }
 export interface ChatSecrets {
   token: string;

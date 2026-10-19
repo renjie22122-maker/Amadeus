@@ -60,6 +60,15 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
           text.trim() ||
           'Please inspect the attached media. Use transcribe_media for audio and read_image for images; do not infer unheard content.',
         timestamp,
+        peerType: c.peerType || 'private',
+        addressed:
+          (c.transport === 'qq' && event.t === 'GROUP_AT_MESSAGE_CREATE') ||
+          (Array.isArray(event.message) &&
+            event.message.some(
+              (x: any) =>
+                (x.type === 'at' && String(x.data?.qq) === c.accountId) ||
+                (x.type === 'mention' && String(x.data?.user_id) === c.accountId),
+            )),
         media,
       },
     ];
@@ -68,7 +77,10 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
     const m = event.message;
     if (
       !m ||
-      m.chat?.type !== 'private' ||
+      (c.peerType === 'group'
+        ? !['group', 'supergroup'].includes(m.chat?.type)
+        : m.chat?.type !== 'private') ||
+      m.sender_chat ||
       m.from?.is_bot ||
       m.forward_origin ||
       m.forward_from ||
@@ -94,7 +106,7 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
       event.type !== 'message_new' ||
       !m ||
       m.out ||
-      m.peer_id !== m.from_id ||
+      (c.peerType === 'group' ? m.peer_id < 2000000000 : m.peer_id !== m.from_id) ||
       m.from_id <= 0 ||
       m.fwd_messages?.length
     )
@@ -146,7 +158,12 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
   }
   if (c.transport === 'qq') {
     const m = event.d;
-    if (event.op !== 0 || event.t !== 'C2C_MESSAGE_CREATE' || !m) return [];
+    if (
+      event.op !== 0 ||
+      event.t !== (c.peerType === 'group' ? 'GROUP_AT_MESSAGE_CREATE' : 'C2C_MESSAGE_CREATE') ||
+      !m
+    )
+      return [];
     const media: ChatRemoteFile[] = (m.attachments || []).map((a: any) => ({
       url: a.url?.startsWith('//') ? 'https:' + a.url : a.url,
       name: a.filename || 'attachment',
@@ -160,22 +177,26 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
     }));
     return make(
       m.id,
-      m.author?.user_openid,
-      m.author?.user_openid,
-      m.content || '',
+      m.author?.member_openid || m.author?.user_openid,
+      c.peerType === 'group' ? m.group_openid : m.author?.user_openid,
+      (m.content || '').replace(/^<@!?[^>]+>\s*/, ''),
       Date.parse(m.timestamp) / 1000,
       media,
     );
   }
   if (c.transport === 'wecom') {
     const m = event.body;
-    if (event.cmd !== 'aibot_msg_callback' || m?.chattype !== 'single' || m.aibotid !== c.accountId)
+    if (
+      event.cmd !== 'aibot_msg_callback' ||
+      m?.chattype !== (c.peerType === 'group' ? 'group' : 'single') ||
+      m.aibotid !== c.accountId
+    )
       return [];
     if (m.msgtype === 'text')
       return make(
         m.msgid,
         m.from?.userid,
-        m.from?.userid,
+        c.peerType === 'group' ? m.chatid : m.from?.userid,
         m.text?.content,
         m.create_time || Date.now() / 1000,
       );
@@ -183,7 +204,7 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
       return make(
         m.msgid,
         m.from?.userid,
-        m.from?.userid,
+        c.peerType === 'group' ? m.chatid : m.from?.userid,
         '[Platform speech transcript] ' + m.voice.content,
         m.create_time || Date.now() / 1000,
       );
@@ -203,7 +224,7 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
     return make(
       m.msgid,
       m.from?.userid,
-      m.from?.userid,
+      c.peerType === 'group' ? m.chatid : m.from?.userid,
       (m.mixed?.msg_item || [])
         .filter((a: any) => a.msgtype === 'text')
         .map((a: any) => a.text?.content || '')
@@ -215,16 +236,16 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
   if (c.transport === 'onebot11') {
     if (
       event.post_type !== 'message' ||
-      event.message_type !== 'private' ||
+      event.message_type !== (c.peerType || 'private') ||
       String(event.self_id) !== c.accountId ||
       String(event.user_id) === c.accountId
     )
       return [];
-    const parsed = onebotMedia(event.message, false);
+    const parsed = onebotMedia(groupSegments(event.message, c.accountId), false);
     return make(
       event.message_id,
       event.user_id,
-      event.user_id,
+      c.peerType === 'group' ? event.group_id : event.user_id,
       parsed.text,
       event.time,
       parsed.media,
@@ -232,14 +253,21 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
   }
   if (
     event.type !== 'message' ||
-    event.detail_type !== 'private' ||
+    event.detail_type !== (c.peerType || 'private') ||
     event.self?.platform !== 'wechat' ||
     String(event.self?.user_id) !== c.accountId ||
     String(event.user_id) === c.accountId
   )
     return [];
-  const parsed = onebotMedia(event.message, true);
-  return make(event.id, event.user_id, event.user_id, parsed.text, event.time, parsed.media);
+  const parsed = onebotMedia(groupSegments(event.message, c.accountId), true);
+  return make(
+    event.id,
+    event.user_id,
+    c.peerType === 'group' ? event.group_id : event.user_id,
+    parsed.text,
+    event.time,
+    parsed.media,
+  );
 }
 export function messageParts(text: string, limit = 2800) {
   // Respect byte-limited transports and never split Unicode surrogate pairs.
@@ -263,14 +291,22 @@ export function onebotAction(c: ChatConnection, text: string, echo: string) {
   const message = [{ type: 'text', data: { text } }];
   return c.transport === 'onebot11'
     ? {
-        action: 'send_private_msg',
-        params: { user_id: Number(c.peerId), message, auto_escape: true },
+        action: c.peerType === 'group' ? 'send_group_msg' : 'send_private_msg',
+        params: {
+          [c.peerType === 'group' ? 'group_id' : 'user_id']: Number(c.peerId),
+          message,
+          auto_escape: true,
+        },
         echo,
       }
     : {
         action: 'send_message',
         self: { platform: 'wechat', user_id: c.accountId },
-        params: { detail_type: 'private', user_id: c.peerId, message },
+        params: {
+          detail_type: c.peerType || 'private',
+          [c.peerType === 'group' ? 'group_id' : 'user_id']: c.peerId,
+          message,
+        },
         echo,
       };
 }
@@ -318,6 +354,24 @@ export function qqVerify(
   }
 }
 
+// Preserve who is mentioned/replied to as data, without fetching referenced messages.
+function groupSegments(parts: any, account: string) {
+  if (!Array.isArray(parts)) return parts;
+  return parts.flatMap((p: any) => {
+    if (['at', 'mention'].includes(p?.type)) {
+      const target = String(p.data?.qq ?? p.data?.user_id ?? '');
+      return target === account
+        ? []
+        : [{ type: 'text', data: { text: ' [Mention ID: ' + target + '] ' } }];
+    }
+    if (p?.type === 'reply')
+      return [
+        { type: 'text', data: { text: ' [Reply message ID: ' + String(p.data?.id ?? '') + '] ' } },
+      ];
+    if (p?.type === 'face') return [{ type: 'text', data: { text: ' [Emoji] ' } }];
+    return [p];
+  });
+}
 function onebotMedia(parts: any, v12: boolean): { text: string; media: ChatRemoteFile[] } {
   if (
     !Array.isArray(parts) ||

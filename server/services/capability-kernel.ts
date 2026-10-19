@@ -1,3 +1,4 @@
+import { socialChatTools } from './chat-access.js';
 import type { ToolContext } from '../tools/registry.js';
 import type { ToolSpec } from '../../shared/types.js';
 import { executionSettings } from '../../shared/execution.js';
@@ -11,6 +12,21 @@ export function capabilityDecision(ctx: ToolContext, name: string, effect: ToolS
     settings.dockerImage,
   ]);
   const tests: [boolean, string][] = [
+    [
+      !!ctx.store?.maybe('chat-proactive-run', ctx.run.id) &&
+        ![
+          'search_tools',
+          'search_knowledge',
+          'list_knowledge_documents',
+          'read_knowledge_document',
+          'read_image',
+        ].includes(name),
+      'proactive-read-only',
+    ],
+    [
+      ctx.conversation.remoteChatOnly === true && !socialChatTools.has(name),
+      'remote-chat-capability',
+    ],
     [
       !!ctx.conversation.allowedTools && !ctx.conversation.allowedTools.includes(name),
       'tool-not-in-allowed-set',

@@ -10,6 +10,7 @@ import { toolHooks } from '../services/tool-hooks.js';
 import { prepareResume } from './resume-preparation.js';
 import { runtimeMessages } from './context-reuse.js';
 import { RunPump } from './run-pump.js';
+import { restrictedChat } from '../services/chat-access.js';
 import { RunEnvironment } from './run-environment.js';
 import { BackgroundCommands } from '../services/background-commands.js';
 import { checkResponse, type ResponseContract } from './response-contract.js';
@@ -401,10 +402,19 @@ export class Runtime implements TeamPort {
     return this.environment.filesForConversation(c);
   }
   async context(run: Run): Promise<ToolContext> {
-    const c = this.store.get<Conversation>('conversation', run.conversationId);
+    const c = restrictedChat(this.store.get<Conversation>('conversation', run.conversationId));
     const files = await this.filesForConversation(c);
     const scopes = c.knowledge
-      ? ['session:' + c.id, ...(c.projectId ? ['project:' + c.projectId] : ['general'])]
+      ? [
+          'session:' + c.id,
+          ...(c.remoteChatOnly
+            ? c.remoteSharedKnowledge
+              ? ['general']
+              : []
+            : c.projectId
+              ? ['project:' + c.projectId]
+              : ['general']),
+        ]
       : [];
     if (c.knowledge && run.parentRunId) {
       let parent = this.store.get<Run>('run', run.parentRunId);

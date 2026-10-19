@@ -22,6 +22,12 @@ const blank: Form = {
   apiVersion: '',
   webhookPort: 8788,
   remoteApprovals: false,
+  peerType: 'private',
+  accessMode: 'chat',
+  allowedSenders: [],
+  allGroupMembers: false,
+  groupPrefix: '/amadeus',
+  sharedKnowledge: true,
   token: '',
   appSecret: '',
   verifyToken: '',
@@ -87,7 +93,7 @@ export function ChatConnectionsPage({
           </h1>
           <p>
             {tr(
-              '从可信的私聊发送任务，并把结果和审批带回手机。',
+              '连接私聊或群聊，区分普通聊天与授权远程工作。',
               'Send tasks from a trusted private chat and receive results and approvals on your phone.',
             )}
           </p>
@@ -99,8 +105,8 @@ export function ChatConnectionsPage({
       </header>
       <p className="muted">
         {tr(
-          '接收绑定账号的私聊文字、图片、语音、视频和文档，不接收群聊或转发。会话历史、文件范围和权限沿用所选会话；建议创建专用会话。接入端能看到任务结果及你允许发送的审批内容。',
-          'Bound private text and supported media/documents are accepted; groups and forwards are excluded. The selected conversation retains its history, file scope and permissions. A dedicated conversation is recommended. The platform receives results and enabled approval payloads.',
+          '为指定私聊或群聊选择普通聊天或远程工作。普通聊天新建隔离会话，支持联网、多媒体与授权知识库；远程工作使用所选会话的权限和历史。群聊输出对全群可见。',
+          'Choose ordinary chat or remote work for a private contact or group. Ordinary chat creates isolated history with web, media and authorized knowledge; work inherits the chosen conversation permissions and history. Group replies are visible to all members.',
         )}
       </p>
       {!items.length && (
@@ -129,7 +135,11 @@ export function ChatConnectionsPage({
                 )}
             </p>
             <p>
-              {tr('排队', 'Queued')}: {c.queued} ·{' '}
+              {c.peerType === 'group' ? tr('群聊', 'Group') : tr('私聊', 'Private')} ·{' '}
+              {c.accessMode === 'chat'
+                ? tr('普通聊天', 'Ordinary chat')
+                : tr('远程工作', 'Remote work')}{' '}
+              · {tr('排队', 'Queued')}: {c.queued} ·{' '}
               {c.remoteApprovals
                 ? tr('允许单次远程审批', 'One-time remote approvals enabled')
                 : tr('本机审批', 'Local approvals')}
@@ -149,7 +159,18 @@ export function ChatConnectionsPage({
                     queued: ______,
                     ...rest
                   } = c;
-                  setForm({ ...rest, token: '', appSecret: '', verifyToken: '' });
+                  setForm({
+                    peerType: 'private',
+                    accessMode: 'work',
+                    allowedSenders: [],
+                    allGroupMembers: false,
+                    groupPrefix: '/amadeus',
+                    sharedKnowledge: true,
+                    ...rest,
+                    token: '',
+                    appSecret: '',
+                    verifyToken: '',
+                  });
                 }}
               >
                 {tr('配置', 'Configure')}
@@ -249,6 +270,9 @@ export function ChatConnectionsPage({
             e.preventDefault();
             void act(async () => {
               const { id, ...body } = form;
+              body.allowedSenders = (body.allowedSenders || [])
+                .map((x) => x.trim())
+                .filter(Boolean);
               await api('/chat-connections' + (id ? '/' + id : ''), body, id ? 'PUT' : 'POST');
               setForm(null);
             });
@@ -291,6 +315,181 @@ export function ChatConnectionsPage({
             </p>
           )}
           <label>
+            {tr('权限类别', 'Access level')}
+            <select
+              disabled={!!form.id}
+              value={form.accessMode || 'work'}
+              onChange={(e) =>
+                setForm((f) =>
+                  f
+                    ? {
+                        ...f,
+                        accessMode: e.target.value as 'chat' | 'work',
+                        groupContext: false,
+                        groupReplyMode: 'mentions',
+                        remoteApprovals: false,
+                        allGroupMembers: false,
+                      }
+                    : f,
+                )
+              }
+            >
+              <option value="chat">
+                {tr('普通聊天：联网、媒体、知识库', 'Ordinary chat: web, media and knowledge')}
+              </option>
+              <option value="work">
+                {tr('远程工作：沿用工作会话权限', 'Remote work: selected workspace permissions')}
+              </option>
+            </select>
+          </label>
+          <label>
+            {tr('接收范围', 'Destination type')}
+            <select
+              disabled={!!form.id}
+              value={form.peerType || 'private'}
+              onChange={(e) =>
+                setForm((f) =>
+                  f
+                    ? {
+                        ...f,
+                        peerType: e.target.value as 'private' | 'group',
+                        autoInviteGroups: false,
+                        groupContext: false,
+                        groupReplyMode: 'mentions',
+                        peerId: e.target.value === 'private' ? f.senderId : '',
+                        allGroupMembers: false,
+                      }
+                    : f,
+                )
+              }
+            >
+              <option value="private">{tr('指定私聊用户', 'Private contact')}</option>
+              <option value="group" disabled={form.transport === 'whatsapp'}>
+                {tr('指定群聊', 'Group')}
+              </option>
+            </select>
+          </label>
+          <p>
+            {form.accessMode === 'chat'
+              ? tr(
+                  '保存时新建独立普通会话，只沿用下方会话的模型。不会复制历史或接入本机项目。',
+                  'Saving creates isolated ordinary-chat history using only the selected model; no existing history or project is copied.',
+                )
+              : tr(
+                  '工作权限和历史来自所选会话。请使用专用会话；群成员能看到回传结果。',
+                  'Work inherits the selected conversation permissions and history. Use a dedicated conversation; group members can see delivered results.',
+                )}
+          </p>
+          {form.accessMode === 'chat' && (
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={form.sharedKnowledge !== false}
+                onChange={(e) => field('sharedKnowledge', e.target.checked)}
+              />
+              {tr(
+                '开放普通对话共享知识库（群成员可看到引用）',
+                'Allow general shared knowledge (citations are visible to group members)',
+              )}
+            </label>
+          )}
+          {form.transport === 'onebot11' && form.peerType !== 'group' && (
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={!!form.autoInviteGroups}
+                onChange={(e) => field('autoInviteGroups', e.target.checked)}
+              />
+              {tr(
+                '指定控制人邀请入群后自动开放基本聊天（需平台邀请事件；不继承工作权限）',
+                'Enable basic group chat after verified controller invitations (never inherits work permissions)',
+              )}
+            </label>
+          )}
+          {form.peerType === 'group' && (
+            <>
+              <label>
+                {tr('群 ID / group_openid / chatid', 'Group ID / group_openid / chatid')}
+                <input
+                  required
+                  disabled={!!form.id}
+                  value={form.peerId}
+                  onChange={(e) => field('peerId', e.target.value)}
+                />
+              </label>
+              <label>
+                {tr(
+                  '允许发送任务的成员 ID（每行一个；控制人默认允许）',
+                  'Allowed member IDs (one per line; controller always allowed)',
+                )}
+                <textarea
+                  value={(form.allowedSenders || []).join('\n')}
+                  onChange={(e) => field('allowedSenders', e.target.value.split(/[\n,，]/))}
+                />
+              </label>
+              {form.accessMode === 'chat' && (
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={!!form.allGroupMembers}
+                    onChange={(e) => field('allGroupMembers', e.target.checked)}
+                  />
+                  {tr(
+                    '允许该群全部成员普通聊天',
+                    'Allow ordinary chat for every member of this group',
+                  )}
+                </label>
+              )}
+              {form.accessMode === 'chat' && (
+                <>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={!!form.groupContext}
+                      onChange={(e) => {
+                        field('groupContext', e.target.checked);
+                        if (!e.target.checked) field('groupReplyMode', 'mentions');
+                      }}
+                    />
+                    {tr(
+                      '保留允许成员的近期群消息上下文（可能发送给模型；不跨群）',
+                      'Keep recent authorized group context (may be sent to the model; isolated by group)',
+                    )}
+                  </label>
+                  <label>
+                    {tr('回复方式', 'Reply mode')}
+                    <select
+                      value={form.groupReplyMode || 'mentions'}
+                      onChange={(e) => field('groupReplyMode', e.target.value)}
+                    >
+                      <option value="mentions">{tr('@或前缀触发', 'Mentions or prefix')}</option>
+                      <option value="participate" disabled={!form.groupContext}>
+                        {tr(
+                          '适度参与：可保持沉默，每小时最多3次主动判断',
+                          'Selective participation: may stay silent, at most 3 unsolicited decisions/hour',
+                        )}
+                      </option>
+                    </select>
+                  </label>
+                </>
+              )}
+              <label>
+                {tr('群内触发前缀', 'Group message prefix')}
+                <input
+                  required
+                  value={form.groupPrefix || '/amadeus'}
+                  onChange={(e) => field('groupPrefix', e.target.value)}
+                />
+              </label>
+              <p>
+                {tr(
+                  '例如 /amadeus 你好。QQ 官方还需要 @机器人；只有下方控制人能使用审批、/stop 和 /status。',
+                  'Example: /amadeus hello. Official QQ additionally needs @bot. Only the controller below may approve or use /stop and /status.',
+                )}
+              </p>
+            </>
+          )}
+          <label>
             {tr('名称', 'Name')}
             <input
               required
@@ -300,7 +499,7 @@ export function ChatConnectionsPage({
             />
           </label>
           <label>
-            {tr('目标会话（包含已有历史）', 'Target conversation (including history)')}
+            {tr('参考模型会话 / 工作目标会话', 'Model template / work conversation')}
             <select
               required
               disabled={!!form.id}
@@ -308,6 +507,11 @@ export function ChatConnectionsPage({
               onChange={(e) => field('conversationId', e.target.value)}
             >
               <option value="">{tr('选择专用会话', 'Choose a dedicated chat')}</option>
+              {form.conversationId && !conversations.some((c) => c.id === form.conversationId) && (
+                <option value={form.conversationId}>
+                  {tr('此连接的独立会话', 'Isolated conversation for this connection')}
+                </option>
+              )}
               {conversations
                 .filter((c) => !c.archived && !c.parentId && !c.isolationId)
                 .map((c) => (
@@ -318,14 +522,17 @@ export function ChatConnectionsPage({
             </select>
           </label>
           <label>
-            {tr('可信私聊用户 ID（不是昵称）', 'Trusted private user ID (not display name)')}
+            {tr(
+              '私聊用户 / 群控制人 ID（不是昵称）',
+              'Private contact / group controller ID (not display name)',
+            )}
             <input
               required
               disabled={!!form.id}
               value={form.senderId}
               onChange={(e) => {
                 field('senderId', e.target.value);
-                field('peerId', e.target.value);
+                if (form.peerType !== 'group') field('peerId', e.target.value);
               }}
             />
           </label>
@@ -430,6 +637,7 @@ export function ChatConnectionsPage({
           <label className="check">
             <input
               type="checkbox"
+              disabled={form.accessMode === 'chat'}
               checked={form.remoteApprovals}
               onChange={(e) => field('remoteApprovals', e.target.checked)}
             />

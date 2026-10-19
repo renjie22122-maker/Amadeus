@@ -8,6 +8,7 @@ import type { ChatRemoteFile } from '../../shared/chat-connections.js';
 import { createServer, type Server } from 'node:http';
 import { randomUUID, createHash } from 'node:crypto';
 import type { ChatConnection, ChatSecrets } from '../../shared/chat-connections.js';
+import { chatSenderAllowed } from './chat-access.js';
 import { ChatConnections } from './chat-connections.js';
 import {
   equalSecret,
@@ -48,6 +49,7 @@ type Session = {
   socket?: WebSocket;
   polling?: Promise<void>;
   sending: boolean;
+  lastDelivery?: string;
   downloading?: boolean;
   nextPoll: number;
   nextSend: number;
@@ -121,13 +123,34 @@ export class ChatTransports {
     await Promise.allSettled([...this.jobs]);
     this.sessions.clear();
   }
+  private accountKey(c: ChatConnection) {
+    return createHash('sha256')
+      .update(
+        JSON.stringify([c.transport, c.accountId, c.endpoint, this.channels.secrets(c.id).token]),
+      )
+      .digest('hex');
+  }
   private accept(c: ChatConnection, s: Session, event: any) {
     if (!this.current(c, s)) return;
+    const account = this.accountKey(c);
+    for (const route of this.channels
+      .list()
+      .filter((r) => r.enabled && this.accountKey(r) === account)) {
+      try {
+        this.channels.enrollInvitedGroup(route, event);
+      } catch {
+        this.status(route, 'group-enrollment-failed', 'Group authorization needs local review.');
+      }
+      this.acceptRoute(route, s, event);
+    }
+  }
+  private acceptRoute(c: ChatConnection, s: Session, event: any) {
+    if (!this.current(c, s)) return;
     for (const m of incoming(c, event)) {
-      if (m.senderId !== c.senderId || m.peerId !== c.peerId) continue;
+      if (!chatSenderAllowed(c, m)) continue;
       try {
         const result = this.channels.receive(c.id, m);
-        if (c.transport === 'qq' && result !== 'duplicate')
+        if (c.transport === 'qq' && result !== 'duplicate' && result !== 'ignored')
           this.channels.store.put('chat-qq-reply', {
             id: c.id,
             messageId: m.id,
@@ -148,8 +171,16 @@ export class ChatTransports {
     if (this.closed) return;
     this.channels.tick();
     const connections = this.channels.list();
+    const owners = new Map<string, ChatConnection>();
+    for (const c of connections.filter((c) => c.enabled).sort((a, b) => a.id.localeCompare(b.id)))
+      if (!owners.has(this.accountKey(c))) owners.set(this.accountKey(c), c);
+    const ownerFor = (c: ChatConnection) => owners.get(this.accountKey(c))!;
     for (const [key, s] of this.sessions)
-      if (!connections.some((c) => c.id === key && c.enabled && c.revision === s.revision)) {
+      if (
+        !connections.some(
+          (c) => c.id === key && c.enabled && c.revision === s.revision && ownerFor(c)?.id === key,
+        )
+      ) {
         this.stop(s);
         this.sessions.delete(key);
       }
@@ -164,23 +195,33 @@ export class ChatTransports {
         server.close();
         this.webhooks.delete(port);
       }
-    for (const c of connections.filter((c) => c.enabled)) {
-      let s = this.sessions.get(c.id);
+    const enabled = connections.filter((c) => c.enabled).sort((a, b) => a.id.localeCompare(b.id));
+    const order = enabled
+      .filter((c) => c.id !== this.sessions.get(ownerFor(c).id)?.lastDelivery)
+      .concat(enabled.filter((c) => c.id === this.sessions.get(ownerFor(c).id)?.lastDelivery));
+    for (const c of order) {
+      const owner = ownerFor(c);
+      let s = this.sessions.get(owner.id);
       if (!s) {
         s = {
-          revision: c.revision,
+          revision: owner.revision,
           abort: new AbortController(),
           sending: false,
           nextPoll: 0,
           nextSend: 0,
           pending: new Map(),
         };
-        this.sessions.set(c.id, s);
+        this.sessions.set(owner.id, s);
       }
       if (['whatsapp', 'qq'].includes(c.transport)) this.listen(c.webhookPort);
       else if (c.transport.startsWith('onebot') || c.transport === 'wecom')
-        this.connectSocket(c, s);
-      else if (!s.polling && Date.now() >= s.nextPoll) {
+        this.connectSocket(owner, s);
+      else if (
+        c.id === owner.id &&
+        ['telegram', 'vk'].includes(c.transport) &&
+        !s.polling &&
+        Date.now() >= s.nextPoll
+      ) {
         const session = s;
         s.polling = this.poll(c, s)
           .catch(() => {
@@ -222,11 +263,19 @@ export class ChatTransports {
       }
       if (
         !s.sending &&
+        (
+          this.channels.store.db
+            .prepare(
+              "SELECT state FROM chat_outbox WHERE connection_id=? AND state<>'sent' ORDER BY created_at,rowid LIMIT 1",
+            )
+            .get(c.id) as any
+        )?.state === 'pending' &&
         Date.now() >= s.nextSend &&
         (!(c.transport.startsWith('onebot') || c.transport === 'wecom') ||
           (s.socket?.readyState === WebSocket.OPEN && (c.transport !== 'wecom' || s.ready)))
       ) {
         s.sending = true;
+        s.lastDelivery = c.id;
         const session = s;
         this.track(
           this.deliver(c, s)
@@ -703,7 +752,10 @@ export class ChatTransports {
       );
     } else if (c.transport === 'qq') {
       const token = await this.qqToken(c, s);
-      const base = 'https://api.sgroup.qq.com/v2/users/' + encodeURIComponent(c.peerId);
+      const base =
+        'https://api.sgroup.qq.com/v2/' +
+        (c.peerType === 'group' ? 'groups/' : 'users/') +
+        encodeURIComponent(c.peerId);
       const headers = { Authorization: 'QQBot ' + token, 'Content-Type': 'application/json' };
       const file = await json(base + '/files', {
         method: 'POST',
@@ -757,7 +809,7 @@ export class ChatTransports {
       assert(final?.media_id, 'CHAT_MEDIA_UPLOAD', 'WeCom upload incomplete.');
       await this.socketRequest(c, s, 'aibot_send_msg', {
         chatid: c.peerId,
-        chat_type: 1,
+        chat_type: c.peerType === 'group' ? 2 : 1,
         msgtype: type,
         [type]: { media_id: final.media_id },
       });
@@ -769,28 +821,38 @@ export class ChatTransports {
       });
       assert(file?.file_id, 'CHAT_MEDIA_UPLOAD', 'Bridge upload failed.');
       await this.socketRequest(c, s, 'send_message', {
-        detail_type: 'private',
-        user_id: c.peerId,
+        detail_type: c.peerType || 'private',
+        [c.peerType === 'group' ? 'group_id' : 'user_id']: c.peerId,
         message: [{ type: kind === 'audio' ? 'voice' : kind, data: { file_id: file.file_id } }],
       });
     } else {
       if (kind === 'file') {
         // NapCat accepts a base64 file body; no arbitrary local source path is requested.
-        await this.socketRequest(c, s, 'upload_private_file', {
-          user_id: Number(c.peerId),
-          file: 'base64://' + bytes.toString('base64'),
-          name,
-        });
+        await this.socketRequest(
+          c,
+          s,
+          c.peerType === 'group' ? 'upload_group_file' : 'upload_private_file',
+          {
+            [c.peerType === 'group' ? 'group_id' : 'user_id']: Number(c.peerId),
+            file: 'base64://' + bytes.toString('base64'),
+            name,
+          },
+        );
       } else
-        await this.socketRequest(c, s, 'send_private_msg', {
-          user_id: Number(c.peerId),
-          message: [
-            {
-              type: kind === 'audio' ? 'record' : kind,
-              data: { file: 'base64://' + bytes.toString('base64') },
-            },
-          ],
-        });
+        await this.socketRequest(
+          c,
+          s,
+          c.peerType === 'group' ? 'send_group_msg' : 'send_private_msg',
+          {
+            [c.peerType === 'group' ? 'group_id' : 'user_id']: Number(c.peerId),
+            message: [
+              {
+                type: kind === 'audio' ? 'record' : kind,
+                data: { file: 'base64://' + bytes.toString('base64') },
+              },
+            ],
+          },
+        );
     }
   }
   private async qqToken(c: ChatConnection, s: Session) {
@@ -870,7 +932,10 @@ export class ChatTransports {
       const token = await this.qqToken(c, s),
         reply = this.qqReply(c, row);
       const result = await json(
-        'https://api.sgroup.qq.com/v2/users/' + encodeURIComponent(c.peerId) + '/messages',
+        'https://api.sgroup.qq.com/v2/' +
+          (c.peerType === 'group' ? 'groups/' : 'users/') +
+          encodeURIComponent(c.peerId) +
+          '/messages',
         {
           method: 'POST',
           headers: { Authorization: 'QQBot ' + token, 'Content-Type': 'application/json' },
@@ -916,7 +981,7 @@ export class ChatTransports {
                     headers: { req_id: echo },
                     body: {
                       chatid: c.peerId,
-                      chat_type: 1,
+                      chat_type: c.peerType === 'group' ? 2 : 1,
                       msgtype: 'markdown',
                       markdown: { content: row.text },
                     },
@@ -1039,7 +1104,11 @@ export class ChatTransports {
             )
           )
             return finish(403, 'Forbidden');
-          const s = this.sessions.get(c.id);
+          const owner = this.channels
+            .list()
+            .filter((r) => r.enabled && this.accountKey(r) === this.accountKey(c))
+            .sort((a, b) => a.id.localeCompare(b.id))[0];
+          const s = owner ? this.sessions.get(owner.id) : undefined;
           if (!s) return finish(503, 'Not ready');
           this.accept(c, s, event);
           this.status(c, 'connected');
@@ -1053,7 +1122,11 @@ export class ChatTransports {
           )
         )
           return finish(403, 'Forbidden');
-        const s = this.sessions.get(c.id);
+        const owner = this.channels
+          .list()
+          .filter((r) => r.enabled && this.accountKey(r) === this.accountKey(c))
+          .sort((a, b) => a.id.localeCompare(b.id))[0];
+        const s = owner ? this.sessions.get(owner.id) : undefined;
         if (!s) return finish(503, 'Not ready');
         this.accept(c, s, JSON.parse(body.toString('utf8')));
         this.status(c, 'connected');

@@ -2,48 +2,56 @@
 
 [English](CHAT-CONNECTIONS.md) | [简体中文](CHAT-CONNECTIONS.zh-CN.md)
 
-Open **Chat connections** below Settings in the sidebar. Connections start with the Amadeus service and are disabled until explicitly enabled. No separate startup script, package download, or firewall change is required. The service must remain running; closing the browser is fine, shutting down the computer is not.
+Configure integrations from Chat connections in the sidebar. Connections start with Amadeus; no new startup script is required. Closing the browser does not stop the service. Deploying updated code requires a deliberate Amadeus restart. Bridges run separately; firewall rules are not modified automatically.
 
-## Setup
+## Chat and work permissions
 
-Create a dedicated conversation with the desired model, tools, folders and permissions first. Add a connection, select that conversation, enter the platform credentials and the trusted private sender ID (not their display name), then enable it. One connection binds one conversation and one private recipient. Group access is not implemented. Existing history and authorized resources in that conversation are available to the remote user. Changing the model or scope pauses the connection until reviewed and saved again. To change the account, recipient, endpoint or conversation, create a new connection; queued results cannot be redirected to another recipient.
+New connections default to ordinary chat. A selected conversation supplies only its model configuration: a clean conversation is created without project access, private history, memories or skills. Web, media and optionally the ordinary shared knowledge library are available; shell, arbitrary files, MCP, delegation and private-memory tools are denied. Shared-library citations can become visible to every group member.
 
-| Platform               | Transport and required configuration                                                                                                                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Telegram               | Official Bot API long polling. Bot token and private numeric user/chat ID. Stop other consumers of the same bot's updates.                                                                                                |
-| WhatsApp               | Official Business Cloud API, not personal WhatsApp login. Access token, Phone Number ID, Graph API version, App Secret and your webhook verification token.                                                               |
-| VK                     | Official community long polling. Community token, community ID, supported API version and private numeric user ID. Enable messages and long-poll message events in the community.                                         |
-| QQ official            | App ID, AppSecret in the service-token field, private contact **openid** and signed webhook. Platform app permissions and approval requirements apply.                                                                    |
-| WeCom                  | Official enterprise WeChat intelligent-bot WebSocket. Bot ID, secret and private userid. This is distinct from personal WeChat.                                                                                           |
-| QQ bridge              | A separately installed trusted OneBot 11 bridge, such as NapCat, with loopback WebSocket, access token, bot QQ ID and private QQ ID.                                                                                      |
-| Personal WeChat bridge | A separately installed compatible OneBot 12 bridge, bot ID and private user ID. Client versions and bridge maintenance constrain compatibility; Amadeus does not install/downgrade WeChat or bypass account verification. |
+Work mode explicitly binds an existing dedicated conversation and its permissions. Legacy connections retain work semantics. Create a new connection to change recipient, account, endpoint, conversation or mode. Model/scope changes pause the connection until reviewed and saved. One account/chat cannot have overlapping routes.
 
-WhatsApp and official QQ need an HTTPS reverse proxy to the dedicated loopback webhook port (default 8788), with the callback path displayed after saving. **Do not expose the Amadeus management port.** WhatsApp validates the verification token and raw-body HMAC; QQ validates Ed25519 signatures and timestamps. Tokens are write-only in the UI; blank keeps the existing secret. Secrets are stored separately with private-file permissions and Windows DPAPI where available.
+## Groups and selective participation
 
-## Messages, approvals and media
+Choose group, its actual platform ID, a controller and allowed member IDs. Ordinary chat can allow all members. Members share the group context, with actual sender IDs attached; other groups, private chats and local private conversations remain separate. Display names never authorize actions, and quotations do not impersonate their attributed speaker.
 
-Ordinary messages queue in arrival order. They never submit local composer drafts. `/status` reports state; `/stop` stops the current conversation task and cancels pending remote messages. Use a dedicated chat to avoid stopping unrelated local work.
+Use `/amadeus question`. Genuine OneBot mention segments and official QQ group-mention events also trigger replies. Other adapters currently use the prefix; reply-to-bot detection is not universally implemented.
 
-Remote approvals are opt-in. Eligible pending operations show their exact review payload plus a one-time `/approve CODE` or `/deny CODE`; questions use `/answer CODE response`. Only the bound account can answer, within 15 minutes, for an unchanged request. Sensitive, oversized and recovery-inspection requests remain local. Remote approval does not change permanent permissions. A plain “yes” is ordinary task text, not approval.
+Optional recent context retains at most 40 observations, 600 characters each, for 24 hours, and supplies the latest 30 to a decision. Only allowed members enter this buffer. Passive media is not automatically downloaded. Explicit questions retain their full validated text.
 
-Pictures, audio/voice, videos and files use the same attachment and media services as local chat. Incoming audio can be transcribed by the configured service; WeCom's platform-provided speech transcript is labelled as such. Images/video still require the appropriate model/tools. Receiving a file does not imply successful transcription or understanding. Generated media and registered file deliveries from the remote task are returned to its private chat; arbitrary workspace files and unrelated local results are not automatically sent.
+Selective participation waits for five seconds of quiet and considers only new messages from the last two minutes. Decisions have a two-minute cooldown and a limit of three per hour, including silent decisions. No new message means no model call. Explicit work and incoming attachments take priority. These decisions cost model usage, may remain silent, and cannot execute commands, generate media, delegate or schedule tasks. Important requests should use a mention or prefix.
 
-Native image/audio/video messages are used where supported. VK currently returns outputs as document attachments; WeCom audio uses a file attachment rather than mislabelling WAV as a voice codec. Unsupported provider formats fail visibly. This is asynchronous media messaging, not a live voice/video call. Separate album messages are separate tasks.
+Own messages are ignored. Telegram bot senders are filtered; other bridges may not identify every bot, so cooldowns and budgets remain necessary. Controller-only commands are `/amadeus /status`, `/amadeus /stop` and approval responses. Work groups require explicit members, never whole-group authority.
 
-The initial bounded transfer route accepts 10 attachments/message and 50 MiB/file; Telegram Bot API downloads are capped at 20 MiB and document parsing at 25 MiB. Provider-specific codec, size, time-window and account limits also apply. Downloads are public HTTPS only, with DNS pinning and no redirects or private-network/file URLs. Larger files remain accessible locally; this route does not promise arbitrary-size remote video transfer.
+### Automatically authorize groups invited by the controller
 
-QQ's passive private reply window/quota can leave results waiting for another message. Other platform errors appear in delivery state. Ambiguous sends after network failure or restart are **not automatically retried**: inspect the remote chat, then retry or dismiss in Chat connections. This avoids duplicate operations/messages. Media import failure does not start a text-only task pretending to have read the attachment.
+Enable automatic invitations on a OneBot 11 private controller route. A fresh authenticated `group_increase / invite` notice must identify this bot as the joining account and the configured controller as operator. A new isolated ordinary group route enables all-member chat, recent context and selective participation, inherits the shared-knowledge toggle, never work authority, and posts a disclosure.
 
-## Validation and sources
+Other inviters, admission approvals, missing operator IDs, old notices and text claims do not authorize groups. Existing routes, including paused ones, are never revived. This handles completed joins, not arbitrary pending invitation acceptance. Groups joined before enabling the feature must be configured manually. The application supports up to 20 configured routes.
 
-Local tests cover seven protocol normalizers, signature tampering/replay, recipient boundaries, ordered queues, explicit attachment isolation, single-use approvals, registered outputs, mocked media receipts, restart ambiguity, encrypted files and private-address rejection. **No real-account end-to-end success is claimed without credentials and platform testing.** The bridge routes are compatibility adapters, not bundled or officially endorsed clients. No paid model requests are made by these tests.
+## Platform setup
 
-- [Telegram Bot API](https://core.telegram.org/bots/api)
-- [Meta webhook signature example](https://github.com/fbsamples/whatsapp-api-examples)
-- [VK official API schema](https://github.com/VKCOM/vk-api-schema)
-- [QQ official SDK and protocol](https://github.com/tencent-connect/qqbot-nodejs)
-- [QQ messaging documentation](https://github.com/tencent-connect/bot-docs)
-- [WeCom official bot SDK](https://github.com/WecomTeam/aibot-node-sdk)
-- [NapCat](https://github.com/NapNeko/NapCatQQ)
-- [OneBot 12](https://12.onebot.dev/)
-- [ComWeChatBotClient compatibility reference](https://github.com/JustUndertaker/ComWeChatBotClient)
+1. **Telegram:** create a bot with official BotFather and copy its token. Use actual `message.from.id` for controller and `message.chat.id` for destination (groups usually negative). Check bot privacy/group permissions for full-group context. Do not run a second poller for the token.
+2. **QQ via NapCat:** independently install a trusted bridge and log in the bot. Enable forward OneBot 11 WebSocket on an unused loopback port with an access token. Enter that URL/token, bot QQ, controller QQ and, for groups, group number. A QQ password is not this token. Keep the bridge off the public internet.
+3. **Official QQ:** configure App ID, AppSecret in the token field and signed webhook. Use platform user/group openids, not normal QQ account numbers. Group access follows official bot permissions and mention events.
+4. **WeCom:** use official intelligent-bot WebSocket Bot ID/secret, event userid and group chatid. Legacy group webhooks and personal WeChat login are different protocols.
+5. **Personal WeChat bridge:** independently provide a compatible trusted OneBot 12 service, loopback URL, token, bot user_id and contact user_id/group_id. Client/version compatibility is an upstream responsibility; Amadeus does not downgrade clients or bypass login.
+6. **VK:** enable community messages and Long Poll, obtain a message-enabled community token, community ID and supported API version. Use actual from_id for users and peer_id for group destinations.
+7. **WhatsApp:** use Meta Business Cloud API, not personal QR login. Supply access token, Phone Number ID, API version, App Secret and chosen webhook Verify Token. This adapter currently supports private chats only.
+
+Official QQ and WhatsApp require HTTPS reverse proxy to the dedicated callback port (default 8788), using the displayed callback path. Never expose the management port. Blank credential edits preserve existing secrets; Windows storage uses DPAPI.
+
+## Media, approvals and recovery
+
+Explicit image/audio/video/document inputs use normal attachments and configured understanding/transcription capabilities. Only registered outputs from that route's runs are returned. Ordinary media generation still follows cost and approval policies. VK returns documents; WeCom audio may be sent as a file, not mislabeled voice encoding.
+
+Remote approval is explicitly enabled only for work routes. Controller responses use single-use `/approve CODE`, `/deny CODE`, or `/answer CODE text`, expire in 15 minutes and invalidate on operation changes. Sensitive, oversized and recovery decisions remain local. Group members can see posted approval details; use private work for sensitive tasks.
+
+Limits: ten attachments per message, 50 MiB per file, Telegram downloads 20 MiB, document parsing 25 MiB, plus platform limits. Downloads require validated public HTTPS, never bridge-provided local paths. Failed attachments are not treated as read.
+
+Routes share account transports and maintain separate delivery queues. Ambiguous sends are not automatically repeated. Pausing cancels queued messages; deleting removes recent observations. Material already incorporated into normal conversation history follows normal history retention, not the observation buffer's 24-hour expiry. Remote tasks never send a local unsent draft.
+
+## Validation and references
+
+Automated tests cover protocols, permissions, isolated histories, invite identity/freshness, duplicate handling, context expiry/capacity, decision budgets, silent replies and shared delivery fairness. They make no paid model calls. Live QQ private messaging and group ingress have been observed; new group behavior needs post-deployment acceptance. Other platforms are not claimed live-tested.
+
+References: [Telegram](https://core.telegram.org/bots/api), [Meta](https://developers.facebook.com/docs/whatsapp/cloud-api/), [VK](https://github.com/VKCOM/vk-api-schema), [QQ](https://github.com/tencent-connect/bot-docs), [WeCom](https://github.com/WecomTeam/aibot-node-sdk), [NapCat](https://github.com/NapNeko/NapCatQQ), [OneBot 11](https://github.com/botuniverse/onebot-11), [OneBot 12](https://12.onebot.dev/).

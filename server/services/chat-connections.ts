@@ -10,6 +10,8 @@ import { assert } from '../core/errors.js';
 import { terminal } from '../core/lifecycle.js';
 import { writePrivate } from './private-file.js';
 import { windowsSecrets } from './credential-storage.js';
+import { chatSenderAllowed, restrictedChat } from './chat-access.js';
+import { ChatGroupContext, invitedGroup } from './chat-group-context.js';
 import { messageParts } from './chat-protocols.js';
 export const connectionInput = z
   .object({
@@ -24,18 +26,29 @@ export const connectionInput = z
     apiVersion: z.string().max(30).default(''),
     webhookPort: z.number().int().min(1024).max(65535).default(8788),
     remoteApprovals: z.boolean().default(false),
+    peerType: z.enum(['private', 'group']).default('private'),
+    accessMode: z.enum(['chat', 'work']).default('chat'),
+    allowedSenders: z.array(z.string().trim().min(1).max(160)).max(200).default([]),
+    allGroupMembers: z.boolean().default(false),
+    groupPrefix: z.string().trim().min(1).max(30).default('/amadeus'),
+    sharedKnowledge: z.boolean().default(true),
+    groupContext: z.boolean().default(false),
+    groupReplyMode: z.enum(['mentions', 'participate']).default('mentions'),
+    autoInviteGroups: z.boolean().default(false),
     token: z.string().max(4096).optional(),
     appSecret: z.string().max(4096).optional(),
     verifyToken: z.string().max(4096).optional(),
   })
   .strict();
 export class ChatConnections {
+  readonly groups: ChatGroupContext;
   private secretsCache = new Map<string, ChatSecrets>();
   constructor(
     readonly store: Store,
     readonly runtime: Runtime,
     readonly directory: string,
   ) {
+    this.groups = new ChatGroupContext(store);
     store.db.exec(`CREATE TABLE IF NOT EXISTS chat_inbox(
       id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, received_at INTEGER NOT NULL, state TEXT NOT NULL,
       text TEXT NOT NULL, run_id TEXT, notice TEXT);
@@ -48,6 +61,7 @@ export class ChatConnections {
       run_id TEXT NOT NULL,digest TEXT NOT NULL,expires_at INTEGER NOT NULL,revision INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);`);
     for (const [table, column, definition] of [
       ['chat_inbox', 'media', 'TEXT'],
+      ['chat_inbox', 'sender_id', 'TEXT'],
       ['chat_inbox', 'attachment_ids', "TEXT NOT NULL DEFAULT '[]'"],
       ['chat_outbox', 'reference', 'TEXT'],
     ] as const) {
@@ -105,18 +119,35 @@ export class ChatConnections {
           c.knowledge,
           c.memory,
           c.skillIds,
+          c.remoteChatOnly,
+          c.remoteSharedKnowledge,
         ]),
       )
       .digest('hex');
   }
   save(raw: unknown, key: string = id()) {
     z.uuid().parse(key);
-    const { token, appSecret, verifyToken, ...data } = connectionInput.parse(raw);
     const old = this.store.maybe<ChatConnection>('chat-connection', key);
+    const { token, appSecret, verifyToken, ...data } = connectionInput.parse({
+      accessMode: old?.accessMode || (old ? 'work' : 'chat'),
+      ...(raw as any),
+    });
     assert(
       !old ||
-        ['transport', 'conversationId', 'senderId', 'peerId', 'accountId', 'endpoint'].every(
-          (field) => (old as any)[field] === (data as any)[field],
+        [
+          'transport',
+          'conversationId',
+          'senderId',
+          'peerId',
+          'accountId',
+          'endpoint',
+          'peerType',
+          'accessMode',
+        ].every(
+          (field) =>
+            ((old as any)[field] ??
+              (field === 'peerType' ? 'private' : field === 'accessMode' ? 'work' : undefined)) ===
+            (data as any)[field],
         ),
       'CHAT_BINDING',
       'Create a new connection to change the recipient, account, endpoint or conversation. Existing deliveries must never be rerouted.',
@@ -127,7 +158,8 @@ export class ChatConnections {
       'At most 20 connections may be configured.',
     );
     assert(
-      !this.list().some((c) => c.id !== key && c.conversationId === data.conversationId),
+      (!old && data.accessMode === 'chat') ||
+        !this.list().some((c) => c.id !== key && c.conversationId === data.conversationId),
       'CHAT_BOUND',
       'Use a separate conversation for each connection.',
     );
@@ -162,14 +194,47 @@ export class ChatConnections {
     }
     if (!['onebot12', 'wecom', 'qq'].includes(data.transport))
       assert(
-        /^\d+$/.test(data.senderId) && /^\d+$/.test(data.peerId),
+        /^\d+$/.test(data.senderId) &&
+          (data.transport === 'telegram' && data.peerType === 'group'
+            ? /^-\d+$/.test(data.peerId)
+            : /^\d+$/.test(data.peerId)),
         'CHAT_PEER',
         'Use numeric private sender/chat IDs.',
       );
     assert(
-      data.senderId === data.peerId,
+      data.peerType === 'group' || data.senderId === data.peerId,
       'CHAT_PEER',
       'Only a single trusted private peer is supported.',
+    );
+    assert(
+      !data.autoInviteGroups || (data.transport === 'onebot11' && data.peerType === 'private'),
+      'CHAT_INVITE_PROTOCOL',
+      'Automatic invitation authorization currently requires a OneBot 11 private controller route.',
+    );
+    assert(
+      data.accessMode === 'chat' || (!data.groupContext && data.groupReplyMode !== 'participate'),
+      'CHAT_GROUP_AUTHORITY',
+      'Ambient group context is only available to isolated ordinary chat.',
+    );
+    assert(
+      data.groupReplyMode !== 'participate' || data.groupContext,
+      'CHAT_GROUP_CONTEXT',
+      'Participation requires group context.',
+    );
+    assert(
+      data.transport !== 'whatsapp' || data.peerType === 'private',
+      'CHAT_GROUP_UNSUPPORTED',
+      'This WhatsApp adapter only supports private conversations.',
+    );
+    assert(
+      !(data.accessMode === 'work' && data.allGroupMembers),
+      'CHAT_WORK_MEMBERS',
+      'Remote work requires explicit user IDs.',
+    );
+    assert(
+      data.accessMode === 'work' || !data.remoteApprovals,
+      'CHAT_APPROVAL',
+      'Computer-operation approvals are only available to work connections.',
     );
     if (data.transport === 'onebot11')
       assert(Number.isSafeInteger(Number(data.peerId)), 'CHAT_PEER', 'Invalid QQ ID.');
@@ -195,6 +260,21 @@ export class ChatConnections {
     for (const [k, v] of Object.entries({ token, appSecret, verifyToken }))
       if (v?.trim()) (secrets as any)[k] = v.trim();
     assert(secrets.token, 'CHAT_TOKEN', 'Service token required.');
+    assert(
+      !this.list().some(
+        (c) =>
+          c.id !== key &&
+          c.transport === data.transport &&
+          c.accountId === data.accountId &&
+          c.endpoint === data.endpoint &&
+          (data.transport !== 'telegram' ||
+            this.secrets(c.id).token.split(':')[0] === secrets.token.split(':')[0]) &&
+          c.peerId === data.peerId &&
+          (c.peerType || 'private') === data.peerType,
+      ),
+      'CHAT_ROUTE_DUPLICATE',
+      'This account/chat already has a route. Use separate chats for ordinary chat and remote work.',
+    );
     if (data.transport === 'telegram')
       assert(
         /^\d+:[A-Za-z0-9_-]+$/.test(secrets.token),
@@ -214,6 +294,43 @@ export class ChatConnections {
         'CHAT_TOKEN',
         'Meta app secret and webhook verification token required.',
       );
+    if (data.accessMode === 'chat') {
+      if (!old) {
+        const template = this.store.get<Conversation>('conversation', data.conversationId);
+        const clean = restrictedChat({
+          id: id(),
+          title: data.name,
+          projectId: null,
+          profileId: template.profileId,
+          reasoning: template.reasoning || 'auto',
+          permission: 'ask',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          pinned: false,
+          archived: false,
+          parentId: null,
+          forkEvent: null,
+          skillIds: [],
+          knowledge: true,
+          memory: false,
+          remoteChatOnly: true,
+          remoteSharedKnowledge: data.sharedKnowledge,
+        });
+        this.store.put('conversation', clean);
+        data.conversationId = clean.id;
+      } else {
+        const clean = this.store.get<Conversation>('conversation', data.conversationId);
+        assert(
+          clean.remoteChatOnly,
+          'CHAT_ISOLATION',
+          'Ordinary chat must use its isolated conversation.',
+        );
+        this.store.put(
+          'conversation',
+          restrictedChat({ ...clean, remoteSharedKnowledge: data.sharedKnowledge }),
+        );
+      }
+    }
     const next: ChatConnection = {
       ...data,
       id: key,
@@ -253,6 +370,8 @@ export class ChatConnections {
       'CHAT_BUSY',
       'Pause and stop/wait for the conversation first.',
     );
+    this.groups.clear(key);
+    this.store.remove('chat-group-authorization', key);
     this.store.remove('chat-connection', key);
     this.store.remove('chat-transport-state', key);
     this.store.db.prepare('DELETE FROM chat_inbox WHERE connection_id=?').run(key);
@@ -272,15 +391,59 @@ export class ChatConnections {
       'Conversation scope or model changed. Review and save the connection again.',
     );
   }
+  enrollInvitedGroup(c: ChatConnection, event: unknown) {
+    const peer = invitedGroup(c, event);
+    if (!peer) return;
+    this.authorize(c);
+    if (
+      this.list().some(
+        (x) =>
+          x.transport === c.transport &&
+          x.accountId === c.accountId &&
+          x.endpoint === c.endpoint &&
+          x.peerId === peer &&
+          x.peerType === 'group',
+      )
+    )
+      return;
+    const created = this.save({
+      name: 'Group ' + peer,
+      transport: c.transport,
+      accountId: c.accountId,
+      endpoint: c.endpoint,
+      conversationId: c.conversationId,
+      senderId: c.senderId,
+      peerId: peer,
+      peerType: 'group',
+      accessMode: 'chat',
+      allGroupMembers: true,
+      groupContext: true,
+      groupReplyMode: 'participate',
+      sharedKnowledge: c.sharedKnowledge !== false,
+      enabled: true,
+      remoteApprovals: false,
+      token: this.secrets(c.id).token,
+    });
+    this.store.put('chat-group-authorization', {
+      id: created.id,
+      sourceConnectionId: c.id,
+      operatorId: c.senderId,
+      groupId: peer,
+      at: Date.now(),
+      basis: 'platform-group-increase-invite',
+    });
+    this.reply(
+      created,
+      'group-disclosure:' + created.id,
+      '本群已由指定控制人开启普通 AI 聊天。群消息可能发送给配置的模型服务，近期上下文仅用于本群。可 @机器人 或使用 /amadeus 提问；未开放电脑操作。',
+    );
+    return created;
+  }
   receive(key: string, m: ChatIncoming, now = Date.now()) {
     const c = this.get(key);
     this.authorize(c);
-    assert(
-      m.senderId === c.senderId && m.peerId === c.peerId,
-      'CHAT_SENDER',
-      'Unbound sender.',
-      403,
-    );
+    if (c.peerType === 'group' && m.senderId === c.accountId) return 'ignored';
+    assert(chatSenderAllowed(c, m), 'CHAT_SENDER', 'Unbound sender.', 403);
     assert(
       m.id.length <= 256 &&
         m.text.length <= 16000 &&
@@ -291,6 +454,20 @@ export class ChatConnections {
       'CHAT_MESSAGE',
       'Stale or invalid message.',
     );
+    if (c.peerType === 'group') {
+      this.groups.observe(c, m, now);
+      const prefix = c.groupPrefix || '/amadeus';
+      const prefixed = m.text.startsWith(prefix + ' ') || m.text === prefix;
+      if (!prefixed && !m.addressed) return c.groupContext ? 'observed' : 'ignored';
+      if (prefixed) m = { ...m, text: m.text.slice(prefix.length).trim() };
+      if (!m.text) return 'ignored';
+      this.groups.addressed(c, now);
+      if (c.accessMode === 'chat' && c.groupContext && !m.text.startsWith('/'))
+        m = {
+          ...m,
+          text: this.groups.text(c, now) + '\nCurrent explicitly addressed message:\n' + m.text,
+        };
+    }
     const keyId = createHash('sha256')
       .update(key + '\0' + m.id)
       .digest('hex');
@@ -317,14 +494,27 @@ export class ChatConnections {
         key,
         now,
         command ? 'done' : m.media?.length ? 'receiving' : 'queued',
-        command ? '' : m.text,
+        command
+          ? ''
+          : c.peerType === 'group'
+            ? '[Platform sender ID: ' + m.senderId + ']\n' + m.text
+            : m.text,
         null,
         null,
       );
+    this.store.db.prepare('UPDATE chat_inbox SET sender_id=? WHERE id=?').run(m.senderId, keyId);
     if (m.media?.length)
       this.store.db
         .prepare('UPDATE chat_inbox SET media=? WHERE id=?')
         .run(JSON.stringify(m.media), keyId);
+    if (command && m.senderId !== c.senderId) {
+      this.reply(
+        c,
+        keyId,
+        'Only the configured controller may approve, stop or inspect remote work.',
+      );
+      return 'done';
+    }
     if (command) {
       if (approval) {
         try {
@@ -434,6 +624,9 @@ export class ChatConnections {
         c,
         'approval:' + q.id,
         `Amadeus ${q.kind}\nRun: ${q.runId}\nRequest: ${q.id}\nReview the operation below (untrusted task content):\n${payload}\nEnd of operation. Valid for 15 minutes.\n` +
+          (c.peerType === 'group'
+            ? 'In this group prefix commands with ' + (c.groupPrefix || '/amadeus') + ' .\n'
+            : '') +
           (q.kind === 'approval'
             ? `/approve ${code}\n/deny ${code}`
             : `/answer ${code} your answer`),
@@ -533,11 +726,16 @@ export class ChatConnections {
             .eventsForRun(run.id, ['assistant.message'])
             .filter((e) => e.data.final && !e.data.incomplete)
             .at(-1);
-          this.reply(
-            c,
-            row.id,
-            result?.data.text || `Task ${run.status}. Inspect the local conversation for details.`,
-          );
+          const silent =
+            !!this.store.maybe('chat-proactive-run', run.id) &&
+            (!result?.data.text || result.data.text.trim() === '[NO_REPLY]');
+          if (!silent)
+            this.reply(
+              c,
+              row.id,
+              result?.data.text ||
+                `Task ${run.status}. Inspect the local conversation for details.`,
+            );
           this.store.db
             .prepare("UPDATE chat_inbox SET state='done',text='' WHERE id=?")
             .run(row.id);
@@ -563,7 +761,36 @@ export class ChatConnections {
           "SELECT * FROM chat_inbox WHERE connection_id=? AND state='queued' ORDER BY received_at,id LIMIT 1",
         )
         .get(c.id) as any;
-      if (!next) continue;
+      if (!next) {
+        const waiting = this.store.db
+          .prepare(
+            "SELECT 1 FROM chat_inbox WHERE connection_id=? AND state IN ('receiving','downloading','dispatching','running') LIMIT 1",
+          )
+          .get(c.id);
+        if (!waiting && this.groups.consume(c)) {
+          const runId = id(),
+            keyId = 'group-observation:' + runId;
+          this.store.put('chat-proactive-run', { id: runId, createdAt: Date.now() });
+          this.store.db
+            .prepare(
+              'INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id,notice) VALUES(?,?,?,?,?,?,?)',
+            )
+            .run(keyId, c.id, Date.now(), 'dispatching', '', runId, 'proactive');
+          try {
+            this.runtime.start(
+              c.conversationId,
+              'Decide whether a brief reply is useful now. Do not chatter, repeat others, or start tasks. If not useful, output exactly [NO_REPLY]. Do not create media, schedule tasks, or execute actions.\n' +
+                this.groups.text(c),
+              0,
+              { runId, attachmentIds: [] },
+            );
+            this.store.db.prepare("UPDATE chat_inbox SET state='running' WHERE id=?").run(keyId);
+          } catch {
+            this.store.db.prepare("UPDATE chat_inbox SET state='uncertain' WHERE id=?").run(keyId);
+          }
+        }
+        continue;
+      }
       const earlier = this.store.db
         .prepare(
           "SELECT 1 FROM chat_inbox WHERE connection_id=? AND state IN ('receiving','downloading') AND received_at<=? LIMIT 1",
@@ -582,7 +809,7 @@ export class ChatConnections {
         this.store.event(c.conversationId, runId, 'chat.origin', {
           connectionId: c.id,
           transport: c.transport,
-          senderId: c.senderId,
+          senderId: next.sender_id || c.senderId,
         });
         this.store.db
           .prepare("UPDATE chat_inbox SET state='running',text='' WHERE id=?")
@@ -594,6 +821,7 @@ export class ChatConnections {
         this.reply(c, next.id, 'Could not confirm task start. Inspect Amadeus before resending.');
       }
     }
+    this.store.db.prepare('DELETE FROM chat_group_context WHERE at<?').run(Date.now() - 86400000);
     // Bounded operational history; a 24-hour ingress window prevents old delivery replay.
     this.store.db
       .prepare("DELETE FROM chat_inbox WHERE state IN ('done','cancelled') AND received_at<?")

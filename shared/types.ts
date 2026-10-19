@@ -155,6 +155,8 @@ export interface SubagentModels {
   allowedProfileIds: string[];
 }
 export interface Conversation {
+  remoteChatOnly?: boolean;
+  remoteSharedKnowledge?: boolean;
   subagentModels?: SubagentModels | null;
   titleGeneration?: { runId: string; state: 'pending' | 'attempted' | 'done' | 'manual' };
   allowedTools?: string[];
