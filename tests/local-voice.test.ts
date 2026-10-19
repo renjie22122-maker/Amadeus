@@ -37,6 +37,7 @@ test('local voice setup is idempotent and preserves existing microphone and othe
   );
   assert.equal(sent.response_format, 'wav');
   assert.equal(sent.voice, 'default');
+  assert.equal(sent.read_aloud_units, undefined);
   assert.equal(output.binary?.mime, 'audio/wav');
 });
 
@@ -74,4 +75,18 @@ test('read aloud preserves prose order, skips fenced code and splits without bre
   assert(!chunks.join('').includes('secret'));
   assert(!chunks.join('').includes('https'));
   assert.equal(chunks.join('').replace(/\s/g, ''), (text + '说明').replace(/\s/g, ''));
+});
+
+test('speech budgets bound mixed-language segments and reject invalid sizes without losing text', () => {
+  const text = '你好，这是本地朗读。 Hello, please read the next message. 👋 '.repeat(6);
+  const chunks = speechChunks(text, 20, true);
+  assert(
+    chunks.every(
+      (part) =>
+        Array.from(part).reduce((n, c) => n + (/^[\x00-\x7f]$/.test(c) ? 0.25 : 1), 0) <= 20,
+    ),
+  );
+  assert.equal(chunks.join('').replace(/\s/g, ''), text.replace(/\s/g, ''));
+  assert.equal(speechChunks('abc', 0).join(''), 'abc');
+  assert.equal(speechChunks('abc', NaN).join(''), 'abc');
 });

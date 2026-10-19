@@ -439,6 +439,8 @@ export async function submitMedia(
     assert(d.id, 'MEDIA_RECEIPT', 'Missing transcription ID.');
     return { data: d, remoteId: d.id, statusUrl: base + '/transcript/' + encodeURIComponent(d.id) };
   }
+  // UI segmentation metadata must never be sent to speech providers.
+  const { read_aloud_units: _readAloudUnits, ...speechInput } = input;
   const speech = c.protocol === 'openai-speech';
   const elevenSpeech = c.protocol === 'eleven-speech';
   const endpoint = speech
@@ -448,9 +450,9 @@ export async function submitMedia(
       : '/music';
   if (elevenSpeech) assert(input.voiceId, 'VOICE_REQUIRED', 'Set voiceId in service defaults.');
   const body = speech
-    ? { voice: 'alloy', response_format: 'mp3', ...input, model: c.model, input: prompt }
+    ? { voice: 'alloy', response_format: 'mp3', ...speechInput, model: c.model, input: prompt }
     : elevenSpeech
-      ? { ...input, model_id: c.model, text: prompt }
+      ? { ...speechInput, model_id: c.model, text: prompt }
       : { ...input, prompt, model_id: c.model };
   const r = await mediaHttp(
     c,

@@ -37,9 +37,10 @@ def setup(args):
     HOME.mkdir(parents=True, exist_ok=True)
     asr = python_in(DATA / "voice-asr-python")
     tts = python_in(DATA / "voice-tts-python")
+    whisper = python_in(DATA / "voice-whisper-python")
     source = HOME / "CosyVoice"
     config = json.loads(CONFIG.read_text(encoding="utf-8-sig")) if CONFIG.exists() else {
-        "token": secrets.token_urlsafe(32), "device": "cpu", "cpuThreads": 2,
+        "token": secrets.token_urlsafe(32), "device": "auto", "cpuThreads": 2,
         "gpuIndex": 0, "minFreeMiB": 8192, "comfyUrls": ["http://127.0.0.1:8188"],
         "asrPython": asr, "ttsPython": tts, "cosySource": str(source),
         "models": {name: str(HOME / "models" / name) for name in ("sensevoice", "whisper", "cosyvoice")}, "voices": {},
@@ -50,12 +51,14 @@ def setup(args):
         running = None
     if running:
         raise RuntimeError("Stop the local voice service before changing its dependencies. Other services need not stop.")
+    config.setdefault("whisperPython", whisper)
     save(config)
-    for folder in (DATA / "voice-asr-python",) + (() if args.asr_only else (DATA / "voice-tts-python",)):
+    for folder in (DATA / "voice-asr-python", DATA / "voice-whisper-python") + (() if args.asr_only else (DATA / "voice-tts-python",)):
         if not Path(python_in(folder)).exists():
             subprocess.run([args.python, "-m", "venv", str(folder)], check=True)
     pip = [asr, "-m", "pip", "install", "--timeout", "120", "--retries", "8"]
     subprocess.run(pip + ["-r", str(ROOT / "scripts/requirements-voice-asr.txt")], check=True)
+    subprocess.run([whisper, "-m", "pip", "install", "--timeout", "120", "--retries", "8", "-r", str(ROOT / "scripts/requirements-voice-whisper.txt")], check=True)
     if not args.asr_only:
         if not (source / ".git").exists():
             subprocess.run(["git", "clone", "--recursive", "https://github.com/FunAudioLLM/CosyVoice.git", str(source)], check=True)
@@ -66,6 +69,9 @@ def setup(args):
             save(config)
         revision = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
         (HOME / "cosyvoice-revision.txt").write_text(revision, encoding="utf-8")
+    if args.cuda:
+        for interpreter in (asr,) + (() if args.asr_only else (tts,)):
+            subprocess.run([interpreter, "-m", "pip", "install", "--timeout", "120", "--retries", "8", "--index-url", "https://download.pytorch.org/whl/cu121", "torch==2.3.1+cu121", "torchaudio==2.3.1+cu121"], check=True)
     if not args.skip_download:
         models = ["sensevoice", "whisper"] + ([] if args.asr_only else ["cosyvoice"])
         subprocess.run([asr, str(Path(__file__).with_name("prepare.py")), "--config", str(CONFIG), "--models", *models], check=True)
@@ -110,5 +116,6 @@ if __name__ == "__main__":
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--skip-download", action="store_true")
     parser.add_argument("--asr-only", action="store_true")
+    parser.add_argument("--cuda", action="store_true", help="Install the matching NVIDIA CUDA 12.1 PyTorch wheels in voice environments only")
     args = parser.parse_args()
     setup(args) if args.action == "setup" else start()

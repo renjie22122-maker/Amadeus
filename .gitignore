@@ -43,3 +43,4 @@ build/
 !/scripts/local_voice/
 !/scripts/local_voice/*.py
 !/scripts/requirements-voice-asr.txt
+!/scripts/requirements-voice-whisper.txt

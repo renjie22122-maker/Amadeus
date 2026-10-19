@@ -63,7 +63,9 @@ export function ReadAloud({
     const current = new AbortController();
     controller.current = current;
     setBusy(true);
-    const chunks = speechChunks(text);
+    const budget = services.find((service) => service.id === selected)?.defaults.read_aloud_units;
+    const bounded = typeof budget === 'number' && Number.isFinite(budget) && budget >= 1;
+    const chunks = speechChunks(text, bounded ? Math.min(budget, 600) : 600, bounded);
     const path = '/conversations/' + encodeURIComponent(conversationId) + '/media';
     try {
       if (!chunks.length)

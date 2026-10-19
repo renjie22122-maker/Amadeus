@@ -17,11 +17,13 @@ python scripts/local_voice/manage.py setup
 python scripts/local_voice/manage.py start
 ```
 
-Setup installs ASR and CosyVoice in separate `.data/voice-asr-python` and `.data/voice-tts-python` virtual environments. It does not install into RAG, ComfyUI or evaluation environments. `--asr-only` prepares transcription only; `--skip-download` installs dependencies without weights. Download interruption can be resumed by rerunning setup. The resolved model revisions and CosyVoice source revision are recorded. Upstream native packages may require a compiler/platform-specific preparation; installation failure is not readiness.
+Setup uses three environments: `.data/voice-asr-python` (SenseVoice), `.data/voice-whisper-python` (Whisper without PyTorch), and `.data/voice-tts-python` (CosyVoice). Keeping CTranslate2 and PyTorch apart avoids Windows OpenMP conflicts. Compatible native versions are pinned, including SentencePiece 0.2.0 and CTranslate2 4.4.0. Rerun setup to migrate an older two-environment installation. It does not install into RAG, ComfyUI or evaluation environments. `--asr-only` prepares transcription only; `--skip-download` installs dependencies without weights. Download interruption can be resumed by rerunning setup. The resolved model revisions and CosyVoice source revision are recorded. Upstream native packages may require a compiler/platform-specific preparation; installation failure is not readiness.
 
-Models and configuration live under `.data/voice-service` (or `AGENTDEMO_DATA_DIR`). Offline users may place complete model snapshots at the `models` paths in `config.json`. Inference uses local paths and offline Hugging Face settings; it does not fetch missing models.
+Models and configuration live under `.data/voice-service` (or `AGENTDEMO_DATA_DIR`). Offline users may place complete model snapshots at the `models` paths in `config.json`. Inference uses local paths and offline Hugging Face settings; it does not fetch missing models. A Python audit hook blocks network connections during inference, including optional upstream text-normalizer downloads; this is not a sandbox for arbitrary native code.
 
-Setup uses the upstream example recording as a default when present and no voice is configured. Replace it with your own voice in `config.json`:
+Setup uses the upstream example recording as a default when present and no voice is configured. Settings → Media and voice → **Local voices** now accepts a 3–30 second reference recording (up to 25 MiB), a name and the exact transcript. Save, preview in Chinese/English, then choose it for read-aloud. Uploaded files are normalized locally to 24 kHz mono WAV under random IDs; supplied filenames are never filesystem paths. Saving a voice applies to the next request without restarting. Choosing a voice updates only the local speech connection; other unsaved settings remain in the form. Preview runs local inference and may take one or two minutes on CPU. This conditions synthesis on a reference voice, rather than training a new model.
+
+Advanced users can also configure a recording in `config.json`:
 
 ```json
 {
@@ -37,15 +39,17 @@ Use a recording you are authorized to use. No arbitrary client-supplied filesyst
 
 ## Resource policy
 
-Default `device: "cpu"` does not allocate GPU memory, and CPU threads default to two. Each request runs in a separate model process; success, failure or timeout ends that process. This favors predictable release over warm-model latency. The HTTP listener remains small while idle.
+New installations default to `device: "auto"` (existing choices are preserved); CPU threads default to two. `device: "cpu"` avoids GPU allocation. Each request runs in a separate model process; success, failure or timeout ends that process. This favors predictable release over warm-model latency. The HTTP listener remains small while idle.
 
-Advanced `device: "auto"` checks configured local `comfyUrls` queues and NVIDIA free memory before choosing CUDA; busy/unknown state falls back to CPU. `device: "cuda"` instead rejects unavailable admission. `gpuIndex` selects a GPU; `minFreeMiB` defaults to 8192 and is an admission reserve, **not a measured memory requirement**. The service never interrupts ComfyUI, clears its queue or unloads its models. These probes are not an exclusive lock shared with external applications: ComfyUI can start after a probe. Use CPU for a strict no-GPU-contention guarantee.
+`device: "auto"` checks configured local `comfyUrls` queues and NVIDIA free memory before choosing CUDA; busy/unknown state falls back to CPU. After admission, a typed CUDA-unavailable or out-of-memory error triggers one CPU attempt, only after the GPU worker exits; both attempts share the 150-second budget. Other failures are not replayed. `device: "cuda"` instead rejects unavailable admission and does not fall back. `gpuIndex` selects a GPU; `minFreeMiB` defaults to 8192 and is an admission reserve, **not a measured memory requirement**. The service never interrupts ComfyUI, clears its queue or unloads its models. These probes are not an exclusive lock shared with external applications: ComfyUI can start after a probe. Use CPU for a strict no-GPU-contention guarantee.
 
-One local request runs at a time; competing requests receive `VOICE_BUSY` and are not automatically replayed. Uploads are bounded to 25 MiB, recordings to ten minutes, synthesis text to 4000 characters, and each model worker to 150 seconds (within the existing media HTTP timeout). Cold CPU inference may exceed this: split recordings/narration. Overlong audio is rejected, never silently truncated. FFmpeg normalizes browser/WebM/MP3 audio. Missing dependencies/models, timeout and GPU admission errors remain distinct local diagnostics.
+Install matching NVIDIA wheels with `python scripts/local_voice/manage.py setup --cuda` (or `Setup-Local-Voice.ps1 -Cuda`), with the voice service stopped. The CUDA 12.1 Torch 2.3.1 wheels also supply the CUDA/cuDNN libraries used by CTranslate2 4.4 on Windows. Ordinary startup never downloads these large packages. CPU and GPU generally differ mainly in latency, but differing numerical precision, quantization and synthesis sampling can change outputs; quality equivalence is not assumed.
+
+One local request runs at a time; competing requests receive `VOICE_BUSY` and are not automatically replayed. Uploads are bounded to 25 MiB, recordings to ten minutes, synthesis text to 4000 characters, and each model worker to 150 seconds (within the existing media HTTP timeout). Timeout cleanup terminates the owned worker process tree, including Windows virtual-environment redirectors. Cold CPU inference may exceed this: split recordings/narration. Overlong audio is rejected, never silently truncated. FFmpeg normalizes browser/WebM/MP3 audio. Missing dependencies/models, timeout and GPU admission errors remain distinct local diagnostics.
 
 ## Read a reply aloud
 
-The speaker button follows copy, branch and feedback on each assistant message. Select a speech connection and press Start. Only that reply's prose is sent; code fences, image URLs and unsent drafts are excluded. Long replies are generated and played sequentially in small segments; only one message plays at a time. Stop or switching conversations halts playback and prevents later submissions. Already submitted provider work may finish and remain in media history; stopping playback is not a promise of provider cancellation/refund. Remote services may charge, as noted beside Start. Audio controls provide a manual Play option when browser autoplay is blocked. No automatic reading of new replies.
+The speaker button follows copy, branch and feedback on each assistant message. Select a speech connection and press Start. Only that reply's prose is sent; code fences, image URLs and unsent drafts are excluded. Long replies are generated and played sequentially in small segments. The local connection supplies `read_aloud_units: 20`: non-ASCII characters cost one unit and ASCII characters a quarter, with sentence boundaries preferred. This conservative mixed-language budget reduces CPU timeout risk; it is not a pronunciation-duration guarantee. Other services retain their normal segment size, and the UI hint is not sent to speech providers; only one message plays at a time. Stop or switching conversations halts playback and prevents later submissions. Already submitted provider work may finish and remain in media history; stopping playback is not a promise of provider cancellation/refund. Remote services may charge, as noted beside Start. Audio controls provide a manual Play option when browser autoplay is blocked. No automatic reading of new replies.
 
 ## Verification boundary
 
@@ -58,3 +62,19 @@ Unit/HTTP tests cover token checks, idle no-load behavior, busy rejection, timeo
 - [CosyVoice, installation and inference examples](https://github.com/FunAudioLLM/CosyVoice)
 
 The integration is maintained by Amadeus; model code/weights retain their upstream licenses.
+
+## Local smoke results (2026-10-19)
+
+Six authenticated HTTP requests passed on Windows, with automatic CUDA-unavailable → CPU fallback:
+
+| Request                      | Wall time       | Result                                   |
+| ---------------------------- | --------------- | ---------------------------------------- |
+| SenseVoice Chinese / English | 13.62 / 13.56 s | Expected short test sentence transcribed |
+| Whisper Chinese / English    | 19.58 / 15.83 s | Expected text plus segment timestamps    |
+| CosyVoice Chinese / English  | 59.34 / 86.03 s | 24 kHz mono WAV, 2.64 / 5.24 s audio     |
+
+Direct synthesis → ASR round trips also recovered the Chinese and English test sentences. These are short smoke fixtures, not an accuracy benchmark or a human listening-quality certification. GPU admission and OOM recovery have deterministic tests; **all six actual GPU HTTP smoke requests also passed using independently copied existing runtimes**, without installing into the source environments. No benchmark runtime or ComfyUI environment was modified. Slow CPU synthesis is expected with per-request cold loading and two CPU threads.
+
+GPU HTTP wall times were SenseVoice Chinese/English **11.17 / 11.44 s**, Whisper **6.88 / 4.41 s**, and CosyVoice **32.83 / 25.28 s** (2.84 / 4.52 s output). These short tests include cold startup and are not general speedup claims. Existing PyTorch **2.6.0+cu118, CPython 3.11** packages were copied for SenseVoice/CosyVoice; Whisper used independently copied CUDA 12/cuDNN 8 DLLs. ComfyUI's newer PyTorch 2.11.0+cu128 was inspected but not modified or adopted. The redundant CUDA download was stopped.
+
+Optional advanced `torchRuntimePath` points to an independently copied compatible package directory, used only for GPU Torch workers; CPU uses its original environment. `cudaLibraryDirectory` points to matching Windows CUDA 12/cuDNN 8 DLLs for CTranslate2. Neither setting adds packages to global PATH or changes source environments. Match Python ABI, package dependencies and CUDA/cuDNN versions, then run actual inference tests. An existing newer runtime is not automatically interchangeable. No username or local source path is shipped in defaults.

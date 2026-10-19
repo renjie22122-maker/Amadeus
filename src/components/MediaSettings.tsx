@@ -1,3 +1,4 @@
+import { LocalVoiceSettings } from './LocalVoiceSettings';
 import { useState } from 'react';
 import { api } from '../api';
 import { mediaProtocols } from '../../shared/media';
@@ -20,8 +21,8 @@ export function MediaSettings({ value, setValue, zh }: any) {
       </p>
       <p className="muted">
         {zh
-          ? '本地中英语音：先运行 Setup-Local-Voice.cmd。配置后随应用启动，模型仅在请求时加载；默认 CPU，不占用 ComfyUI 显存。CosyVoice 需配置参考录音及文字。'
-          : 'Local Chinese/English voice: run Setup-Local-Voice.cmd first. The service starts with the app; models load per request. CPU is the default to avoid ComfyUI GPU contention. CosyVoice requires a reference recording and transcript.'}
+          ? '本地中英语音：先运行 Setup-Local-Voice.cmd。配置后随应用启动，模型仅在请求时加载；优先 GPU，ComfyUI 忙碌、显存不足或 GPU 不可用时回退 CPU。下方可添加参考音色。'
+          : 'Local Chinese/English voice: run Setup-Local-Voice.cmd first. The service starts with the app; models load per request. GPU preferred; busy ComfyUI, low memory or unavailable CUDA falls back to CPU. Add reference voices below.'}
       </p>
       <button
         type="button"
@@ -48,6 +49,17 @@ export function MediaSettings({ value, setValue, zh }: any) {
           : 'Add local voice connections (save other edits first)'}
       </button>
       <p role="status">{localMessage}</p>
+      <LocalVoiceSettings
+        zh={zh}
+        onUse={(voice) => {
+          change('amadeus-local-cosyvoice', {
+            defaults: {
+              ...media.connections.find((c: any) => c.id === 'amadeus-local-cosyvoice')?.defaults,
+              voice,
+            },
+          });
+        }}
+      />
       <select
         aria-label="Add media service"
         value=""

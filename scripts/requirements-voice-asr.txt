@@ -1,4 +1,3 @@
-faster-whisper==1.2.1
 funasr==1.2.7
 huggingface-hub>=0.34,<1
 soundfile==0.13.1
@@ -6,3 +5,7 @@ torch==2.3.1
 torchaudio==2.3.1
 numpy==1.26.4
 transformers==4.51.3
+
+# Validated Windows native stack; newer wheels crashed while loading models.
+sentencepiece==0.2.0
+onnxruntime==1.18.0

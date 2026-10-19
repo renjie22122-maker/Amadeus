@@ -11,7 +11,9 @@ export async function api<T = any>(
       body instanceof FormData && path.startsWith('/upload?')
         ? signal
         : AbortSignal.any([
-            AbortSignal.timeout(body === undefined ? 20000 : 120000),
+            AbortSignal.timeout(
+              path === '/media/local-voice/preview' ? 170000 : body === undefined ? 20000 : 120000,
+            ),
             ...(signal ? [signal] : []),
           ]),
     method: method || (body === undefined ? 'GET' : 'POST'),

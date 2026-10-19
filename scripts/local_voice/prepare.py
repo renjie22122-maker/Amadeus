@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from huggingface_hub import HfApi, snapshot_download
 
-MODELS = {"sensevoice": "FunAudioLLM/SenseVoiceSmall", "whisper": "Systran/faster-whisper-large-v3-turbo", "cosyvoice": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"}
+MODELS = {"sensevoice": "FunAudioLLM/SenseVoiceSmall", "whisper": "mobiuslabsgmbh/faster-whisper-large-v3-turbo", "cosyvoice": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

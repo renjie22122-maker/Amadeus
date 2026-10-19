@@ -38,7 +38,8 @@ export function localVoiceConnections(root: string): MediaConnection[] {
     baseUrl: 'http://127.0.0.1:8812/v1',
     apiKey: local.token,
     enabled: true,
-    defaults: c.kind === 'speech' ? { voice: 'default', response_format: 'wav' } : {},
+    defaults:
+      c.kind === 'speech' ? { voice: 'default', response_format: 'wav', read_aloud_units: 20 } : {},
     estimatedUsd: 0,
   })) as MediaConnection[];
 }
