@@ -10,6 +10,7 @@ import hashlib
 
 _DLL_HANDLES = []
 _ENGINE = None
+_REFERENCE_CACHE = {}
 _INITIALIZED = False
 
 
@@ -108,7 +109,12 @@ def run(job):
         if not voice or voice.get("deleted") or not Path(voice.get("audio", "")).is_file() or not voice.get("text"):
             raise ValueError("VOICE_NOT_READY: configure a local reference recording and its transcript")
         prompt = ("You are a helpful assistant.<|endofprompt|>" if type(engine).__name__ == "CosyVoice3" else "") + voice["text"]
-        chunks = engine.inference_zero_shot(job["input"], prompt, voice["audio"], stream=bool(job.get("stream")))
+        from reference import prepare_reference
+        reference_started = time.perf_counter()
+        reference_id, reference_reused = prepare_reference(engine, voice["audio"], prompt, _REFERENCE_CACHE)
+        timings["referencePrepareSeconds"] = time.perf_counter() - reference_started
+        timings["referenceReused"] = reference_reused
+        chunks = engine.inference_zero_shot(job["input"], prompt, voice["audio"], zero_shot_spk_id=reference_id, stream=bool(job.get("stream")))
     # Write incrementally; do not accumulate an entire long narration in RAM.
     events = []
     iterator = iter(chunks)

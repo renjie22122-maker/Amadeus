@@ -321,6 +321,31 @@ class VoiceTests(unittest.TestCase):
 
 
 
+class ReferenceCacheTests(unittest.TestCase):
+    def test_content_and_transcript_invalidate_single_reference_entry(self):
+        from reference import prepare_reference
+        from types import SimpleNamespace
+        cache = {}; calls = []
+        engine = SimpleNamespace(frontend=SimpleNamespace(spk2info={'built-in': {}}, text_normalize=lambda text, **kw:text))
+        def add(text, audio, identity):
+            calls.append((text,audio));engine.frontend.spk2info[identity] = {}
+        engine.add_zero_shot_spk = add
+        with tempfile.TemporaryDirectory() as folder:
+            audio=Path(folder)/'ordinary.wav';audio.write_bytes(b'first')
+            first,reused=prepare_reference(engine,audio,'words',cache)
+            self.assertFalse(reused)
+            self.assertEqual(prepare_reference(engine,audio,'words',cache),(first,True))
+            audio.write_bytes(b'other')  # same byte size, different content
+            second,reused=prepare_reference(engine,audio,'words',cache)
+            self.assertFalse(reused);self.assertNotEqual(first,second)
+            self.assertNotIn(first,engine.frontend.spk2info)
+            third,reused=prepare_reference(engine,audio,'new transcript',cache)
+            self.assertFalse(reused);self.assertNotEqual(second,third)
+            self.assertEqual(len(engine.frontend.spk2info),2)
+            self.assertIn('built-in',engine.frontend.spk2info)
+            self.assertEqual(len(calls),3)
+
+
 class ResidentTests(unittest.TestCase):
     def test_warm_policy_validation(self):
         from resident import ResidentWorker

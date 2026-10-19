@@ -91,12 +91,13 @@ def validate_job(fields, speech):
 
 def cleanup_deleted_voices(config_path):
     if not config_path:
-        return
+        return 0
+    removed = 0
     path = Path(config_path)
     data = json.loads(path.read_text(encoding="utf-8-sig"))
     owned = path.parent / "voices"
     if not owned.exists():
-        return
+        return 0
     # Windows short names and mapped temp roots can resolve to another spelling.
     # Inspect this directory entry for links/reparse points instead of comparing strings.
     info = owned.lstat()
@@ -114,7 +115,10 @@ def cleanup_deleted_voices(config_path):
         if Path(voice.get("audio", "")).absolute() != target.absolute():
             continue
         # Unlink a single owned directory entry; never follow a voice file symlink.
-        target.unlink(missing_ok=True)
+        if target.exists() or target.is_symlink():
+            target.unlink()
+            removed += 1
+    return removed
 
 
 def create_server(config, host="127.0.0.1", port=8812, config_path=None):
@@ -172,7 +176,8 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                 if not lock.acquire(blocking=False):
                     return self.reply(202, {"cleanupPending": True})
                 try:
-                    cleanup_deleted_voices(config_path)
+                    if cleanup_deleted_voices(config_path):
+                        resident.close()
                     return self.reply(200, {"cleanupPending": False})
                 except Exception:
                     return self.reply(503, {"cleanupPending": True})
@@ -190,7 +195,8 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                     return self.reply(429, {"error": "VOICE_BUSY: another local voice request is running; retry explicitly later"})
                 state.update(busy=True, device=None, reason=None)
                 try:
-                    cleanup_deleted_voices(config_path)
+                    if cleanup_deleted_voices(config_path):
+                        resident.close()
                     body = self.rfile.read(length)
                     if len(body) != length:
                         raise ValueError("Incomplete upload")
@@ -280,7 +286,8 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                     return self.reply(200, payload, "audio/wav" if speech else "application/json")
                 finally:
                     try:
-                        cleanup_deleted_voices(config_path)
+                        if cleanup_deleted_voices(config_path):
+                            resident.close()
                     except Exception:
                         pass  # Revoked IDs remain unusable; cleanup can retry later.
                     state["busy"] = False
