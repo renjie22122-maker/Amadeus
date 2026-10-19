@@ -96,3 +96,5 @@ CI 在 Windows 和 Ubuntu 运行。公开测试已脱敏；可选桌面／浏览
 [本地 LightRAG、GPU embedding 与重排配置](docs/LOCAL-RAG.zh-CN.md)
 
 可选隔离计算与媒体分析：Docker 运行后执行 `Setup-Analysis.cmd`，再在设置中选择 Docker 和准备好的镜像。普通启动不下载此镜像。详见[通用工作链](docs/TOOL-ECOSYSTEM.zh-CN.md)。
+
+本地中英语音转写、语音合成与回复朗读：[Guide](docs/LOCAL-VOICE.zh-CN.md).

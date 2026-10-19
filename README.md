@@ -96,3 +96,5 @@ This repository is licensed under the [MIT License](LICENSE). Third-party depend
 [Optional local LightRAG, GPU embedding and reranking](docs/LOCAL-RAG.md)
 
 Optional isolated computation and media analysis: with Docker running, use `Setup-Analysis.cmd`, then select Docker and the prepared image in Settings. Normal startup does not download this image. See [work chains](docs/TOOL-ECOSYSTEM.md).
+
+Local Chinese/English transcription, synthesis and reply read-aloud: [Guide](docs/LOCAL-VOICE.md).

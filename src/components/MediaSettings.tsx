@@ -1,5 +1,9 @@
+import { useState } from 'react';
+import { api } from '../api';
 import { mediaProtocols } from '../../shared/media';
 export function MediaSettings({ value, setValue, zh }: any) {
+  const [localMessage, setLocalMessage] = useState('');
+  const [localBusy, setLocalBusy] = useState(false);
   const media = value.media || { connections: [], transcriptionId: '', autoApproveMaxUsd: null };
   const update = (patch: any) => setValue({ ...value, media: { ...media, ...patch } });
   const change = (id: string, patch: any) =>
@@ -14,6 +18,36 @@ export function MediaSettings({ value, setValue, zh }: any) {
           ? '服务密钥只保存在本机。选择协议后填写服务商实际模型 ID；不同模型的价格、参考图、首尾帧和音频能力各不相同。'
           : 'Keys remain on the host. Enter an actual provider model ID; prices and reference-frame/audio capabilities vary by model.'}
       </p>
+      <p className="muted">
+        {zh
+          ? '本地中英语音：先运行 Setup-Local-Voice.cmd。配置后随应用启动，模型仅在请求时加载；默认 CPU，不占用 ComfyUI 显存。CosyVoice 需配置参考录音及文字。'
+          : 'Local Chinese/English voice: run Setup-Local-Voice.cmd first. The service starts with the app; models load per request. CPU is the default to avoid ComfyUI GPU contention. CosyVoice requires a reference recording and transcript.'}
+      </p>
+      <button
+        type="button"
+        disabled={localBusy}
+        onClick={async () => {
+          setLocalBusy(true);
+          try {
+            const next = await api('/media/local-voice', {});
+            setValue(next);
+            setLocalMessage(
+              zh
+                ? '已添加本地连接；已有录音服务选择保持不变。请启动本地语音服务后测试。'
+                : 'Local connections added. Existing microphone selection preserved. Start the voice service and test inference.',
+            );
+          } catch (error) {
+            setLocalMessage(String(error));
+          } finally {
+            setLocalBusy(false);
+          }
+        }}
+      >
+        {zh
+          ? '添加本地语音连接（先保存其他修改）'
+          : 'Add local voice connections (save other edits first)'}
+      </button>
+      <p role="status">{localMessage}</p>
       <select
         aria-label="Add media service"
         value=""

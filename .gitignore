@@ -39,3 +39,7 @@ build/
 !/scripts/check-local-media-ui.mjs
 
 !/scripts/check-sidebar-ui.mjs
+
+!/scripts/local_voice/
+!/scripts/local_voice/*.py
+!/scripts/requirements-voice-asr.txt

@@ -8,6 +8,8 @@ This is the maintained English/Chinese documentation set, reviewed on 2026-10-05
 
 ## Current guides
 
+- [Local speech and reply read-aloud](LOCAL-VOICE.md)
+
 - [Benchmark plan](BENCHMARKS.md)
 - [Benchmark downloads](BENCHMARK-DOWNLOADS.md)
 

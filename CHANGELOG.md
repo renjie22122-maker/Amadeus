@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-19 — Local speech and reply read-aloud
+
+Add isolated local SenseVoice, Whisper and CosyVoice integration, setup/start entry points and Settings connection registration. CPU is the default, models load per request and exit afterwards; GPU uses conservative admission. Add reply-footer read-aloud, sequential playback and stop. Frozen benchmarks are unchanged. Installation/inference validation is separate from API tests; see the local voice guide.
+
 ## 2026-10-19 — Discoverable durable follow-ups
 
 Expose scheduling, scoped inspection and pause tools; add quick editable cards, total launch limits and cutoff times. Clarify command completion versus semantic acceptance and in-app notifications. Existing permissions and unknown-effect safeguards remain. No launcher/dependency changes; running benchmark snapshots are untouched.

@@ -328,9 +328,14 @@ export class Configuration {
     for (const p of next.media.connections) {
       const u = new URL(p.baseUrl);
       assert(
-        u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash,
+        (u.protocol === 'https:' ||
+          (u.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(u.hostname))) &&
+          !u.username &&
+          !u.password &&
+          !u.search &&
+          !u.hash,
         'MEDIA_ENDPOINT',
-        'Media services require HTTPS without credentials, query or fragment.',
+        'Media services require HTTPS or literal loopback HTTP, without credentials, query or fragment.',
       );
       const preset = mediaProtocols.find((x) => x.id === p.protocol)!;
       assert(

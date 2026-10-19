@@ -21,8 +21,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m py_compile scripts/retrieval_service.py scripts/prepare_retrieval_models.py
+      - run: python tests/local-voice.test.py
       - run: python tests/model-preparation.test.py
       - run: python evals/public-qa/test_native_rpc.py
+      - run: python evals/full-suite/test_attempt_state.py
       - run: pnpm check:docs
       - run: pnpm check
       - run: pnpm test

@@ -19,6 +19,10 @@ export function mediaRoutes(app: FastifyInstance, runtime: Runtime) {
     store.get('conversation', req.params.id);
     return media.list(req.params.id);
   });
+  app.get<{ Params: { id: string; job: string } }>(
+    '/api/conversations/:id/media/:job',
+    async (req) => media.public(media.get(req.params.job, req.params.id)),
+  );
   app.post<{ Params: { id: string } }>('/api/conversations/:id/media', async (req) => {
     const c = store.get<Conversation>('conversation', req.params.id);
     assert(

@@ -1,4 +1,4 @@
-param([switch]$NoBrowser, [switch]$SetupOnly, [switch]$LocalRag, [string]$Python = 'python', [string]$OfflineBundle, [switch]$Gpu)
+param([switch]$NoBrowser, [switch]$SetupOnly, [switch]$LocalRag, [switch]$LocalVoice, [string]$Python = 'python', [string]$OfflineBundle, [switch]$Gpu)
 $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
 # Never replace dependencies underneath a live runtime.
@@ -29,6 +29,8 @@ try {
     Set-Content -LiteralPath (Join-Path $taskRoot 'dist/.agentdemo-build') -Value (Get-AgentDemoFingerprint $taskRoot)
     Write-Host '[3/3] Setup complete: backend and frontend rebuilt. Existing conversations are preserved.'
     if ($LocalRag -or $OfflineBundle) { & (Join-Path $taskRoot 'Setup-Local-RAG.ps1') -Python $Python -OfflineBundle $OfflineBundle -Gpu:$Gpu }
+    if ($LocalVoice) { & (Join-Path $taskRoot 'Setup-Local-Voice.ps1') -Python $Python }
+    Write-Host 'Optional local speech: Setup-Local-Voice.cmd, or First Start -LocalVoice -Python <3.10/3.11 executable>. Separate environments; downloads only during explicit setup.'
     Write-Host 'Optional local knowledge graph and reranker: run Setup-Local-RAG.cmd, or First Start with -LocalRag -Python <path>.'
     Write-Host 'Optional isolated Python / video / audio analysis: start Docker Desktop, then run Setup-Analysis.cmd. This is not required for ordinary chat.'
     Write-Host 'Document generation: DOCX/PPTX/XLSX need no Microsoft Office. PDF rendering requires installed Edge on Windows or Playwright Chromium on other platforms; it is not downloaded automatically.'

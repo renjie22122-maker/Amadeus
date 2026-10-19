@@ -1,3 +1,4 @@
+import { ReadAloud } from './ReadAloud';
 import { AttachmentPreview } from './AttachmentPreview';
 import { approvalPresentation } from '../../shared/approval-presentation';
 import {
@@ -113,6 +114,12 @@ export function Message({
                 {r === 'up' ? <ThumbsUp size={14} /> : <ThumbsDown size={14} />}
               </button>
             ))}
+            <ReadAloud
+              conversationId={event.conversationId}
+              text={event.data.text || ''}
+              zh={zh}
+              notify={notify}
+            />
           </>
         )}
       </div>

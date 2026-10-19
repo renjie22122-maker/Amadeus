@@ -58,10 +58,19 @@ export async function mediaHttp(
     signal: init.signal || AbortSignal.timeout(180000),
   });
   if (!response.ok) {
-    await response.body?.cancel();
+    let detail = '';
+    const endpoint = new URL(c.baseUrl);
+    if (endpoint.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(endpoint.hostname)) {
+      try {
+        const body = JSON.parse((await boundedBytes(response, 4096)).toString());
+        if (typeof body.error === 'string') detail = ' ' + body.error.slice(0, 500);
+      } catch {
+        /* Keep a bounded generic error when the local provider has no JSON diagnostic. */
+      }
+    } else await response.body?.cancel();
     throw new AppError(
       'MEDIA_HTTP',
-      'Media provider returned HTTP ' + response.status + '. No automatic resubmission.',
+      'Media provider returned HTTP ' + response.status + '. No automatic resubmission.' + detail,
       502,
     );
   }
@@ -439,7 +448,7 @@ export async function submitMedia(
       : '/music';
   if (elevenSpeech) assert(input.voiceId, 'VOICE_REQUIRED', 'Set voiceId in service defaults.');
   const body = speech
-    ? { voice: 'alloy', ...input, model: c.model, input: prompt, response_format: 'mp3' }
+    ? { voice: 'alloy', response_format: 'mp3', ...input, model: c.model, input: prompt }
     : elevenSpeech
       ? { ...input, model_id: c.model, text: prompt }
       : { ...input, prompt, model_id: c.model };

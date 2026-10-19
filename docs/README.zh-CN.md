@@ -8,6 +8,8 @@
 
 ## 当前指南
 
+- [本地语音与回复朗读](LOCAL-VOICE.zh-CN.md)
+
 - [评测设计](BENCHMARKS.zh-CN.md)
 - [评测下载清单](BENCHMARK-DOWNLOADS.zh-CN.md)
 

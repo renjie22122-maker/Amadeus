@@ -1,0 +1,60 @@
+# Local speech and reply read-aloud
+
+[English](LOCAL-VOICE.md) | [简体中文](LOCAL-VOICE.zh-CN.md)
+
+## Architecture and privacy
+
+An optional authenticated service listens on literal loopback `127.0.0.1:8812`. It exposes OpenAI-compatible transcription and speech endpoints, reusing Amadeus media jobs, playback, downloads and workspace export. Audio/text inference stays local; model preparation downloads public code/weights. There is no cloud fallback. Secrets are not returned in public settings.
+
+SenseVoice handles short multilingual recordings; faster-whisper adds segment timestamps; CosyVoice 3 uses a locally configured reference WAV and its exact transcript. These are separate engines, not a realtime conversational voice model. Current output is complete WAV audio, not streaming synthesis. No speaker diarization or automatic dubbing alignment is claimed.
+
+## Prepare and start
+
+Use Python 3.10/3.11, Git and FFmpeg on PATH. Windows: `Setup-Local-Voice.cmd` (Python must be on PATH). Portable alternative, including when PowerShell AllSigned blocks unsigned scripts:
+
+```text
+python scripts/local_voice/manage.py setup
+python scripts/local_voice/manage.py start
+```
+
+Setup installs ASR and CosyVoice in separate `.data/voice-asr-python` and `.data/voice-tts-python` virtual environments. It does not install into RAG, ComfyUI or evaluation environments. `--asr-only` prepares transcription only; `--skip-download` installs dependencies without weights. Download interruption can be resumed by rerunning setup. The resolved model revisions and CosyVoice source revision are recorded. Upstream native packages may require a compiler/platform-specific preparation; installation failure is not readiness.
+
+Models and configuration live under `.data/voice-service` (or `AGENTDEMO_DATA_DIR`). Offline users may place complete model snapshots at the `models` paths in `config.json`. Inference uses local paths and offline Hugging Face settings; it does not fetch missing models.
+
+Setup uses the upstream example recording as a default when present and no voice is configured. Replace it with your own voice in `config.json`:
+
+```json
+{
+  "voices": {
+    "default": { "audio": "D:/Voices/reference.wav", "text": "Exact transcript of that recording." }
+  }
+}
+```
+
+Use a recording you are authorized to use. No arbitrary client-supplied filesystem path is accepted by the speech endpoint. Start the service, then Settings → Media and voice → **Add local voice connections** (save other edits first). This adds SenseVoice, Whisper and CosyVoice without duplicating them or replacing an existing microphone selection. Choose the desired transcription service separately. Adding connections does not prove dependencies, weights or voice quality have passed a real inference test.
+
+`Start-Amadeus` starts the configured lightweight service; first-start supports `-LocalVoice -Python <executable>`. Ordinary startup never installs packages or loads speech models. Closing Codex does not own or terminate the detached speech service. No automatic restart of an existing service occurs.
+
+## Resource policy
+
+Default `device: "cpu"` does not allocate GPU memory, and CPU threads default to two. Each request runs in a separate model process; success, failure or timeout ends that process. This favors predictable release over warm-model latency. The HTTP listener remains small while idle.
+
+Advanced `device: "auto"` checks configured local `comfyUrls` queues and NVIDIA free memory before choosing CUDA; busy/unknown state falls back to CPU. `device: "cuda"` instead rejects unavailable admission. `gpuIndex` selects a GPU; `minFreeMiB` defaults to 8192 and is an admission reserve, **not a measured memory requirement**. The service never interrupts ComfyUI, clears its queue or unloads its models. These probes are not an exclusive lock shared with external applications: ComfyUI can start after a probe. Use CPU for a strict no-GPU-contention guarantee.
+
+One local request runs at a time; competing requests receive `VOICE_BUSY` and are not automatically replayed. Uploads are bounded to 25 MiB, recordings to ten minutes, synthesis text to 4000 characters, and each model worker to 150 seconds (within the existing media HTTP timeout). Cold CPU inference may exceed this: split recordings/narration. Overlong audio is rejected, never silently truncated. FFmpeg normalizes browser/WebM/MP3 audio. Missing dependencies/models, timeout and GPU admission errors remain distinct local diagnostics.
+
+## Read a reply aloud
+
+The speaker button follows copy, branch and feedback on each assistant message. Select a speech connection and press Start. Only that reply's prose is sent; code fences, image URLs and unsent drafts are excluded. Long replies are generated and played sequentially in small segments; only one message plays at a time. Stop or switching conversations halts playback and prevents later submissions. Already submitted provider work may finish and remain in media history; stopping playback is not a promise of provider cancellation/refund. Remote services may charge, as noted beside Start. Audio controls provide a manual Play option when browser autoplay is blocked. No automatic reading of new replies.
+
+## Verification boundary
+
+Unit/HTTP tests cover token checks, idle no-load behavior, busy rejection, timeout release, temporary-file cleanup, binary upload parsing, CPU admission and WAV format. TypeScript tests cover connection preservation, loopback-only HTTP and prose segmentation. These tests use a fixture worker, not generated speech, and do not establish ASR accuracy, pronunciation quality or hardware latency. Run an actual Chinese/English recording and synthesis smoke test after installing models and a reference voice. No model download or inference is required by CI.
+
+## Upstream resources
+
+- [SenseVoice](https://github.com/FunAudioLLM/SenseVoice)
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+- [CosyVoice, installation and inference examples](https://github.com/FunAudioLLM/CosyVoice)
+
+The integration is maintained by Amadeus; model code/weights retain their upstream licenses.

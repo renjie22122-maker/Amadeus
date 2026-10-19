@@ -7,6 +7,10 @@ if (Test-Path (Join-Path $(if ($env:AGENTDEMO_DATA_DIR) { $env:AGENTDEMO_DATA_DI
     try { & (Join-Path $taskRoot 'Start-Local-RAG.ps1') -NoWait }
     catch { Write-Warning ("Optional local RAG did not start: " + $_.Exception.Message) }
 }
+if (Test-Path (Join-Path $(if ($env:AGENTDEMO_DATA_DIR) { $env:AGENTDEMO_DATA_DIR } else { Join-Path $taskRoot '.data' }) 'voice-service/config.json')) {
+    try { & (Join-Path $taskRoot 'Start-Local-Voice.ps1') -NoWait }
+    catch { Write-Warning ("Optional local voice did not start: " + $_.Exception.Message) }
+}
 $taskHealth = $null
 try { $taskHealth = Invoke-RestMethod "$taskUrl/api/health" -TimeoutSec 2 } catch {}
 if ($taskHealth.application -in @('Amadeus', 'AgentDemo')) {

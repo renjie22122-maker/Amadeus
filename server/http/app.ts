@@ -1,3 +1,4 @@
+import { configureLocalVoice } from '../services/local-voice.js';
 import { scheduledWorkRoutes } from './scheduled-work.js';
 import { saveMediaStream, mediaHeader } from '../services/media-stream.js';
 import { createReadStream } from 'node:fs';
@@ -624,6 +625,7 @@ export async function createApp(options: { directory: string; dist?: string; run
     checkScope(req.query.scope);
     return runtime.knowledge.indexStatuses(req.query.scope);
   });
+  app.post('/api/media/local-voice', async () => configureLocalVoice(config, directory));
   app.post('/api/retrieval/local', async (req) => {
     const data = z
       .object({
