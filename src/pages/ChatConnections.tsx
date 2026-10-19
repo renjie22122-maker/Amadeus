@@ -348,6 +348,7 @@ export function ChatConnectionsPage({
                         groupContext: false,
                         groupReplyMode: 'mentions',
                         remoteApprovals: false,
+                        reviewFriendRequests: false,
                         allGroupMembers: false,
                       }
                     : f,
@@ -374,6 +375,7 @@ export function ChatConnectionsPage({
                         ...f,
                         peerType: e.target.value as 'private' | 'group',
                         autoInviteGroups: false,
+                        reviewFriendRequests: false,
                         groupContext: false,
                         groupReplyMode: 'mentions',
                         peerId: e.target.value === 'private' ? f.senderId : '',
@@ -426,6 +428,21 @@ export function ChatConnectionsPage({
               )}
             </label>
           )}
+          {form.transport === 'onebot11' &&
+            form.peerType !== 'group' &&
+            form.accessMode === 'work' && (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={!!form.reviewFriendRequests}
+                  onChange={(e) => field('reviewFriendRequests', e.target.checked)}
+                />
+                {tr(
+                  '将好友申请发给此控制人审批；通过后开放独立普通聊天（无电脑操作和审批权限）',
+                  'Send friend requests to this controller; accepted friends get isolated basic chat, never work or approval access',
+                )}
+              </label>
+            )}
           {form.peerType === 'group' && (
             <>
               <label>

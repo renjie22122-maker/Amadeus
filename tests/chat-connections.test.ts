@@ -316,7 +316,12 @@ test('remote approvals are bound, single-use and invalidated by changed payloads
   const { store, channel, c, calls } = fixture(t);
   c.remoteApprovals = true;
   store.put('chat-connection', c);
-  store.put('run', { id: 'r', conversationId: 'chat', status: 'running', createdAt: Date.now() });
+  store.put('run', {
+    id: 'r',
+    conversationId: 'chat',
+    status: 'waiting_approval',
+    createdAt: Date.now(),
+  });
   store.db
     .prepare(
       'INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id) VALUES(?,?,?,?,?,?)',
@@ -333,6 +338,19 @@ test('remote approvals are bound, single-use and invalidated by changed payloads
   };
   store.put('input', q);
   channel.tick();
+  const notices = store.db
+    .prepare('SELECT text FROM chat_outbox')
+    .all()
+    .map((r) => String(r.text))
+    .join('\n');
+  assert(notices.includes('/approve '));
+  const texts = store.db
+    .prepare('SELECT text FROM chat_outbox')
+    .all()
+    .map((r) => String(r.text));
+  assert(texts.some((text) => /^\/approve [a-f0-9]{24}$/.test(text)));
+  assert(texts.some((text) => /^\/deny [a-f0-9]{24}$/.test(text)));
+  assert(!notices.includes('Action required in Amadeus on your computer'));
   const ticket = store.db.prepare('SELECT code FROM chat_approval').get()!;
   const send = (id: string) =>
     channel.receive(c.id, {

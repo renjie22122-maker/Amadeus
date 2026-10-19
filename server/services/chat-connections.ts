@@ -37,6 +37,7 @@ export const connectionInput = z
     groupContext: z.boolean().default(false),
     groupReplyMode: z.enum(['mentions', 'participate']).default('mentions'),
     autoInviteGroups: z.boolean().default(false),
+    reviewFriendRequests: z.boolean().default(false),
     token: z.string().max(4096).optional(),
     appSecret: z.string().max(4096).optional(),
     verifyToken: z.string().max(4096).optional(),
@@ -216,6 +217,27 @@ export class ChatConnections {
       !data.autoInviteGroups || (data.transport === 'onebot11' && data.peerType === 'private'),
       'CHAT_INVITE_PROTOCOL',
       'Automatic invitation authorization currently requires a OneBot 11 private controller route.',
+    );
+    assert(
+      !data.reviewFriendRequests ||
+        (data.transport === 'onebot11' &&
+          data.peerType === 'private' &&
+          data.accessMode === 'work'),
+      'CHAT_FRIEND_REVIEW',
+      'Friend review requires a private OneBot 11 controller work connection.',
+    );
+    assert(
+      !data.reviewFriendRequests ||
+        !this.list().some(
+          (x) =>
+            x.id !== key &&
+            x.reviewFriendRequests &&
+            x.transport === data.transport &&
+            x.accountId === data.accountId &&
+            x.endpoint === data.endpoint,
+        ),
+      'CHAT_FRIEND_CONTROLLER',
+      'Only one friend-review controller may be configured per bot account.',
     );
     assert(
       data.accessMode === 'chat' || (!data.groupContext && data.groupReplyMode !== 'participate'),
@@ -666,9 +688,14 @@ export class ChatConnections {
             ? 'In this group prefix commands with ' + (c.groupPrefix || '/amadeus') + ' .\n'
             : '') +
           (q.kind === 'approval'
-            ? `/approve ${code}\n/deny ${code}`
+            ? '下面两条独立消息分别是同意和拒绝命令。长按复制其中一条，再发送即可；请先核对以上操作。'
             : `/answer ${code} your answer`),
       );
+      if (q.kind === 'approval') {
+        const prefix = c.peerType === 'group' ? (c.groupPrefix || '/amadeus') + ' ' : '';
+        this.reply(c, 'approval-allow:' + q.id, prefix + '/approve ' + code);
+        this.reply(c, 'approval-deny:' + q.id, prefix + '/deny ' + code);
+      }
     }
   }
   private answer(c: ChatConnection, action: string, code: string, text: string, now: number) {
@@ -809,7 +836,10 @@ export class ChatConnections {
           this.store.remove('chat-reply-plan', run.id);
         } else if (
           ['waiting_user', 'waiting_approval'].includes(run.status) &&
-          row.notice !== run.status
+          row.notice !== run.status &&
+          !this.store.db
+            .prepare('SELECT 1 FROM chat_approval WHERE connection_id=? AND run_id=?')
+            .get(c.id, run.id)
         ) {
           this.reply(
             c,

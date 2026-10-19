@@ -72,6 +72,7 @@ export interface ChatConnection {
   groupContext?: boolean;
   groupReplyMode?: 'mentions' | 'participate';
   autoInviteGroups?: boolean;
+  reviewFriendRequests?: boolean;
   authorizedTarget: string;
   activatedAt: number;
   revision: number;

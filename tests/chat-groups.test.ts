@@ -1,3 +1,4 @@
+import { ChatFriendReview } from '../server/services/chat-friend-review.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -811,4 +812,128 @@ test('legacy observed media recovery verifies group and sender, and read_chat_me
   const noVision = await tool.run({ messageId: 'old' }, ctx);
   assert.equal(noVision.images, undefined);
   assert.match(noVision.content, /model-does-not-declare-vision/);
+});
+
+function friendSetup(t: any) {
+  const f = setup(t);
+  const c = {
+    ...f.c,
+    peerType: 'private' as const,
+    peerId: f.c.senderId,
+    reviewFriendRequests: true,
+  };
+  f.store.put('chat-connection', c);
+  f.channels.secrets = () => ({ token: 'test-token', appSecret: '', verifyToken: '' });
+  const review = new ChatFriendReview(f.channels);
+  const event = (peer = '999', flag = 'request-one') => ({
+    post_type: 'request',
+    request_type: 'friend',
+    self_id: c.accountId,
+    user_id: peer,
+    flag,
+    comment: 'hello',
+    time: Math.floor(Date.now() / 1000),
+  });
+  const message = (text = '同意', senderId = c.senderId) => ({
+    id: id(),
+    senderId,
+    peerId: c.peerId,
+    timestamp: Date.now(),
+    text,
+  });
+  return { ...f, c, review, event, message };
+}
+test('friend requests require controller review, deduplicate and create isolated ordinary chats', async (t) => {
+  const { channels, store, c, review, event, message } = friendSetup(t);
+  review.observe(c, event());
+  review.observe(c, event());
+  assert.equal(store.list('chat-friend-request').length, 1);
+  assert.equal(channels.list().length, 1);
+  const calls: any[] = [];
+  await review.answer(c, message('同意', '999'), async (...args) => calls.push(args));
+  assert.equal(calls.length, 0);
+  const m = message();
+  await review.answer(c, m, async (...args) => calls.push(args));
+  await review.answer(c, m, async (...args) => calls.push(args));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'set_friend_add_request');
+  assert.equal(calls[0][1].approve, true);
+  const friend = channels.list().find((x) => x.peerId === '999')!;
+  assert.equal(friend.accessMode, 'chat');
+  assert.equal(friend.remoteApprovals, false);
+  assert.equal(friend.reviewFriendRequests, false);
+  assert.equal(friend.autoInviteGroups, false);
+  assert.notEqual(friend.conversationId, c.conversationId);
+  const conversation: any = store.get('conversation', friend.conversationId);
+  assert.equal(conversation.memory, false);
+  assert.equal(conversation.projectId, null);
+  assert(!conversation.allowedTools.includes('run_command'));
+  review.observe(c, event('998', 'second'));
+  await review.answer(c, message(), async () => undefined);
+  assert.notEqual(
+    channels.list().find((x) => x.peerId === '998')!.conversationId,
+    friend.conversationId,
+  );
+});
+test('ambiguous assent and task approval cannot accept a friend; uncertain results are not retried', async (t) => {
+  const { store, c, review, event, message } = friendSetup(t);
+  review.observe(c, event());
+  review.observe(c, event('998', 'second'));
+  let calls = 0;
+  await review.answer(c, message(), async () => calls++);
+  assert.equal(calls, 0);
+  const r: any = store.list('chat-friend-request')[0];
+  await review.answer(c, message('同意 ' + r.code), async () => {
+    calls++;
+    throw Error('timeout');
+  });
+  await review.answer(c, message('同意 ' + r.code), async () => calls++);
+  assert.equal(calls, 1);
+  store.put('input', { id: 'pending-task', conversationId: c.conversationId, status: 'pending' });
+  await review.answer(c, message(), async () => calls++);
+  assert.equal(calls, 1);
+});
+test('native manual acceptance enrolls only observed requests; disabled, stale and wrong-account events do nothing', (t) => {
+  const { channels, c, review, event } = friendSetup(t);
+  review.observe({ ...c, reviewFriendRequests: false }, event());
+  review.observe(c, { ...event(), self_id: 'other' });
+  review.observe(c, { ...event(), time: 1 });
+  assert.equal(channels.list().length, 1);
+  review.observe(c, event());
+  const notice = { ...event(), post_type: 'notice', notice_type: 'friend_add' };
+  review.observe(c, notice);
+  assert.equal(channels.list().length, 2);
+  const friend = channels.list().find((x) => x.peerId === '999')!;
+  channels.pause(friend.id);
+  review.observe(c, notice);
+  assert.equal(channels.get(friend.id).enabled, false);
+});
+
+test('friend denial, capacity and changed permissions cannot enroll or perform unintended actions', async (t) => {
+  const { channels, store, c, review, event, message } = friendSetup(t);
+  review.observe(c, event());
+  let actions: any[] = [];
+  await review.answer(c, message('拒绝'), async (_a, params) => actions.push(params));
+  assert.equal(actions[0].approve, false);
+  assert.equal(channels.list().length, 1);
+  review.observe(c, event('998', 'capacity'));
+  for (let n = 0; n < 19; n++)
+    store.put('chat-connection', {
+      ...c,
+      id: 'existing-' + n,
+      peerId: String(2000 + n),
+      reviewFriendRequests: false,
+    });
+  await review.answer(c, message(), async (_a, params) => actions.push(params));
+  assert.equal(actions.length, 1);
+  assert.equal(channels.list().length, 20);
+  store.put('conversation', {
+    ...store.get<any>('conversation', c.conversationId),
+    permission: 'ask',
+  });
+  await assert.rejects(
+    review.answer(c, message(), async (_a, params) => actions.push(params)),
+    /changed/,
+  );
+  assert.equal(actions.length, 1);
 });

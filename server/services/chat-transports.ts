@@ -1,3 +1,4 @@
+import { ChatFriendReview } from './chat-friend-review.js';
 import { registerChatInteraction } from './chat-interaction.js';
 import {
   downloadChatBytes,
@@ -77,7 +78,9 @@ export class ChatTransports {
       () => this.jobs.delete(job),
     );
   }
+  private friends: ChatFriendReview;
   constructor(readonly channels: ChatConnections) {
+    this.friends = new ChatFriendReview(channels);
     registerChatInteraction(channels, {
       query: (c, k) => this.queryChat(c, k),
       importMedia: (c, m) => this.importChatMedia(c, m),
@@ -303,6 +306,7 @@ export class ChatTransports {
       .list()
       .filter((r) => r.enabled && this.accountKey(r) === account)) {
       try {
+        this.friends.observe(route, event);
         this.channels.enrollInvitedGroup(route, event);
       } catch {
         this.status(route, 'group-enrollment-failed', 'Group authorization needs local review.');
@@ -315,6 +319,19 @@ export class ChatTransports {
     for (const m of incoming(c, event)) {
       if (!chatSenderAllowed(c, m)) continue;
       try {
+        if (this.friends.matches(c, m)) {
+          this.track(
+            this.friends
+              .answer(c, m, (action, params) => {
+                if (!this.current(c, s)) return Promise.reject(Error('Connection changed'));
+                return this.socketRequest(c, s, action, params);
+              })
+              .catch(() =>
+                this.status(c, 'friend-review-failed', 'Friend review needs local inspection.'),
+              ),
+          );
+          continue;
+        }
         const result = this.channels.receive(c.id, m);
         if (c.transport === 'qq' && result !== 'duplicate' && result !== 'ignored')
           this.channels.store.put('chat-qq-reply', {

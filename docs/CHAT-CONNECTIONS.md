@@ -81,3 +81,11 @@ OneBot 11 can recover a legacy message only when its ID was already observed in 
 Permission fix: discovery and pre-execution revalidation apply the same effective ordinary-remote-chat policy, so an old persisted tool list cannot spuriously produce CAPABILITY_CHANGED. Actual permission, workspace, remote-chat mode or shared-knowledge changes still stop execution. Regression coverage invokes ToolRegistry, not just the media helper.
 
 See [Bot startup and independent status notices](BOT-STARTUP.md) for optional Windows launch tasks and OneBot 11 fallback notices.
+
+### Friend-request review (OneBot 11)
+
+Enable friend-request review on one dedicated private work/controller connection per bot account (off by default). Incoming requests forward the applicant ID, untrusted verification message and a random code to that controller. Reply `同意 CODE` to accept or `拒绝 CODE` to reject. Bare assent is accepted only for exactly one pending friend request and no pending task input. Requests expire after 24 hours. Manual acceptance in QQ also enrolls a friend when a matching observed request receives a native `friend_add` notice; missed offline events are not guaranteed to be recovered.
+
+Each accepted friend receives a new isolated ordinary conversation. Controller history, private memory, projects, work permissions and remote approvals are never inherited. Shared knowledge follows the controller connection setting. Existing/paused routes are preserved. The 20-connection limit and 50-new-requests/day bound apply. Uncertain bridge results are not retried; inspect them in QQ. Task approvals remain separate, using the exact `/approve CODE` command; issuing a review offer no longer adds a contradictory local-only waiting notice.
+
+Remote approval and denial commands are sent as separate short messages for whole-message copying. Group commands include the trigger prefix. These are plain messages, not native platform buttons; full review details remain in the preceding message and codes stay single-use with a 15-minute expiry.
