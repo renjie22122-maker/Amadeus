@@ -17,7 +17,9 @@ export function LightRagProgress({ value, zh }: { value: any; zh: boolean }) {
       <p role="status">
         LightRAG · {labels[value.status]?.[zh ? 0 : 1] || value.status}
         {known && ` · ${completed.toLocaleString()} / ${total.toLocaleString()}`}
-        {known && total > 0 && ` · ${((completed / total) * 100).toFixed(1)}%`}
+        {known &&
+          total > 0 &&
+          ` · ${completed > 0 && completed / total < 0.001 ? '<0.1' : ((completed / total) * 100).toFixed(1)}%`}
       </p>
       {known && total > 0 && (
         <progress
@@ -27,10 +29,18 @@ export function LightRagProgress({ value, zh }: { value: any; zh: boolean }) {
           style={{ width: '100%', height: 8, accentColor: 'var(--accent)' }}
         />
       )}
+      {known && (
+        <p className="muted">
+          {zh ? '当前批次：处理中 ' : 'Current batch: processing '}
+          {value.processing || 0} · {zh ? '待处理 ' : 'pending '}
+          {value.pending || 0} · {zh ? '失败 ' : 'failed '}
+          {value.failed || 0}
+        </p>
+      )}
       <small className="muted">
         {zh
-          ? '按已确认完成的正文分块计数，当前批次完成后更新；不是文件数、向量数或实体数。'
-          : 'Counts confirmed source chunks, updated after each batch; not files, vectors or entities.'}
+          ? '按已确认完成的正文分块计数，每几秒按分块刷新，失败不扣除已完成进度；不是文件数、向量数或实体数。'
+          : 'Counts confirmed source chunks, refreshed every few seconds per chunk; failures retain completed progress; not files, vectors or entities.'}
         {value.observedAt &&
           ` ${zh ? '状态更新：' : 'Status checked: '}${new Date(value.observedAt).toLocaleString()}`}
       </small>

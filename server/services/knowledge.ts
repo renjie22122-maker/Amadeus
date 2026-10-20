@@ -773,12 +773,34 @@ export class Knowledge {
     );
   }
   private lightSyncBusy = false;
+  private lightProgressPoll = new Map<string, number>();
   lightRagStatus(scope: string) {
     const c = this.retrieval().lightRag;
     if (!c?.enabled || c.scope !== scope) return { status: 'disabled' };
     if (c.authorizedTarget !== retrievalTarget('lightRag', c)) return { status: 'unauthorized' };
     const id = createHash('sha256').update(retrievalTarget('lightRag', c)).digest('hex');
-    return this.store.maybe<any>('lightrag-progress', id) || { status: 'pending' };
+    const value = this.store.maybe<any>('lightrag-progress', id) || { status: 'pending' };
+    if (value.jobId && Date.now() - (this.lightProgressPoll.get(id) || 0) > 2000) {
+      this.lightProgressPoll.set(id, Infinity);
+      void retrievalPost('lightRag', c, '/documents/status', { jobId: value.jobId })
+        .then((job) => {
+          const current = this.store.maybe<any>('lightrag-progress', id);
+          if (current?.jobId !== value.jobId) return;
+          this.store.put('lightrag-progress', {
+            ...current,
+            status: job.status === 'completed' ? 'processing' : job.status,
+            completed: current.baseCompleted + (job.completed || 0),
+            failed: job.failed || 0,
+            processing: job.processing || 0,
+            pending: job.pending || 0,
+            observedAt: job.observedAt || Date.now(),
+            checkedAt: Date.now(),
+          });
+        })
+        .catch(() => {})
+        .finally(() => this.lightProgressPoll.set(id, Date.now()));
+    }
+    return value;
   }
   async syncLightRag() {
     const c = this.retrieval().lightRag;
@@ -849,7 +871,16 @@ export class Knowledge {
           }
         }
         if (job.status !== 'completed')
-          return { status: job.status, completed: completed.size, total: rows.length };
+          return {
+            status: job.status,
+            completed: completed.size + (job.completed || 0),
+            baseCompleted: completed.size,
+            total: rows.length,
+            jobId: previous.jobId,
+            failed: job.failed || 0,
+            processing: job.processing || 0,
+            pending: job.pending || 0,
+          };
         for (const key of previous.batch) completed.add(key);
         this.store.put('lightrag-sync', { id, completed: [...completed] });
       } else if (previous?.status === 'unknown') {
@@ -901,7 +932,13 @@ export class Knowledge {
         jobId: result.jobId,
         batch: batch.map((r) => r.id),
       });
-      return { status: result.status, completed: completed.size, total: rows.length };
+      return {
+        status: result.status,
+        completed: completed.size,
+        baseCompleted: completed.size,
+        total: rows.length,
+        jobId: result.jobId,
+      };
     } finally {
       this.lightSyncBusy = false;
     }

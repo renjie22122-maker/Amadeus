@@ -140,3 +140,18 @@ async def light_resume_plan(rag, texts, sources):
         if doc_id not in pending:
             raise ValueError("Unrelated unfinished documents require separate inspection")
     return {"completed": completed, "pending": pending}
+
+
+async def light_batch_progress(rag, texts, sources):
+    """Read only the submitted sources; duplicate originals count once per source."""
+    import hashlib
+    counts = dict(completed=0, failed=0, processing=0, pending=0, total=len(texts))
+    for source, text in zip(sources, texts):
+        key = "doc-" + hashlib.sha256((source + text).encode()).hexdigest()
+        if await light_document_complete(rag, key, text, source):
+            counts["completed"] += 1
+        else:
+            row = await rag.doc_status.get_by_id(key) or {}
+            state = row.get("status")
+            counts["failed" if state == "failed" else "processing" if state in ("processing", "parsing", "analyzing") else "pending"] += 1
+    return counts

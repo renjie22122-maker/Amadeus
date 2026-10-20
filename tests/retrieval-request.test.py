@@ -170,4 +170,58 @@ class RecoveryEndpoint(unittest.TestCase):
    self.assertEqual(len(submitted),1);self.assertTrue(submitted[0][-1])
    jobs[key]={'status':'completed'};self.assertEqual(request(body)[0],200);self.assertEqual(len(submitted),1)
 
+
+class LiveGraphProgress(unittest.IsolatedAsyncioTestCase):
+ async def test_partial_completion_is_visible_without_reinsertion(self):
+  import hashlib
+  from types import SimpleNamespace
+  texts=['done','bad','working'];sources=['amadeus-a','amadeus-b','amadeus-c']
+  ids=['doc-'+hashlib.sha256((s+t).encode()).hexdigest() for s,t in zip(sources,texts)]
+  rows={k:{'status':v} for k,v in zip(ids,['processed','failed','analyzing'])}
+  class Values:
+   async def get_by_id(self,k):return rows.get(k)
+  rag=SimpleNamespace(doc_status=Values())
+  value=await h.light_batch_progress(rag,texts,sources)
+  self.assertEqual(value,dict(completed=1,failed=1,processing=1,pending=0,total=3))
+  rows[ids[2]]['status']='processed'
+  self.assertEqual((await h.light_batch_progress(rag,texts,sources))['completed'],2)
+  self.assertEqual(rows[ids[1]]['status'],'failed')
+
+class ExtractionTransport(unittest.IsolatedAsyncioTestCase):
+ async def test_transient_retry_is_bounded_and_auth_does_not_retry(self):
+  import sys
+  from types import SimpleNamespace
+  from unittest.mock import patch
+  class TransportError(Exception):pass
+  class TimeoutException(TransportError):pass
+  class HttpError(Exception):
+   def __init__(self,status):self.response=SimpleNamespace(status_code=status)
+  events=[];errors=[]
+  class Client:
+   def __init__(self,**kw):pass
+   async def __aenter__(self):return self
+   async def __aexit__(self,*a):pass
+   async def post(self,*a,**kw):
+    events.append(1)
+    if errors:raise errors.pop(0)
+    return SimpleNamespace(raise_for_status=lambda:None,json=lambda:{'choices':[{'finish_reason':'stop','message':{'content':'ok'}}]})
+  async def sleep(_):pass
+  tree=ast.parse((root/'scripts/retrieval_service.py').read_text(encoding='utf-8'))
+  create=next(x for x in tree.body if isinstance(x,ast.AsyncFunctionDef) and x.name=='create_rag')
+  fn=next(x for x in create.body if isinstance(x,ast.AsyncFunctionDef) and x.name=='complete')
+  with tempfile.TemporaryDirectory() as tmp:
+   env={'llm':{'model':'test','apiKey':'secret-key','baseUrl':'http://private'},'time':time,'json':json,'ROOT':Path(tmp),'JOB_LOCK':threading.RLock(),'asyncio':SimpleNamespace(sleep=sleep)}
+   exec(compile(ast.Module(body=[fn],type_ignores=[]),'actual-complete','exec'),env)
+   fake=SimpleNamespace(AsyncClient=Client,TimeoutException=TimeoutException,TransportError=TransportError)
+   with patch.dict(sys.modules,{'httpx':fake}):
+    errors.append(TransportError('secret payload'));self.assertEqual(await env['complete']('secret prompt'),'ok');self.assertEqual(len(events),2)
+    events.clear();errors.extend([TransportError(),TransportError()])
+    with self.assertRaises(RuntimeError):await env['complete']('secret prompt')
+    self.assertEqual(len(events),2)
+    events.clear();errors.append(HttpError(401))
+    with self.assertRaises(RuntimeError):await env['complete']('secret prompt')
+    self.assertEqual(len(events),1)
+   log=(Path(tmp)/'extraction-errors.jsonl').read_text()
+   self.assertNotIn('secret',log);self.assertIn('401',log)
+
 if __name__=='__main__':unittest.main()

@@ -1,11 +1,11 @@
 """Optional local RAG sidecar. Keep its configuration and logs private."""
 import base64, argparse, asyncio, hashlib, hmac, json, os, threading, time, subprocess, sys
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
-from rag_request_helpers import RequestDiagnostics, embedding_windows, light_document_complete, light_resume_plan
+from rag_request_helpers import RequestDiagnostics, embedding_windows, light_document_complete, light_resume_plan, light_batch_progress
 
 CODE_HASH = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 HELPER_HASH = hashlib.sha256(Path(__file__).with_name("rag_request_helpers.py").read_bytes()).hexdigest()
@@ -306,11 +306,28 @@ async def create_rag(scope):
         messages = ([{"role":"system","content":system_prompt}] if system_prompt else []) + (history_messages or []) + [{"role":"user","content":prompt}]
         body = {"model":llm["model"],"messages":messages,"stream":False}
         if kwargs.get("response_format"): body["response_format"] = kwargs["response_format"]
-        async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
-            response = await client.post(llm["baseUrl"].rstrip("/") + "/chat/completions",
-                headers={"Authorization":"Bearer " + llm["apiKey"]}, json=body)
-            response.raise_for_status()
-            result = response.json()
+        # Bounded transport recovery; never retry authentication or malformed responses.
+        for attempt in range(2):
+            started = time.monotonic()
+            try:
+                async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
+                    response = await client.post(llm["baseUrl"].rstrip("/") + "/chat/completions",
+                        headers={"Authorization":"Bearer " + llm["apiKey"]}, json=body)
+                    response.raise_for_status()
+                    result = response.json()
+                break
+            except Exception as error:
+                code = getattr(getattr(error, "response", None), "status_code", None)
+                retry = isinstance(error, (httpx.TimeoutException, httpx.TransportError)) or code in (408, 429, 500, 502, 503, 504)
+                detail = {"at":time.time(), "stage":"extractionHttp", "error":type(error).__name__,
+                    "cause":type(error.__cause__).__name__ if error.__cause__ else None,
+                    "statusCode":code, "elapsedMs":round((time.monotonic()-started)*1000), "attempt":attempt+1}
+                with JOB_LOCK:
+                    log = ROOT / "extraction-errors.jsonl"
+                    if log.exists() and log.stat().st_size > 1048576: log.replace(log.with_suffix(".previous.jsonl"))
+                    with log.open("a", encoding="utf-8") as output: output.write(json.dumps(detail)+"\n")
+                if not retry or attempt: raise RuntimeError("Extraction request failed: " + type(error).__name__) from error
+                await asyncio.sleep(1)
         choice = result["choices"][0]
         if choice.get("finish_reason") != "stop" or not isinstance(choice["message"].get("content"),str):
             raise ValueError("Extraction did not return a complete text response")
@@ -358,10 +375,9 @@ async def light_insert(data):
 async def light_reconcile(data):
     # Read persisted document state only; never resubmit an unknown extraction job.
     rag = await rag_for(data["scope"])
-    for source, text in zip(data["file_sources"], data["texts"]):
-        doc_id = "doc-" + hashlib.sha256((source + text).encode()).hexdigest()
-        if not await light_document_complete(rag, doc_id, text, source): return {"status":"unknown"}
-    return {"status":"completed", "completed":len(data["texts"]), "reconciled":True}
+    progress = await light_batch_progress(rag, data["texts"], data["file_sources"])
+    return {"status":"completed" if progress["completed"] == progress["total"] else "unknown",
+        **progress, "reconciled":True}
 
 async def light_resume(data):
     rag = await rag_for(data["scope"])
@@ -384,14 +400,33 @@ def run_job(key, data, resume=False):
     with JOB_LOCK:
         JOBS[key] = {"status":"processing"}; save_jobs()
     future = asyncio.run_coroutine_threadsafe(light_resume(data) if resume else light_insert(data), LOOP)
+    deadline = time.monotonic() + 1800
     try:
-        result = future.result(timeout=1800)
+        while True:
+            try:
+                result = future.result(timeout=min(2, max(0.01, deadline-time.monotonic())))
+                break
+            except FutureTimeout:
+                if future.done() or time.monotonic() >= deadline: raise
+                # Progress failure must not cancel working ingestion.
+                probe = asyncio.run_coroutine_threadsafe(light_reconcile(data), LOOP)
+                try:
+                    progress = probe.result(timeout=2)
+                    with JOB_LOCK:
+                        JOBS[key] = {**progress, "status":"processing", "observedAt":int(time.time()*1000)}; save_jobs()
+                except Exception: probe.cancel()
         with JOB_LOCK:
-            JOBS[key] = {"status":"completed", **result}; save_jobs()
+            JOBS[key] = {"status":"completed", **result, "observedAt":int(time.time()*1000)}; save_jobs()
     except Exception as error:
         future.cancel()
         with JOB_LOCK:
-            JOBS[key] = {"status":"unknown", "error":type(error).__name__}; save_jobs()
+            JOBS[key] = {**JOBS.get(key,{}), "status":"unknown", "error":type(error).__name__}; save_jobs()
+        probe = asyncio.run_coroutine_threadsafe(light_reconcile(data), LOOP)
+        try:
+            progress = probe.result(timeout=5)
+            with JOB_LOCK:
+                JOBS[key].update(progress, observedAt=int(time.time()*1000)); save_jobs()
+        except Exception: probe.cancel()
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
