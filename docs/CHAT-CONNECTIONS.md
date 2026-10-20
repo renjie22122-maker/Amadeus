@@ -117,3 +117,7 @@ Lifetime includes send queue time. Approval fragments with less than 30 seconds 
 Users may explicitly ask the bot to retract its own reply. `inspect_chat.sentMessages` exposes delivery IDs and `retract_chat_message` accepts only a verified delivery in the current route. Ordinary members may retract replies to themselves; the configured controller or freshly queried platform administrators may retract other bot messages. Ambiguous requests require clarification. No arbitrary user-message deletion or cross-chat deletion is supported. Historical messages and media without retained platform receipts cannot be safely retracted.
 
 No new daemon, port, dependency or startup task is required. Tables migrate on normal startup; the existing detached bot supervisor remains the launcher. Deployment needs an idle Amadeus restart, not a NapCat or benchmark restart. On reconnect the scheduler cleans expired offers; it cannot guarantee provider recall after an extended outage.
+
+### Quick help
+
+A bare native mention or `/help` returns a small deterministic help message without calling the model. The controller also sees status/stop and, on remotely reviewable work routes, grant-management commands. Help never mints approval codes. Mention plus text/media still dispatches normally. `sentMessages` contains only confirmed recent deliveries; pre-upgrade messages, untracked media and a reply still being generated may be absent. Do not ask users for internal delivery IDs.

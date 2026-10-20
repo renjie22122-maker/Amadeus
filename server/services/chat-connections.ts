@@ -502,15 +502,19 @@ export class ChatConnections {
         'DELETE FROM chat_received WHERE connection_id=? AND (at<? OR rowid NOT IN (SELECT rowid FROM chat_received WHERE connection_id=? ORDER BY at DESC,rowid DESC LIMIT 40))',
       )
       .run(c.id, now - 86400000, c.id);
+    let helpRequested =
+      !m.media?.length && (m.text.trim() === '/help' || m.textOrigin === 'mention-only');
     if (c.peerType === 'group') {
       this.groups.observe(c, m, now);
       const prefix = c.groupPrefix || '/amadeus';
       const prefixed = m.text.startsWith(prefix + ' ') || m.text === prefix;
-      if (!prefixed && !m.addressed) return c.groupContext ? 'observed' : 'ignored';
+      if (!prefixed && !m.addressed && !helpRequested)
+        return c.groupContext ? 'observed' : 'ignored';
       if (prefixed) m = { ...m, text: m.text.slice(prefix.length).trim() };
-      if (!m.text) return 'ignored';
+      helpRequested = !m.media?.length && (helpRequested || m.text.trim() === '/help');
+      if (!m.text && !helpRequested) return 'ignored';
       this.groups.addressed(c, now);
-      if (c.accessMode === 'chat' && c.groupContext && !m.text.startsWith('/'))
+      if (!helpRequested && c.accessMode === 'chat' && c.groupContext && !m.text.startsWith('/'))
         m = {
           ...m,
           text: this.groups.text(c, now) + '\nCurrent explicitly addressed message:\n' + m.text,
@@ -534,7 +538,9 @@ export class ChatConnections {
       .match(/^\/(approve|deny|answer|details|allow-similar|renew) ([a-f0-9]{24})(?: ([\s\S]+))?$/);
     const command =
       !m.media?.length &&
-      (['/stop', '/status', '/grants', '/revoke-grants'].includes(m.text.trim()) || !!approval);
+      (helpRequested ||
+        ['/stop', '/status', '/grants', '/revoke-grants'].includes(m.text.trim()) ||
+        !!approval);
     assert(command || pending.n < 20, 'CHAT_QUEUE', 'Message queue is full.', 429);
     this.store.db
       .prepare(
@@ -558,6 +564,41 @@ export class ChatConnections {
       this.store.db
         .prepare('UPDATE chat_inbox SET media=? WHERE id=?')
         .run(JSON.stringify(m.media), keyId);
+    if (helpRequested) {
+      const group = c.peerType === 'group',
+        controller = m.senderId === c.senderId;
+      const prefix = group ? (c.groupPrefix || '/amadeus') + ' ' : '';
+      const lines = [
+        'Amadeus · 聊天帮助',
+        group
+          ? '@我＋问题：聊天；@我＋图片、语音或文件：请我处理附件。'
+          : '直接发送问题、图片、语音或文件；能否处理取决于已配置能力。',
+        '想撤回我的回复：明确说“撤回刚才那条”，或引用我的消息。仅支持有回执且平台允许撤回的消息。',
+        group
+          ? '普通成员只能撤回我对自己的回复；控制人和平台管理员可处理其他回复。'
+          : '撤回不删除本地记录，也不取消已执行操作。',
+        '只 @我 或 /help：显示本帮助。',
+      ];
+      if (controller) {
+        lines.push(prefix + '/status：运行状态；' + prefix + '/stop：停止本入口任务。');
+        if (c.accessMode === 'work' && c.remoteApprovals)
+          lines.push(
+            prefix +
+              '/grants：查看已记住的授权；' +
+              prefix +
+              '/revoke-grants：撤销。审批码只在有待审批请求时发送，过期后可用 /renew 原码重新获取。',
+          );
+      }
+      this.reply(
+        c,
+        keyId,
+        lines.join('\n'),
+        group && ['onebot11', 'onebot12'].includes(c.transport)
+          ? { mentions: [m.senderId] }
+          : undefined,
+      );
+      return 'done';
+    }
     if (command && m.senderId !== c.senderId) {
       this.reply(
         c,

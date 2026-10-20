@@ -53,6 +53,8 @@ export function installChatTools(registry: ToolRegistry) {
             'SELECT id AS deliveryId,message_id AS messageId,recipient,sent_at AS sentAt,state FROM chat_delivery WHERE connection_id=? AND sent_at>? ORDER BY sent_at DESC LIMIT 20',
           )
           .all(c.id, Date.now() - 86400000),
+        sentMessagesNote:
+          'Only confirmed bot deliveries in this chat from the last 24 hours are listed. Messages sent before receipt tracking, media without receipts, and the current unfinished reply may be absent. An empty list is not an unsupported capability. Never ask the user for an internal deliveryId or invent one; explain this boundary and ask for an unambiguous target only when matching receipts exist.',
         senderNote:
           'Current requester only; group ownership must be checked separately. Null means an unsolicited observation, not the controller.',
         peerId: c.peerId,

@@ -963,19 +963,43 @@ function groupMessage(c: ChatConnection, parts: any[], mid = 'mention') {
     message: parts,
   })[0];
 }
-test('bare native mention is a real directed request and carries the current sender', (t) => {
-  const { channels, c, calls } = ordinaryGroup(t);
+test('bare native mention returns member help without a model call or controller commands', (t) => {
+  const { channels, c, calls, store } = ordinaryGroup(t);
   const m = groupMessage(c, [{ type: 'at', data: { qq: c.accountId } }]);
-  assert(m);
-  assert.equal(m.addressed, true);
   assert.equal(m.textOrigin, 'mention-only');
-  assert.equal(channels.receive(c.id, m), 'queued');
+  assert.equal(channels.receive(c.id, m), 'done');
+  channels.tick();
+  assert.equal(calls.length, 0);
+  const row = store.db.prepare('SELECT text,reply_plan FROM chat_outbox').get()!;
+  assert(String(row.text).includes('聊天帮助'));
+  assert(!String(row.text).includes('/stop'));
+  assert.deepEqual(JSON.parse(String(row.reply_plan)).mentions, ['124']);
+});
+test('help is available without mention, with role-specific commands; addressed text still runs', (t) => {
+  const { channels, c, calls, store } = ordinaryGroup(t);
+  const help = groupMessage(c, [{ type: 'text', data: { text: '/help' } }], 'help');
+  assert.equal(channels.receive(c.id, help), 'done');
+  const owner = { ...help, id: 'owner-help', senderId: c.senderId };
+  assert.equal(channels.receive(c.id, owner), 'done');
+  const texts = store.db
+    .prepare('SELECT text FROM chat_outbox')
+    .all()
+    .map((x) => String(x.text));
+  assert(texts.some((x) => x.includes('/stop')));
+  assert(texts.every((x) => !x.includes('/approve ')));
+  const normal = groupMessage(
+    c,
+    [
+      { type: 'at', data: { qq: c.accountId } },
+      { type: 'text', data: { text: 'hello' } },
+    ],
+    'real-question',
+  );
+  assert.equal(channels.receive(c.id, normal), 'queued');
   channels.tick();
   assert.equal(calls.length, 1);
-  assert(calls[0][1].includes('explicitly addressed request from platform sender 124'));
-  assert(calls[0][1].includes('short acknowledgement'));
-  assert(calls[0][1].includes('Previous unsolicited checks'));
 });
+
 test('unaddressed media stays readable context without initiating participation; mentioned media queues', (t) => {
   const { channels, c, store } = ordinaryGroup(t);
   const media = { type: 'image', data: { file: 'image-id', url: 'https://example.com/image.png' } };
@@ -994,7 +1018,13 @@ test('unaddressed media stays readable context without initiating participation;
 });
 test('direct group replies cannot leak NO_REPLY and natively mention the actual sender, not controller', (t) => {
   const { channels, c, store, calls } = ordinaryGroup(t);
-  channels.receive(c.id, groupMessage(c, [{ type: 'at', data: { qq: c.accountId } }]));
+  channels.receive(
+    c.id,
+    groupMessage(c, [
+      { type: 'at', data: { qq: c.accountId } },
+      { type: 'text', data: { text: 'hello' } },
+    ]),
+  );
   channels.tick();
   const runId = calls[0][3].runId;
   store.put('run', {
@@ -1018,7 +1048,13 @@ test('direct group replies cannot leak NO_REPLY and natively mention the actual 
 });
 test('new explicit request supersedes an unfinished unsolicited response without suppressing future requests', (t) => {
   const { channels, c, store, calls } = ordinaryGroup(t);
-  channels.receive(c.id, groupMessage(c, [{ type: 'at', data: { qq: c.accountId } }]));
+  channels.receive(
+    c.id,
+    groupMessage(c, [
+      { type: 'at', data: { qq: c.accountId } },
+      { type: 'text', data: { text: 'hello' } },
+    ]),
+  );
   channels.tick();
   const runId = calls[0][3].runId,
     startedAt = Date.now() - 1000;
