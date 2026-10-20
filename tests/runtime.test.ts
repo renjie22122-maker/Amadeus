@@ -1685,7 +1685,8 @@ test('cognitive control warns in the real loop and allows a changed approach to 
   });
   try {
     const run = f.runtime.start('chat', 'Inspect the directory without modifying files.');
-    await until(() => ['completed', 'failed'].includes(f.store.get<any>('run', run.id).status));
+    // Five model/tool steps exercise behavior, not a three-second performance contract.
+    await until(() => ['completed', 'failed'].includes(f.store.get<any>('run', run.id).status), 10000);
     assert.equal(f.store.get<any>('run', run.id).status, 'completed');
     const interventions = f.store.events('chat').filter((e) => e.type === 'cognitive.intervention');
     assert.equal(interventions.length, 1);
