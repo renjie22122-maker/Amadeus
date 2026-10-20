@@ -84,6 +84,8 @@ def validate_job(fields, speech):
             raise ValueError("Local speech supports response_format=wav")
     elif fields.get("response_format", "json") not in ("json", "verbose_json"):
         raise ValueError("Transcription supports json or verbose_json")
+    if "language" in fields and (not isinstance(fields["language"], str) or not __import__("re").fullmatch(r"[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{2,8})*", fields["language"])):
+        raise ValueError("language must be a language code such as ja, zh-CN or en")
     if "stream" in fields and (not speech or not isinstance(fields["stream"], bool)):
         raise ValueError("stream must be a boolean for speech")
     return {k: fields[k] for k in ("model", "language", "input", "voice", "stream") if k in fields}

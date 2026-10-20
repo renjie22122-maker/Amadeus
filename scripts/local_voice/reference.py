@@ -4,11 +4,11 @@ from pathlib import Path
 import uuid
 
 
-def prepare_reference(engine, audio, prompt, cache):
+def prepare_reference(engine, audio, prompt, cache, language=None):
     path = Path(audio)
     with path.open('rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-    key = (digest, prompt)
+    key = (digest, prompt, language)
     if cache.get('key') == key:
         return cache['id'], True
     if cache.get('id'):
@@ -17,7 +17,7 @@ def prepare_reference(engine, audio, prompt, cache):
     identity = 'amadeus-reference-' + str(uuid.uuid4())
     # Match inference_zero_shot's preprocessing before using the official cache API.
     from text_plan import model_text
-    normalized = model_text(engine.frontend, prompt)
+    normalized = model_text(engine.frontend, prompt, language)
     engine.add_zero_shot_spk(normalized, str(path), identity)
     cache.update(key=key, id=identity)
     return identity, False

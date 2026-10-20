@@ -166,3 +166,5 @@ scratch directory is required. On a new computer run `Setup-Local-Voice.cmd`,
 prepare models, and configure voices using the documented setup. Model weights,
 voice recordings, `.data`, credentials and machine-specific config are not
 included in Git. Reconfigure paths rather than copying old absolute paths.
+
+Speech requests accept `language` (e.g. `ja`, `zh-CN`, `en`). Explicit language takes precedence; otherwise routing is inferred once for the entire request, so a kanji-only segment inherits Japanese from nearby kana. Unsupported language normalizers preserve the original text; no kana transliteration is applied. Preview supplies its selected language, and streaming forwards the configured language default. Reference language is independent of output language.

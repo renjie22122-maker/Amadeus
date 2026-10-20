@@ -69,6 +69,7 @@ export function mediaRoutes(app: FastifyInstance, runtime: Runtime) {
           model: connection.model,
           input: a.text,
           voice: connection.defaults.voice || 'default',
+          language: connection.defaults.language,
           response_format: 'wav',
           stream: true,
         }),

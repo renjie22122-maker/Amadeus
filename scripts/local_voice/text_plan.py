@@ -14,10 +14,35 @@ def plan_text(text, limit=160):
     assert "".join(p["source"] for p in result) == text
     return result
 
-def model_text(frontend, text):
-    # Kana/Hangul must not pass through a Chinese/English number normalizer.
-    if re.search(r'[\u3040-\u30ff\uac00-\ud7af]', text):
+def text_language(text, language=None):
+    hint = (language or "auto").lower().replace("_", "-").split("-")[0]
+    if hint != "auto":
+        return hint
+    if re.search(r'[\u3040-\u30ff]', text):
+        return "ja"
+    if re.search(r'[\uac00-\ud7af]', text):
+        return "ko"
+    if any(c.isalpha() and not c.isascii() and not ('\u3400' <= c <= '\u9fff') for c in text):
+        return "und"
+    return "zh" if re.search(r'[\u3400-\u9fff]', text) else "en"
+
+def model_text(frontend, text, language=None):
+    route = text_language(text, language)
+    # No Japanese/Korean normalizer is installed: preserve kanji/kana verbatim.
+    # Even a conflicting zh/en hint must not erase unsupported scripts.
+    if route not in ("zh", "en") or re.search(r'[\u3040-\u30ff\uac00-\ud7af]', text):
         return text
+    normalizer = getattr(frontend, route + "_tn_model", None)
+    if getattr(frontend, "text_frontend", None) == "wetext" and normalizer is not None:
+        # WeText's default is auto. Select its prepared language without mutating
+        # the resident engine or downloading another model.
+        import copy
+        selected = copy.copy(normalizer)
+        if hasattr(selected, "lang"):
+            selected.lang = route
+        return selected.normalize(text)
+    if route != text_language(text):
+        return text  # An auto-only frontend cannot honor this explicit hint.
     return frontend.text_normalize(text, split=False)
 
 def check_audio(text, seconds):

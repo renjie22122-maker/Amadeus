@@ -409,6 +409,26 @@ class TextPlanTests(unittest.TestCase):
             def text_normalize(self,*a,**k): raise AssertionError('wrong normalizer')
         for text in ['私は15分前に来ました。', '안녕하세요 123']:
             self.assertEqual(model_text(Front(),text),text)
+    def test_language_routing(self):
+        from text_plan import text_language
+        class Front:
+            def text_normalize(self, text, **kwargs): return 'normalized:' + text
+        self.assertEqual(text_language('日本語。よろしく。'), 'ja')
+        self.assertEqual(model_text(Front(), '明日十二時', 'ja-JP'), '明日十二時')
+        self.assertEqual(model_text(Front(), '日本語', text_language('日本語。よろしく。')), '日本語')
+        self.assertEqual(model_text(Front(), 'bonjour 12', 'fr'), 'bonjour 12')
+        self.assertEqual(model_text(Front(), '你好12', 'zh'), 'normalized:你好12')
+        self.assertEqual(model_text(Front(), 'Hello 12', 'en'), 'normalized:Hello 12')
+    def test_prepared_normalizer_gets_explicit_language_without_mutation(self):
+        from types import SimpleNamespace
+        class Normalizer:
+            lang = 'auto'
+            def normalize(self, text): return self.lang + ':' + text
+        normalizer = Normalizer()
+        front = SimpleNamespace(text_frontend='wetext', zh_tn_model=normalizer, en_tn_model=normalizer)
+        self.assertEqual(model_text(front, '12', 'zh'), 'zh:12')
+        self.assertEqual(model_text(front, '12', 'en'), 'en:12')
+        self.assertEqual(normalizer.lang, 'auto')
     def test_short_and_empty(self):
         with self.assertRaisesRegex(ValueError,'VOICE_INCOMPLETE'): check_audio('你好',0)
         with self.assertRaisesRegex(ValueError,'VOICE_COVERAGE_SUSPECT'): check_audio('あ'*150,9.28)

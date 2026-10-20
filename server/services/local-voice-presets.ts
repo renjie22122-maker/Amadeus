@@ -282,6 +282,7 @@ export async function previewLocalVoice(root: string, raw: unknown) {
             ? 'こんにちは。これは音声のテストです。'
             : 'Hello. This is a local voice preview.',
       voice: id,
+      language,
       response_format: 'wav',
     }),
   });

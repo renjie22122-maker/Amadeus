@@ -99,9 +99,10 @@ def run(job):
     engine = _ENGINE
     timings["modelLoadSeconds"] = time.perf_counter() - load_started
     timings["modelReused"] = reused
-    from text_plan import plan_text, model_text, check_audio
+    from text_plan import plan_text, model_text, check_audio, text_language
+    language = text_language(job["input"], job.get("language"))
     segments = plan_text(job["input"])
-    trace = {"input": job["input"], "device": device, "segments": segments, "status": "generating", "semanticCoverage": "unverified"}
+    trace = {"input": job["input"], "device": device, "language": language, "normalizer": getattr(engine.frontend, "text_frontend", "unknown"), "segments": segments, "status": "generating", "semanticCoverage": "unverified"}
     trace_path = Path(job["result"]).with_suffix(".trace.json")
     def save_trace():
         trace_path.write_text(json.dumps(trace, ensure_ascii=False), encoding="utf-8")
@@ -119,14 +120,14 @@ def run(job):
         prompt = ("You are a helpful assistant.<|endofprompt|>" if type(engine).__name__ == "CosyVoice3" else "") + voice["text"]
         from reference import prepare_reference
         reference_started = time.perf_counter()
-        reference_id, reference_reused = prepare_reference(engine, voice["audio"], prompt, _REFERENCE_CACHE)
+        reference_id, reference_reused = prepare_reference(engine, voice["audio"], prompt, _REFERENCE_CACHE, voice.get("language"))
         timings["referencePrepareSeconds"] = time.perf_counter() - reference_started
         timings["referenceReused"] = reference_reused
         def synthesize(text):
             return engine.inference_zero_shot(text, prompt, voice["audio"], zero_shot_spk_id=reference_id, stream=bool(job.get("stream")), text_frontend=False)
     def planned_chunks():
         for segment in segments:
-            segment["modelText"] = model_text(engine.frontend, segment["source"])
+            segment["modelText"] = model_text(engine.frontend, segment["source"], language)
             segment["audioSeconds"] = 0
             save_trace()
             if any(c.isalnum() for c in segment["source"]) and not any(c.isalnum() for c in segment["modelText"]):
