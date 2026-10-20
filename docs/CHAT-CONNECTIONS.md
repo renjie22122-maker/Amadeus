@@ -127,3 +127,21 @@ A bare native mention or `/help` returns a small deterministic help message with
 Remote voice transcription keeps the existing approval and service boundaries. Once an approved transcription job is submitted for an attachment on the incoming message, a durable continuation waits for its text. If the original run finishes before reading the text, the host resumes in the same route with the original sender, without touching composer drafts or requiring Insert draft. Already consumed transcripts do not trigger duplicate answers. Changed connection authority, interrupted runs and `/stop` prevent continuation; failure or a 15-minute wait timeout gives a concise notice. This is chat-only orchestration, not automatic approval or a change to local microphone editing.
 
 Native mentions of other members retain their IDs and message text; they are not bare bot mentions. On explicit requests, an invalid NO_REPLY result is reported as an invalid answer rather than falsely treating the message as empty.
+
+### Group media authorization
+
+In an ordinary group connection, the local owner can enable **Group media
+authorization**, select enabled services, set a maximum configured cost per
+request and a group-wide hourly quota, then save once. Admitted members can use
+these services without individual approvals. This does not enable remote work,
+shell, private files, settings changes or approvals by group members. Newly
+invited groups do not inherit this authority automatically.
+
+Default cost ceiling is USD 0, quota 12 requests/hour. Unknown estimates are not
+preauthorized; configured estimates are not a provider billing cap. Failed
+submissions count. Unsolicited participation cannot consume this authorization.
+Model-supplied raw URLs/paths in options are rejected; use same-conversation
+attachment references. Service changes invalidate the snapshot until the owner
+reviews and saves again. Pause, disable or revoke blocks future submissions;
+already submitted jobs are not automatically cancelled. Every use is audited
+with the actual requesting member. Platform media delivery limits still apply.

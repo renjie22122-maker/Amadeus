@@ -1,3 +1,4 @@
+import { installChatMediaGrants, mediaFingerprint } from './chat-media-grant.js';
 import { installChatTranscriptions, continueChatTranscription } from './chat-transcription.js';
 import { installDeliveryReceipts, remoteReviewPolicy } from './chat-recall.js';
 import { canRememberApproval, rememberedApprovalScope } from '../../shared/approval-grants.js';
@@ -32,6 +33,10 @@ export const connectionInput = z
     apiVersion: z.string().max(30).default(''),
     webhookPort: z.number().int().min(1024).max(65535).default(8788),
     remoteApprovals: z.boolean().default(false),
+    groupMediaEnabled: z.boolean().default(false),
+    groupMediaServiceIds: z.array(z.string().min(1)).max(30).default([]),
+    groupMediaMaxUsd: z.number().finite().min(0).max(1000).default(0),
+    groupMediaHourlyLimit: z.number().int().min(1).max(200).default(12),
     peerType: z.enum(['private', 'group']).default('private'),
     accessMode: z.enum(['chat', 'work']).default('chat'),
     allowedSenders: z.array(z.string().trim().min(1).max(160)).max(200).default([]),
@@ -58,6 +63,7 @@ export class ChatConnections {
     this.groups = new ChatGroupContext(store);
     installDeliveryReceipts(store);
     installChatTranscriptions(store);
+    installChatMediaGrants(store);
     store.db.exec(
       'CREATE TABLE IF NOT EXISTS chat_received(connection_id TEXT NOT NULL,message_id TEXT NOT NULL,sender_id TEXT NOT NULL,payload TEXT NOT NULL,at INTEGER NOT NULL,PRIMARY KEY(connection_id,message_id)); CREATE INDEX IF NOT EXISTS chat_received_recent ON chat_received(connection_id,at);',
     );
@@ -328,6 +334,30 @@ export class ChatConnections {
         'CHAT_TOKEN',
         'Meta app secret and webhook verification token required.',
       );
+    const mediaServices: Record<string, string> = {};
+    if (data.groupMediaEnabled) {
+      assert(
+        data.accessMode === 'chat' && data.peerType === 'group',
+        'CHAT_MEDIA_SCOPE',
+        'Media sharing is only for isolated group chat.',
+      );
+      assert(
+        data.groupMediaServiceIds.length > 0,
+        'CHAT_MEDIA_SERVICE',
+        'Select at least one media service.',
+      );
+      for (const serviceId of data.groupMediaServiceIds) {
+        const service = this.runtime.media.connection(serviceId);
+        assert(
+          service.estimatedUsd != null &&
+            service.estimatedUsd >= 0 &&
+            service.estimatedUsd <= data.groupMediaMaxUsd,
+          'CHAT_MEDIA_COST',
+          'Set a known service estimate within the group limit.',
+        );
+        mediaServices[serviceId] = mediaFingerprint(service);
+      }
+    }
     if (data.accessMode === 'chat') {
       if (!old) {
         const template = this.store.get<Conversation>('conversation', data.conversationId);
@@ -383,7 +413,14 @@ export class ChatConnections {
     );
     renameSync(file + '.tmp', file);
     this.secretsCache.set(key, secrets);
-    this.store.put('chat-connection', next);
+    this.store.transaction(() => {
+      this.store.put('chat-media-grant', {
+        id: key,
+        revision: next.revision,
+        services: mediaServices,
+      });
+      this.store.put('chat-connection', next);
+    });
     this.store.remove('chat-transport-state', key);
     this.store.remove('chat-cursor', key);
     return next;

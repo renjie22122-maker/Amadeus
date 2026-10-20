@@ -1,3 +1,4 @@
+import { authorizeGroupMedia } from '../services/chat-media-grant.js';
 import { trackChatTranscription, observeChatTranscript } from '../services/chat-transcription.js';
 import { createHash } from 'node:crypto';
 import { mediaReferenceBudget } from '../../shared/media-capabilities.js';
@@ -67,30 +68,32 @@ export function installMedia(registry: ToolRegistry) {
       }
       assert(size > 0, 'AUDIO_SIZE', 'Audio is empty.');
       const limit = c.config.get().media?.autoApproveMaxUsd;
-      await c.inputs.request(
-        c.run,
-        'approval',
-        {
-          command: 'Transcribe audio with ' + service.name,
-          repeatable: {
-            kind: 'media-transcription',
-            serviceId,
-            fingerprint: createHash('sha256').update(JSON.stringify(service)).digest('hex'),
+      if (!authorizeGroupMedia(c, service))
+        await c.inputs.request(
+          c.run,
+          'approval',
+          {
+            command: 'Transcribe audio with ' + service.name,
+            repeatable: {
+              kind: 'media-transcription',
+              serviceId,
+              fingerprint: createHash('sha256').update(JSON.stringify(service)).digest('hex'),
+            },
+            reason: a.reason,
+            backend: 'media-service',
+            cwd: new URL(service.baseUrl).origin,
+            request: {
+              model: service.model,
+              reference: a.reference,
+              bytes: size,
+              sha256: output.metadata.sha256,
+            },
+            estimatedUsd: service.estimatedUsd,
+            forceHuman:
+              limit == null || service.estimatedUsd == null || service.estimatedUsd > limit,
           },
-          reason: a.reason,
-          backend: 'media-service',
-          cwd: new URL(service.baseUrl).origin,
-          request: {
-            model: service.model,
-            reference: a.reference,
-            bytes: size,
-            sha256: output.metadata.sha256,
-          },
-          estimatedUsd: service.estimatedUsd,
-          forceHuman: limit == null || service.estimatedUsd == null || service.estimatedUsd > limit,
-        },
-        c.signal,
-      );
+          c.signal,
+        );
       revalidate();
       const job = await c.media.submit({
         connectionId: serviceId,
@@ -131,7 +134,7 @@ export function installMedia(registry: ToolRegistry) {
   registry.add({
     name: 'generate_media',
     description:
-      'Submit a paid image/video/music/speech/3D generation task using a configured service. Approval covers the exact prompt/options. Returns a durable job ID; use media_status, never resubmit because waiting is slow. URLs and data URIs in options are sent to the provider. references maps provider input fields to attachment IDs, attachment:id or media:jobId:outputId handles from media_status (image/audio/video up to 25 MB). Use the actual provider field names and supported formats; data URI support varies. read_image accepts mediaRef for visual QA; export_media saves outputs to the workspace. No arbitrary local paths are read.',
+      'Submit a paid image/video/music/speech/3D generation task using a configured service. Requires approval unless a local owner has preauthorized this group and service within its cost and hourly limits. Group media authorization does not grant computer-control permissions. Returns a durable job ID; use media_status, never resubmit because waiting is slow. URLs and data URIs in options are sent to the provider. references maps provider input fields to attachment IDs, attachment:id or media:jobId:outputId handles from media_status (image/audio/video up to 25 MB). Use the actual provider field names and supported formats; data URI support varies. read_image accepts mediaRef for visual QA; export_media saves outputs to the workspace. No arbitrary local paths are read.',
     effect: 'coordinate',
     schema: z.object({
       serviceId: z.string(),
@@ -155,30 +158,32 @@ export function installMedia(registry: ToolRegistry) {
         'Use microphone input for transcription.',
       );
       const limit = c.config.get().media?.autoApproveMaxUsd;
-      await c.inputs.request(
-        c.run,
-        'approval',
-        {
-          command: 'Generate ' + service.kind + ' with ' + service.name,
-          repeatable: {
-            kind: 'media-generation',
-            serviceId: a.serviceId,
-            fingerprint: createHash('sha256').update(JSON.stringify(service)).digest('hex'),
+      if (!authorizeGroupMedia(c, service, a.options))
+        await c.inputs.request(
+          c.run,
+          'approval',
+          {
+            command: 'Generate ' + service.kind + ' with ' + service.name,
+            repeatable: {
+              kind: 'media-generation',
+              serviceId: a.serviceId,
+              fingerprint: createHash('sha256').update(JSON.stringify(service)).digest('hex'),
+            },
+            reason: a.reason,
+            backend: 'media-service',
+            cwd: new URL(service.baseUrl).origin,
+            request: {
+              model: service.model,
+              prompt: a.prompt,
+              options: { ...service.defaults, ...a.options },
+              referenceAttachments: a.references,
+            },
+            estimatedUsd: service.estimatedUsd,
+            forceHuman:
+              limit == null || service.estimatedUsd == null || service.estimatedUsd > limit,
           },
-          reason: a.reason,
-          backend: 'media-service',
-          cwd: new URL(service.baseUrl).origin,
-          request: {
-            model: service.model,
-            prompt: a.prompt,
-            options: { ...service.defaults, ...a.options },
-            referenceAttachments: a.references,
-          },
-          estimatedUsd: service.estimatedUsd,
-          forceHuman: limit == null || service.estimatedUsd == null || service.estimatedUsd > limit,
-        },
-        c.signal,
-      );
+          c.signal,
+        );
       c.signal.throwIfAborted();
       return {
         content: JSON.stringify(

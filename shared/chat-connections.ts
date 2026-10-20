@@ -63,6 +63,10 @@ export interface ChatConnection {
   apiVersion: string;
   webhookPort: number;
   remoteApprovals: boolean;
+  groupMediaEnabled?: boolean;
+  groupMediaServiceIds?: string[];
+  groupMediaMaxUsd?: number;
+  groupMediaHourlyLimit?: number;
   peerType?: 'private' | 'group';
   accessMode?: 'chat' | 'work';
   allowedSenders?: string[];

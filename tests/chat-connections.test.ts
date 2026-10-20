@@ -1,3 +1,4 @@
+import { authorizeGroupMedia, mediaFingerprint } from '../server/services/chat-media-grant.js';
 import {
   trackChatTranscription,
   observeChatTranscript,
@@ -715,4 +716,152 @@ test('unrelated audio and draft recording do not register remote continuations',
   f.store.db.prepare('UPDATE chat_transcription SET created_at=?').run(Date.now() - 900001);
   assert(f.advance());
   assert(f.replies[0].includes('超时'));
+});
+
+test('group media grant is isolated, metered, revocable, and never applies to proactive turns', (t) => {
+  const { store, c } = fixture(t);
+  const group = {
+    ...c,
+    peerType: 'group',
+    accessMode: 'chat',
+    allGroupMembers: true,
+    groupMediaEnabled: true,
+    groupMediaMaxUsd: 0,
+    groupMediaHourlyLimit: 2,
+  };
+  store.put('chat-connection', group);
+  const service: any = {
+    id: 'speech',
+    kind: 'speech',
+    estimatedUsd: 0,
+    baseUrl: 'http://127.0.0.1:8812',
+    model: 'test',
+    defaults: {},
+    apiKey: 'private',
+  };
+  store.put('chat-media-grant', {
+    id: c.id,
+    revision: c.revision,
+    services: { speech: mediaFingerprint(service) },
+  });
+  store.db
+    .prepare(
+      "INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id,sender_id) VALUES(?,?,?,'running','request',?,?)",
+    )
+    .run('in', c.id, Date.now(), 'run', 'member');
+  const ctx: any = {
+    store,
+    conversation: { id: 'chat', remoteChatOnly: true },
+    run: { id: 'run' },
+    callId: 'first',
+  };
+  assert.equal(authorizeGroupMedia(ctx, service, { voice: 'saved-voice' }), true);
+  assert.equal(authorizeGroupMedia(ctx, service), true); // same tool call cannot double consume
+  assert.throws(
+    () => authorizeGroupMedia(ctx, { ...service, baseUrl: 'https://changed.example' }),
+    /changed/,
+  );
+  assert.throws(
+    () => authorizeGroupMedia(ctx, service, { audio: 'file:///private.wav' }),
+    /reference/,
+  );
+  assert.throws(
+    () =>
+      authorizeGroupMedia({ ...ctx, conversation: { id: 'other', remoteChatOnly: true } }, service),
+    /unavailable/,
+  );
+  store.put('chat-proactive-run', { id: 'run' });
+  assert.throws(() => authorizeGroupMedia(ctx, service), /unsolicited/);
+  store.remove('chat-proactive-run', 'run');
+  assert.equal(authorizeGroupMedia({ ...ctx, callId: 'second' }, service), true);
+  assert.throws(() => authorizeGroupMedia({ ...ctx, callId: 'third' }, service), /quota/);
+  store.put('chat-connection', { ...group, revision: 2 });
+  assert.throws(() => authorizeGroupMedia(ctx, service), /changed/);
+  store.put('chat-connection', { ...group, groupMediaEnabled: false });
+  assert.equal(authorizeGroupMedia(ctx, service), false);
+});
+test('group media never authorizes unknown costs, outsiders or recovery', (t) => {
+  const { store, c } = fixture(t);
+  const group = {
+    ...c,
+    peerType: 'group',
+    accessMode: 'chat',
+    allGroupMembers: false,
+    groupMediaEnabled: true,
+    groupMediaMaxUsd: 0,
+  };
+  store.put('chat-connection', group);
+  const service: any = { id: 's', estimatedUsd: null };
+  store.put('chat-media-grant', {
+    id: c.id,
+    revision: c.revision,
+    services: { s: mediaFingerprint(service) },
+  });
+  store.db
+    .prepare(
+      "INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id,sender_id) VALUES(?,?,?,'running','request',?,?)",
+    )
+    .run('in', c.id, Date.now(), 'run', 'outsider');
+  const ctx: any = {
+    store,
+    conversation: { id: 'chat', remoteChatOnly: true },
+    run: { id: 'run' },
+    callId: 'c',
+  };
+  assert.throws(() => authorizeGroupMedia(ctx, service), /admitted/);
+  store.db.prepare('UPDATE chat_inbox SET sender_id=?').run(c.senderId);
+  assert.throws(() => authorizeGroupMedia(ctx, service), /cost/);
+  assert.throws(
+    () => authorizeGroupMedia({ ...ctx, run: { id: 'run', recoveryOnly: true } }, service),
+    /unavailable/,
+  );
+});
+
+test('local group media settings snapshot service authority without granting remote work', (t) => {
+  const { channel, runtime, store } = fixture(t);
+  const service: any = {
+    id: 'speech',
+    kind: 'speech',
+    estimatedUsd: 0,
+    baseUrl: 'http://127.0.0.1:8812',
+    model: 'test',
+    defaults: {},
+    apiKey: 'private',
+  };
+  runtime.media = {
+    connection: (key: string) => {
+      assert.equal(key, 'speech');
+      return service;
+    },
+  };
+  const raw: any = {
+    name: 'media group',
+    transport: 'onebot11',
+    conversationId: 'chat',
+    senderId: '123',
+    peerId: '999',
+    accountId: '456',
+    peerType: 'group',
+    accessMode: 'chat',
+    enabled: false,
+    endpoint: 'ws://127.0.0.1:3999',
+    token: 'local-test-token',
+    groupMediaEnabled: true,
+    groupMediaServiceIds: ['speech'],
+    groupMediaMaxUsd: 0,
+  };
+  const saved = channel.save(raw);
+  assert.equal(saved.remoteApprovals, false);
+  const isolated = store.get<any>('conversation', saved.conversationId);
+  assert.equal(isolated.remoteChatOnly, true);
+  assert.equal(isolated.allowedTools.includes('run_command'), false);
+  assert.equal(isolated.allowedTools.includes('read_file'), false);
+  assert.equal(
+    store.get<any>('chat-media-grant', saved.id).services.speech,
+    mediaFingerprint(service),
+  );
+  assert.throws(
+    () => channel.save({ ...raw, peerType: 'private', peerId: '123' }),
+    /isolated group/,
+  );
 });

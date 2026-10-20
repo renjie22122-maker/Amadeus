@@ -2,7 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ChatConnections } from '../services/chat-connections.js';
 export function chatConnectionRoutes(app: FastifyInstance, channels: ChatConnections) {
-  app.get('/api/chat-connections', async () => ({ connections: channels.overview() }));
+  app.get('/api/chat-connections', async () => ({
+    connections: channels.overview(),
+    mediaServices: channels.runtime.media
+      .connections()
+      .map(({ id, name, kind, estimatedUsd }) => ({ id, name, kind, estimatedUsd })),
+  }));
   app.post('/api/chat-connections', async (req) => channels.save(req.body));
   app.put<{ Params: { id: string } }>('/api/chat-connections/:id', async (req) =>
     channels.save(req.body, req.params.id),

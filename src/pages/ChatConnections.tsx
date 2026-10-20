@@ -47,17 +47,22 @@ export function ChatConnectionsPage({
     [form, setForm] = useState<Form | null>(null),
     [busy, setBusy] = useState(false),
     [deliveries, setDeliveries] = useState<{ id: string; rows: any[] } | null>(null);
+  const [mediaServices, setMediaServices] = useState<any[]>([]);
   const tr = (cn: string, en: string) => (zh ? cn : en);
   const refresh = async () => {
     const r = await api('/chat-connections');
     setItems(r.connections);
+    setMediaServices(r.mediaServices || []);
   };
   useEffect(() => {
     let disposed = false;
     const load = () =>
       api('/chat-connections')
         .then((r) => {
-          if (!disposed) setItems(r.connections);
+          if (!disposed) {
+            setItems(r.connections);
+            setMediaServices(r.mediaServices || []);
+          }
         })
         .catch((e) => {
           if (!disposed) notify(e.message);
@@ -350,6 +355,8 @@ export function ChatConnectionsPage({
                         remoteApprovals: false,
                         reviewFriendRequests: false,
                         allGroupMembers: false,
+                        groupMediaEnabled: false,
+                        groupMediaServiceIds: [],
                       }
                     : f,
                 )
@@ -380,6 +387,8 @@ export function ChatConnectionsPage({
                         groupReplyMode: 'mentions',
                         peerId: e.target.value === 'private' ? f.senderId : '',
                         allGroupMembers: false,
+                        groupMediaEnabled: false,
+                        groupMediaServiceIds: [],
                       }
                     : f,
                 )
@@ -671,6 +680,78 @@ export function ChatConnectionsPage({
               )}
             </>
           )}
+          {form.accessMode === 'chat' && form.peerType === 'group' && (
+            <fieldset>
+              <legend>{tr('群媒体授权', 'Group media authorization')}</legend>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={!!form.groupMediaEnabled}
+                  onChange={(e) => field('groupMediaEnabled', e.target.checked)}
+                />
+                {tr(
+                  '本机授权一次，允许本群成员使用以下服务，无需逐次审批',
+                  'Authorize this group once to use selected services without per-request approval',
+                )}
+              </label>
+              {form.groupMediaEnabled && (
+                <>
+                  {mediaServices.map((s) => (
+                    <label className="check" key={s.id}>
+                      <input
+                        type="checkbox"
+                        checked={(form.groupMediaServiceIds || []).includes(s.id)}
+                        onChange={(e) =>
+                          field(
+                            'groupMediaServiceIds',
+                            e.target.checked
+                              ? [...(form.groupMediaServiceIds || []), s.id]
+                              : (form.groupMediaServiceIds || []).filter((id) => id !== s.id),
+                          )
+                        }
+                      />
+                      {s.name} · {s.kind} ·{' '}
+                      {s.estimatedUsd == null
+                        ? tr('费用未知，不能预授权', 'Unknown cost; cannot preauthorize')
+                        : '$' + s.estimatedUsd}
+                    </label>
+                  ))}
+                  <label>
+                    {tr(
+                      '每次估算费用上限 USD（0 只允许估算免费服务）',
+                      'Maximum estimated USD per request (0 allows estimated free services only)',
+                    )}
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.groupMediaMaxUsd ?? 0}
+                      onChange={(e) => field('groupMediaMaxUsd', Number(e.target.value))}
+                    />
+                  </label>
+                  <label>
+                    {tr(
+                      '全群每小时最多请求数（失败也计数）',
+                      'Maximum requests per hour across the group (failures count)',
+                    )}
+                    <input
+                      type="number"
+                      min="1"
+                      max="200"
+                      value={form.groupMediaHourlyLimit ?? 12}
+                      onChange={(e) => field('groupMediaHourlyLimit', Number(e.target.value))}
+                    />
+                  </label>
+                </>
+              )}
+              <p className="muted">
+                {tr(
+                  '仅限媒体服务和本群附件，不开放电脑操作。费用是配置估算而非账单上限；服务配置变化需本机重新保存授权。关闭即撤销未来请求，已提交任务不会自动取消。',
+                  'Media services and same-group attachments only; no computer control. Costs are configured estimates, not billing caps. Service changes require local reauthorization. Disabling blocks future requests, not already submitted jobs.',
+                )}
+              </p>
+            </fieldset>
+          )}
           <label className="check">
             <input
               type="checkbox"
@@ -679,8 +760,8 @@ export function ChatConnectionsPage({
               onChange={(e) => field('remoteApprovals', e.target.checked)}
             />
             {tr(
-              '允许绑定账号进行单次审批：操作详情会发到聊天平台，15 分钟有效；敏感或过长内容仍在本机核对。',
-              'Allow one-time approvals by the bound account: operation details are sent to the platform, valid for 15 minutes. Sensitive/large payloads require local review.',
+              '允许绑定账号进行单次审批：操作详情会发到聊天平台，有效期按平台限制设置；敏感或过长内容仍在本机核对。',
+              'Allow one-time approvals by the bound account: operation details are sent to the platform, validity follows platform limits. Sensitive/large payloads require local review.',
             )}
           </label>
           <label className="check">
