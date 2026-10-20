@@ -210,14 +210,14 @@ class ExtractionTransport(unittest.IsolatedAsyncioTestCase):
   create=next(x for x in tree.body if isinstance(x,ast.AsyncFunctionDef) and x.name=='create_rag')
   fn=next(x for x in create.body if isinstance(x,ast.AsyncFunctionDef) and x.name=='complete')
   with tempfile.TemporaryDirectory() as tmp:
-   env={'llm':{'model':'test','apiKey':'secret-key','baseUrl':'http://private'},'time':time,'json':json,'ROOT':Path(tmp),'JOB_LOCK':threading.RLock(),'asyncio':SimpleNamespace(sleep=sleep)}
+   env={'llm':{'model':'test','apiKey':'secret-key','baseUrl':'http://private'},'time':time,'json':json,'ROOT':Path(tmp),'JOB_LOCK':threading.RLock(),'asyncio':SimpleNamespace(sleep=sleep,wait_for=__import__('asyncio').wait_for)}
    exec(compile(ast.Module(body=[fn],type_ignores=[]),'actual-complete','exec'),env)
    fake=SimpleNamespace(AsyncClient=Client,TimeoutException=TimeoutException,TransportError=TransportError)
    with patch.dict(sys.modules,{'httpx':fake}):
     errors.append(TransportError('secret payload'));self.assertEqual(await env['complete']('secret prompt'),'ok');self.assertEqual(len(events),2)
-    events.clear();errors.extend([TransportError(),TransportError()])
+    events.clear();errors.extend([TransportError() for _ in range(6)])
     with self.assertRaises(RuntimeError):await env['complete']('secret prompt')
-    self.assertEqual(len(events),2)
+    self.assertEqual(len(events),6)
     events.clear();errors.append(HttpError(401))
     with self.assertRaises(RuntimeError):await env['complete']('secret prompt')
     self.assertEqual(len(events),1)

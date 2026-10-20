@@ -307,18 +307,18 @@ async def create_rag(scope):
         body = {"model":llm["model"],"messages":messages,"stream":False}
         if kwargs.get("response_format"): body["response_format"] = kwargs["response_format"]
         # Bounded transport recovery; never retry authentication or malformed responses.
-        for attempt in range(2):
+        for attempt in range(6):
             started = time.monotonic()
             try:
                 async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
-                    response = await client.post(llm["baseUrl"].rstrip("/") + "/chat/completions",
-                        headers={"Authorization":"Bearer " + llm["apiKey"]}, json=body)
+                    response = await asyncio.wait_for(client.post(llm["baseUrl"].rstrip("/") + "/chat/completions",
+                        headers={"Authorization":"Bearer " + llm["apiKey"]}, json=body), timeout=120)
                     response.raise_for_status()
                     result = response.json()
                 break
             except Exception as error:
                 code = getattr(getattr(error, "response", None), "status_code", None)
-                retry = isinstance(error, (httpx.TimeoutException, httpx.TransportError)) or code in (408, 429, 500, 502, 503, 504)
+                retry = isinstance(error, (httpx.TimeoutException, httpx.TransportError, TimeoutError)) or code in (408, 429, 500, 502, 503, 504)
                 detail = {"at":time.time(), "stage":"extractionHttp", "error":type(error).__name__,
                     "cause":type(error.__cause__).__name__ if error.__cause__ else None,
                     "statusCode":code, "elapsedMs":round((time.monotonic()-started)*1000), "attempt":attempt+1}
@@ -326,8 +326,8 @@ async def create_rag(scope):
                     log = ROOT / "extraction-errors.jsonl"
                     if log.exists() and log.stat().st_size > 1048576: log.replace(log.with_suffix(".previous.jsonl"))
                     with log.open("a", encoding="utf-8") as output: output.write(json.dumps(detail)+"\n")
-                if not retry or attempt: raise RuntimeError("Extraction request failed: " + type(error).__name__) from error
-                await asyncio.sleep(1)
+                if not retry or attempt >= 5: raise RuntimeError("Extraction request failed: " + type(error).__name__) from error
+                await asyncio.sleep(min(2 ** attempt, 16))
         choice = result["choices"][0]
         if choice.get("finish_reason") != "stop" or not isinstance(choice["message"].get("content"),str):
             raise ValueError("Extraction did not return a complete text response")
@@ -348,7 +348,7 @@ async def create_rag(scope):
         tokenizer=Tokenizer("local-e5", LocalTokenizer()),
         kv_storage="JsonKVStorage", vector_storage="NanoVectorDBStorage", graph_storage="NetworkXStorage",
         doc_status_storage="JsonDocStatusStorage", chunk_token_size=400, chunk_overlap_token_size=40,
-        llm_model_max_async=2, max_parallel_insert=1)
+        llm_model_max_async=2, max_parallel_insert=1, default_llm_timeout=780)
     await rag.initialize_storages()
     await initialize_pipeline_status()
     RAGS[rag_key] = rag
