@@ -44,7 +44,7 @@ Official QQ and WhatsApp require HTTPS reverse proxy to the dedicated callback p
 
 Explicit image/audio/video/document inputs use normal attachments and configured understanding/transcription capabilities. Only registered outputs from that route's runs are returned. Ordinary media generation still follows cost and approval policies. VK returns documents; WeCom audio may be sent as a file, not mislabeled voice encoding.
 
-Remote approval is explicitly enabled only for work routes. Controller responses use single-use `/approve CODE`, `/deny CODE`, or `/answer CODE text`, expire in 15 minutes and invalidate on operation changes. Sensitive, oversized and recovery decisions remain local. Group members can see posted approval details; use private work for sensitive tasks.
+Remote approval is explicitly enabled only for work routes. Controller responses use single-use `/approve CODE`, `/deny CODE`, or `/answer CODE text`, expire within the platform-aware review window described below and invalidate on operation changes. Sensitive, oversized and recovery decisions remain local. Group members can see posted approval details; use private work for sensitive tasks.
 
 Limits: ten attachments per message, 50 MiB per file, Telegram downloads 20 MiB, document parsing 25 MiB, plus platform limits. Downloads require validated public HTTPS, never bridge-provided local paths. Failed attachments are not treated as read.
 
@@ -88,7 +88,7 @@ Enable friend-request review on one dedicated private work/controller connection
 
 Each accepted friend receives a new isolated ordinary conversation. Controller history, private memory, projects, work permissions and remote approvals are never inherited. Shared knowledge follows the controller connection setting. Existing/paused routes are preserved. The 20-connection limit and 50-new-requests/day bound apply. Uncertain bridge results are not retried; inspect them in QQ. Task approvals remain separate, using the exact `/approve CODE` command; issuing a review offer no longer adds a contradictory local-only waiting notice.
 
-Remote approval and denial commands are sent as separate short messages for whole-message copying. Group commands include the trigger prefix. These are plain messages, not native platform buttons; full review details remain in the preceding message and codes stay single-use with a 15-minute expiry.
+Remote approval and denial commands are sent as separate short messages for whole-message copying. Group commands include the trigger prefix. These are plain messages, not native platform buttons; a compact summary precedes them, /details CODE provides the full operation, and codes remain single-use within the platform-aware review window.
 
 ### Group calls, passive media and targeted replies
 
