@@ -637,6 +637,7 @@ export async function createApp(options: { directory: string; dist?: string; run
     return {
       ...watch,
       batch: store.maybe('knowledge-batch', req.query.scope),
+      lightRag: runtime.knowledge.lightRagStatus(req.query.scope),
     };
   });
   app.get<{ Querystring: { scope: string } }>('/api/knowledge/index-status', async (req) => {

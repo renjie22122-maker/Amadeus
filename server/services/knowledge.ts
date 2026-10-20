@@ -773,7 +773,35 @@ export class Knowledge {
     );
   }
   private lightSyncBusy = false;
+  lightRagStatus(scope: string) {
+    const c = this.retrieval().lightRag;
+    if (!c?.enabled || c.scope !== scope) return { status: 'disabled' };
+    if (c.authorizedTarget !== retrievalTarget('lightRag', c)) return { status: 'unauthorized' };
+    const id = createHash('sha256').update(retrievalTarget('lightRag', c)).digest('hex');
+    return this.store.maybe<any>('lightrag-progress', id) || { status: 'pending' };
+  }
   async syncLightRag() {
+    const c = this.retrieval().lightRag;
+    if (!c?.enabled || c.authorizedTarget !== retrievalTarget('lightRag', c))
+      return { status: 'disabled' };
+    if (this.lightSyncBusy) return { status: 'processing' };
+    const id = createHash('sha256').update(retrievalTarget('lightRag', c)).digest('hex');
+    try {
+      const result = await this.runLightRagSync();
+      this.store.put('lightrag-progress', { id, ...result, observedAt: Date.now() });
+      return result;
+    } catch (error) {
+      const previous = this.store.maybe<any>('lightrag-progress', id);
+      this.store.put('lightrag-progress', {
+        ...previous,
+        id,
+        status: 'unavailable',
+        observedAt: Date.now(),
+      });
+      throw error;
+    }
+  }
+  private async runLightRagSync() {
     const c = this.retrieval().lightRag;
     if (!c?.enabled || c.authorizedTarget !== retrievalTarget('lightRag', c))
       return { status: 'disabled' };

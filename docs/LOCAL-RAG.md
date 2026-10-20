@@ -120,24 +120,22 @@ Validation on an isolated snapshot of 90,108 chunks and 379 graph edges: the sam
 
 A synchronous graph full scan can also delay context-panel HTTP requests on the same Node process. The index addresses the observed bottleneck; a loading panel alone is not proof of a frontend fault. Watcher `processing` can mean scan/hash validation, not import: use the phase and imported/reused counts. Cached vector coverage counters are not per-query scan counts. Duplicate PDF/DOCX files remain available; matching passages do not establish independent corroboration, and a failed retrieval does not prove corpus absence.
 
-
 Scan diagnostics separate the current cycle from the last completed scan. Processing alone does not mean new imports or vector writes. Compare counts only with matching scope, as-of time and observation timestamps. Unchanged files skip parsing; completed indexing jobs are not read or rewritten by maintenance. Cached HNSW shard coverage is not the number of vectors scored on each query.
-
 
 Large-corpus statistics and index-status HTTP/tool requests yield every 64 rows so vector inspection does not monopolize the server event loop. This is cooperative scheduling, not faster inference. LightRAG is a separate opt-in channel; graph ingestion and API costs remain distinct from the built-in evidence graph.
 
-
 Optional LightRAG query errors now preserve scoped base retrieval and report lightRagStatus=unavailable with elapsed time. This does not certify graph coverage; an enabled connection may still be building its graph.
 
-
 Cold vector shard restoration selects a bounded page of eligible IDs through a partial covering index before loading vector payloads. This avoids sorting the corpus-sized vector JSON payload for every page, while preserving scope and temporal document filters.
-
 
 LightRAG duplicate-content entries count as complete only when the referenced original is processed and its text matches after boundary-whitespace trimming (as stored by LightRAG). Unknown jobs may be reconciled against the original request digest and persisted document states; reconciliation does not resubmit extraction or repeat model calls. Missing, changed or unfinished evidence remains unknown.
 
 Generated duplicate IDs are resolved through the exact submitted source path, then validated against the processed original content; filename-only matches never imply success.
 
 ### Shared tokenizer concurrency and inspected recovery
+
 Embedding windowing, reranker length inspection, inference and LightRAG's tokenizer adapter share the same model lock. Each inference batch releases it; network extraction and the whole ingestion job are not locked. This prevents fast-tokenizer mutable truncation/padding state from being accessed concurrently. HTTP and extraction remain concurrent, without guaranteeing query priority.
 
 An authenticated local `POST /lightrag/documents/resume` accepts `jobId`, the exact `original` submission and `confirmRetry: true` only after operator inspection. The original request digest must match. Recovery verifies unchanged persisted source/content, rejects unrelated unfinished documents and uses LightRAG's explicit one-attempt manual recovery protocol. It preserves completed records and existing extraction caches; it does not re-upload documents or silently retry unknown work. Failed documents may still require uncached extraction work. Another failure remains unknown for inspection. Keep this endpoint operator-driven, not part of periodic scanning.
+
+The knowledge page separately displays LightRAG graph progress: confirmed source chunks / current eligible chunks. Counts advance only after batch completion is reconciled, independently of folder scans, vector indexing jobs and entity counts. UI polling reads persisted local status only, without submitting graph work, contacting the graph service or scanning vectors. The last observation time is shown; unknown jobs require inspection, and connection failures preserve previous counts.

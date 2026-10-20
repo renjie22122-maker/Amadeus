@@ -86,8 +86,17 @@ test('LightRAG sync submits once, polls completion, and imported text must match
     store.close();
   });
   const doc: any = kb.import('general', 'facts', 'The capital is Paris.');
+  assert.equal(kb.lightRagStatus('general').status, 'pending');
+  assert.equal(kb.lightRagStatus('private').status, 'disabled');
   await kb.syncLightRag();
+  assert.equal(kb.lightRagStatus('general').completed, 0);
+  assert.equal(kb.lightRagStatus('general').status, 'processing');
+  const callsBeforeRead = submissions;
+  for (let i = 0; i < 10; i++) kb.lightRagStatus('general');
+  assert.equal(submissions, callsBeforeRead);
   await kb.syncLightRag();
+  assert.equal(kb.lightRagStatus('general').status, 'synced');
+  assert.equal(kb.lightRagStatus('general').completed, kb.lightRagStatus('general').total);
   await kb.syncLightRag();
   assert.equal(submissions, 1);
   const result = await kb.hybrid(['general'], 'capital');
@@ -114,6 +123,7 @@ test('LightRAG unknown submission is recorded before network and is not replayed
   await assert.rejects(() => kb.syncLightRag());
   assert.equal((await kb.syncLightRag()).status, 'unknown');
   assert.equal(requests, 1);
+  assert.equal(kb.lightRagStatus('general').status, 'unknown');
 });
 
 test('vector snapshots use bounded float32 payloads and preserve scoped identifiers', async (t) => {

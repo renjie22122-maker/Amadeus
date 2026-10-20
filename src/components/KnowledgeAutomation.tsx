@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { api } from '../api';
+import { LightRagProgress } from './LightRagProgress';
 import { KnowledgeProgress } from './KnowledgeProgress';
 export function KnowledgeAutomation({
   scope,
@@ -324,9 +325,10 @@ export function KnowledgeAutomation({
           ? '使用上方已配置的 embedding 服务；仅处理当前范围，复用已有向量。外部 API 会接收待索引正文分块。'
           : 'Uses the configured embedding service for this scope only; existing vectors are reused. External APIs receive unindexed text chunks.'}
       </small>
+      <LightRagProgress value={value.lightRag} zh={zh} />
       {value.batch && (
         <p role="status">
-          {zh ? '批量索引：' : 'Batch indexing: '}
+          {zh ? '最近批量索引任务：' : 'Latest batch indexing task: '}
           {value.batch.status} · {value.batch.completed}/{value.batch.documents.length}
           {value.batch.currentFile && ' · ' + value.batch.currentFile}
           {value.batch.failed > 0 && ' · ' + value.batch.failed + (zh ? ' 项失败' : ' failed')}
