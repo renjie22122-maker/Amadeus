@@ -112,3 +112,29 @@ async def light_document_complete(rag, doc_id, text, source=None):
         if not isinstance(original_id, str) or not original_id: return False
         doc_id, duplicate = original_id, True
     return False
+
+
+async def light_resume_plan(rag, texts, sources):
+    """Fail closed before a workspace retry: exact persisted input, no unrelated work."""
+    import hashlib
+    ids = ["doc-" + hashlib.sha256((source + text).encode()).hexdigest() for source, text in zip(sources, texts)]
+    completed, pending = [], []
+    for doc_id, text, source in zip(ids, texts, sources):
+        if await light_document_complete(rag, doc_id, text, source):
+            completed.append(doc_id)
+            continue
+        status = await rag.doc_status.get_by_id(doc_id)
+        original = await rag.full_docs.get_by_id(doc_id)
+        if not status or status.get("file_path") != source or not original or original.get("content", "").strip() != text.strip():
+            raise ValueError("Recovery requires the unchanged persisted source")
+        if status.get("status") not in ("failed", "pending", "processing", "parsing", "analyzing"):
+            raise ValueError("Document is not recoverable")
+        pending.append(doc_id)
+    unfinished = await rag.doc_status.get_docs_by_statuses(["failed", "pending", "processing", "parsing", "analyzing"], strict=True)
+    for doc_id in unfinished:
+        status = await rag.doc_status.get_by_id(doc_id)
+        if (status.get("metadata") or {}).get("is_duplicate"):
+            continue
+        if doc_id not in pending:
+            raise ValueError("Unrelated unfinished documents require separate inspection")
+    return {"completed": completed, "pending": pending}

@@ -85,4 +85,87 @@ class LightDuplicates(unittest.IsolatedAsyncioTestCase):
   statuses.row['metadata']['duplicate_kind']='filename'
   self.assertFalse(await h.light_document_complete(rag,'missing','same','source-a'))
 
+class SharedTokenizerConcurrency(unittest.TestCase):
+ def test_concurrent_graph_embeddings_query_windows_and_rerank(self):
+  from concurrent.futures import ThreadPoolExecutor
+  from types import SimpleNamespace
+  tree=ast.parse((root/'scripts/retrieval_service.py').read_text(encoding='utf-8'))
+  lock=threading.RLock(); access=threading.Lock()
+  class SharedTokenizer:
+   model_max_length=512
+   def touch(self,value):
+    if not access.acquire(blocking=False):raise RuntimeError('Already borrowed')
+    try:time.sleep(.001);return value
+    finally:access.release()
+   def encode(self,text,**kw):return self.touch(list(text))
+   def decode(self,tokens,**kw):return self.touch(''.join(tokens))
+   def __call__(self,pairs,**kw):return self.touch({'length':[len(a)+len(b) for a,b in pairs]})
+  class Model:
+   tokenizer=SharedTokenizer();max_seq_length=512
+   model=SimpleNamespace(config=SimpleNamespace(max_position_embeddings=512))
+   def encode(self,texts,**kw):return self.tokenizer.encode(' '.join(texts))
+   def predict(self,pairs,**kw):self.tokenizer(pairs);return [0.5]*len(pairs)
+  with tempfile.TemporaryDirectory() as tmp:
+   env={'LOCK':lock,'DIAGNOSTICS':h.RequestDiagnostics(Path(tmp)),'model':lambda _:Model(),'embedding_windows':h.embedding_windows,'torch':SimpleNamespace(nn=SimpleNamespace(Sigmoid=lambda:None))}
+   for name in ('embeddings','rerank'):
+    fn=next(x for x in tree.body if isinstance(x,ast.FunctionDef) and x.name==name)
+    fn.body=[x for x in fn.body if not isinstance(x,ast.Import)]
+    if name=='embeddings':
+     end=next(i for i,x in enumerate(fn.body) if isinstance(x,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='values' for t in x.targets))
+     fn.body=fn.body[:end]+[ast.Return(value=ast.Name(id='batches',ctx=ast.Load()))]
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),'actual-service-functions','exec'),env)
+   create=next(x for x in tree.body if isinstance(x,ast.AsyncFunctionDef) and x.name=='create_rag')
+   cls=next(x for x in create.body if isinstance(x,ast.ClassDef) and x.name=='LocalTokenizer')
+   exec(compile(ast.Module(body=[cls],type_ignores=[]),'actual-local-tokenizer','exec'),env)
+   def task(i):
+    for _ in range(8):
+     if i%3==0:env['embeddings'](['passage: graph entity text'*30])
+     elif i%3==1:env['embeddings'](['query: retrieval query'])
+     else:
+      t=env['LocalTokenizer']();t.decode(t.encode('graph chunking'))
+      env['rerank']({'query':'query','texts':['candidate']})
+   with ThreadPoolExecutor(max_workers=9) as pool:list(pool.map(task,range(9)))
+
+class LightResume(unittest.IsolatedAsyncioTestCase):
+ async def test_recovery_preserves_complete_and_rejects_changed_or_unrelated_records(self):
+  import hashlib
+  from types import SimpleNamespace
+  sources=['amadeus-a','amadeus-b'];texts=['one','two']
+  ids=['doc-'+hashlib.sha256((a+b).encode()).hexdigest() for a,b in zip(sources,texts)]
+  rows={ids[0]:{'status':'processed','file_path':sources[0]},ids[1]:{'status':'failed','file_path':sources[1]}}
+  docs={ids[0]:{'content':'one'},ids[1]:{'content':'two'}}
+  class Values:
+   def __init__(self,d):self.d=d
+   async def get_by_id(self,k):return self.d.get(k)
+   async def get_docs_by_statuses(self,statuses,**kw):return {k:v for k,v in self.d.items() if v.get('status') in statuses}
+  rag=SimpleNamespace(doc_status=Values(rows),full_docs=Values(docs))
+  plan=await h.light_resume_plan(rag,texts,sources)
+  self.assertEqual(plan,{'completed':[ids[0]],'pending':[ids[1]]})
+  docs[ids[1]]['content']='changed'
+  with self.assertRaises(ValueError):await h.light_resume_plan(rag,texts,sources)
+  docs[ids[1]]['content']='two';rows['unrelated']={'status':'failed'}
+  with self.assertRaises(ValueError):await h.light_resume_plan(rag,texts,sources)
+  self.assertEqual(rows[ids[0]]['status'],'processed')
+
+class RecoveryEndpoint(unittest.TestCase):
+ def test_explicit_digest_bound_resume_is_single_and_not_an_auto_retry(self):
+  import hashlib,hmac
+  from types import SimpleNamespace
+  original={'scope':'test','texts':['text'],'file_sources':['amadeus-source']}
+  key=hashlib.sha256(json.dumps(original,sort_keys=True).encode()).hexdigest()
+  jobs={key:{'status':'unknown'}};submitted=[]
+  tree=ast.parse((root/'scripts/retrieval_service.py').read_text(encoding='utf-8'));handler=next(x for x in tree.body if isinstance(x,ast.ClassDef) and x.name=='Handler')
+  with tempfile.TemporaryDirectory() as tmp:
+   env={'BaseHTTPRequestHandler':BaseHTTPRequestHandler,'json':json,'hmac':hmac,'hashlib':hashlib,'TOKEN':'x'*32,'DIAGNOSTICS':h.RequestDiagnostics(Path(tmp)),'JOBS':jobs,'JOB_LOCK':threading.RLock(),'save_jobs':lambda:None,'POOL':SimpleNamespace(submit=lambda *a:submitted.append(a)),'run_job':lambda:None}
+   exec(compile(ast.Module(body=[handler],type_ignores=[]),'actual-handler','exec'),env)
+   def request(body):
+    raw=json.dumps(body).encode();obj=object.__new__(env['Handler']);obj.path='/lightrag/documents/resume';obj.headers={'Authorization':'Bearer '+'x'*32,'Content-Length':str(len(raw))};obj.rfile=io.BytesIO(raw);obj.connection=SimpleNamespace(settimeout=lambda _:None);out=[];obj.send=lambda status,data:out.append((status,data)) or True;obj.do_POST();return out[-1]
+   self.assertEqual(request({'jobId':key,'original':original})[0],422)
+   self.assertEqual(request({'jobId':key,'original':{**original,'texts':['changed']},'confirmRetry':True})[0],422)
+   self.assertEqual(len(submitted),0)
+   body={'jobId':key,'original':original,'confirmRetry':True}
+   self.assertEqual(request(body)[0],200);self.assertEqual(request(body)[0],200)
+   self.assertEqual(len(submitted),1);self.assertTrue(submitted[0][-1])
+   jobs[key]={'status':'completed'};self.assertEqual(request(body)[0],200);self.assertEqual(len(submitted),1)
+
 if __name__=='__main__':unittest.main()

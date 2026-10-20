@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
-from rag_request_helpers import RequestDiagnostics, embedding_windows, light_document_complete
+from rag_request_helpers import RequestDiagnostics, embedding_windows, light_document_complete, light_resume_plan
 
 CODE_HASH = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 HELPER_HASH = hashlib.sha256(Path(__file__).with_name("rag_request_helpers.py").read_bytes()).hexdigest()
@@ -54,7 +54,7 @@ def model(kind):
 def embeddings(texts, purpose="passage"):
     import numpy as np
     encoder = model("embedding")
-    with DIAGNOSTICS.stage("tokenize"):
+    with DIAGNOSTICS.locked(LOCK, "tokenize"):
         windows, groups, tokens, stats = embedding_windows(encoder, texts, purpose)
         DIAGNOSTICS.add(**stats)
     batches=[]
@@ -78,7 +78,8 @@ def rerank(data):
         raise ValueError("Rerank input too large")
     scorer = model("rerank")
     pairs = [(query, t) for t in texts]
-    lengths = scorer.tokenizer(pairs, truncation=False, padding=False, return_length=True, verbose=False)["length"]
+    with DIAGNOSTICS.locked(LOCK, "rerankTokenize"):
+        lengths = scorer.tokenizer(pairs, truncation=False, padding=False, return_length=True, verbose=False)["length"]
     limits=[8192]+[int(v) for v in (getattr(scorer.tokenizer,"model_max_length",None),
         getattr(scorer.model.config,"max_position_embeddings",None)) if isinstance(v,(int,float)) and 8<=v<=1000000]
     limit=min(limits)
@@ -362,10 +363,27 @@ async def light_reconcile(data):
         if not await light_document_complete(rag, doc_id, text, source): return {"status":"unknown"}
     return {"status":"completed", "completed":len(data["texts"]), "reconciled":True}
 
-def run_job(key, data):
+async def light_resume(data):
+    rag = await rag_for(data["scope"])
+    plan = await light_resume_plan(rag, data["texts"], data["file_sources"])
+    if plan["pending"]:
+        # Explicit operator recovery only, following LightRAG's manual retry protocol.
+        # It reuses persisted documents/LLM caches and excludes PROCESSED records.
+        from lightrag.kg.shared_storage import get_namespace_data, get_namespace_lock, get_pipeline_ingress, commit_manual_retry_request
+        status = await get_namespace_data("pipeline_status", workspace=rag.workspace)
+        lock = get_namespace_lock("pipeline_status", workspace=rag.workspace)
+        ingress = await get_pipeline_ingress(rag.workspace)
+        refusal = await commit_manual_retry_request(status, lock, ingress, os.urandom(16).hex(), {})
+        if refusal: raise ValueError(str(refusal))
+        await rag.apipeline_process_enqueue_documents()
+    result = await light_reconcile(data)
+    if result["status"] != "completed": raise ValueError("Recovery remains incomplete; inspect before another retry")
+    return {**result, "preservedCompleted":len(plan["completed"]), "resumed":len(plan["pending"])}
+
+def run_job(key, data, resume=False):
     with JOB_LOCK:
         JOBS[key] = {"status":"processing"}; save_jobs()
-    future = asyncio.run_coroutine_threadsafe(light_insert(data), LOOP)
+    future = asyncio.run_coroutine_threadsafe(light_resume(data) if resume else light_insert(data), LOOP)
     try:
         result = future.result(timeout=1800)
         with JOB_LOCK:
@@ -398,7 +416,7 @@ class Handler(BaseHTTPRequestHandler):
             budget=int(self.headers.get("X-Amadeus-Timeout-Ms","60000"))
         except ValueError: budget=60000
         budget=max(100,min(120000,budget))
-        known_paths={"/v1/embeddings","/embeddings","/rerank","/vectors/search","/vectors/search-batch","/lightrag/query/data","/lightrag/documents/texts","/lightrag/documents/status"}
+        known_paths={"/v1/embeddings","/embeddings","/rerank","/vectors/search","/vectors/search-batch","/lightrag/query/data","/lightrag/documents/texts","/lightrag/documents/status","/lightrag/documents/resume"}
         DIAGNOSTICS.begin(self.path if self.path in known_paths else "unknown",self.headers.get("X-Amadeus-Request-Id",""),budget)
         outcome="failed"
         try:
@@ -456,6 +474,21 @@ class Handler(BaseHTTPRequestHandler):
                         raise
                     if result["status"] == "completed":
                         with JOB_LOCK: JOBS[data["jobId"]] = result; save_jobs()
+            elif self.path == "/lightrag/documents/resume":
+                original = data.get("original")
+                key = data.get("jobId")
+                if data.get("confirmRetry") is not True or not isinstance(original,dict): raise ValueError("Explicit inspected recovery required")
+                if hashlib.sha256(json.dumps(original,sort_keys=True).encode()).hexdigest() != key: raise ValueError("Recovery request does not match job")
+                texts, sources = original.get("texts"), original.get("file_sources")
+                if not isinstance(texts,list) or not 0<len(texts)<=16 or not all(isinstance(t,str) for t in texts) or sum(map(len,texts))>100000: raise ValueError("Invalid recovery batch")
+                if not isinstance(sources,list) or len(sources)!=len(texts) or not all(isinstance(s,str) and s.startswith("amadeus-") and len(s)<200 for s in sources): raise ValueError("Invalid recovery sources")
+                with JOB_LOCK:
+                    if key not in JOBS: raise ValueError("Unknown original job")
+                    if JOBS[key]["status"] == "unknown":
+                        if any(j["status"] in ("queued","processing") for j in JOBS.values()): raise ValueError("Wait for active ingestion before recovery")
+                        JOBS[key] = {"status":"queued", "recovery":True}; save_jobs()
+                        POOL.submit(run_job,key,original,True)
+                    result = {"jobId":key, **JOBS[key]}
             elif self.path == "/lightrag/query/data":
                 future = asyncio.run_coroutine_threadsafe(light_query(data),LOOP)
                 try:
