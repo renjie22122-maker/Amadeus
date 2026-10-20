@@ -99,11 +99,19 @@ def run(job):
     engine = _ENGINE
     timings["modelLoadSeconds"] = time.perf_counter() - load_started
     timings["modelReused"] = reused
+    from text_plan import plan_text, model_text, check_audio
+    segments = plan_text(job["input"])
+    trace = {"input": job["input"], "device": device, "segments": segments, "status": "generating", "semanticCoverage": "unverified"}
+    trace_path = Path(job["result"]).with_suffix(".trace.json")
+    def save_trace():
+        trace_path.write_text(json.dumps(trace, ensure_ascii=False), encoding="utf-8")
+    save_trace()
     if model == "cosyvoice-sft":
         speaker = job.get("voice", "").removeprefix("preset:")
         if speaker not in engine.list_available_spks():
             raise ValueError("VOICE_NOT_READY: unknown pretrained speaker")
-        chunks = engine.inference_sft(job["input"], speaker, stream=bool(job.get("stream")))
+        def synthesize(text):
+            return engine.inference_sft(text, speaker, stream=bool(job.get("stream")), text_frontend=False)
     else:
         voice = config.get("voices", {}).get(job.get("voice", "default"))
         if not voice or voice.get("deleted") or not Path(voice.get("audio", "")).is_file() or not voice.get("text"):
@@ -114,7 +122,36 @@ def run(job):
         reference_id, reference_reused = prepare_reference(engine, voice["audio"], prompt, _REFERENCE_CACHE)
         timings["referencePrepareSeconds"] = time.perf_counter() - reference_started
         timings["referenceReused"] = reference_reused
-        chunks = engine.inference_zero_shot(job["input"], prompt, voice["audio"], zero_shot_spk_id=reference_id, stream=bool(job.get("stream")))
+        def synthesize(text):
+            return engine.inference_zero_shot(text, prompt, voice["audio"], zero_shot_spk_id=reference_id, stream=bool(job.get("stream")), text_frontend=False)
+    def planned_chunks():
+        for segment in segments:
+            segment["modelText"] = model_text(engine.frontend, segment["source"])
+            segment["audioSeconds"] = 0
+            save_trace()
+            if any(c.isalnum() for c in segment["source"]) and not any(c.isalnum() for c in segment["modelText"]):
+                raise ValueError("VOICE_INCOMPLETE: text normalization removed a spoken segment")
+            if not any(c.isalnum() for c in segment["modelText"]):
+                segment["status"] = "non-speech"
+                save_trace()
+                continue
+            began = time.perf_counter()
+            try:
+                for chunk in synthesize(segment["modelText"]):
+                    segment["audioSeconds"] += chunk["tts_speech"].numel() / engine.sample_rate
+                    yield chunk
+                check_audio(segment["modelText"], segment["audioSeconds"])
+                segment["status"] = "generated-unverified"
+            except Exception:
+                segment["status"] = "failed"
+                raise
+            finally:
+                segment["elapsedSeconds"] = time.perf_counter() - began
+                save_trace()
+        check_audio(job["input"], sum(s["audioSeconds"] for s in segments))
+        trace["status"] = "generated-unverified"
+        save_trace()
+    chunks = planned_chunks()
     # Write incrementally; do not accumulate an entire long narration in RAM.
     events = []
     iterator = iter(chunks)
@@ -155,6 +192,12 @@ def execute(path):
         message = str(error)
         code = "GPU_UNAVAILABLE" if message.startswith("GPU_UNAVAILABLE:") else "GPU_OOM" if "CUDA out of memory" in message else None
         result = {"error": type(error).__name__ + ": " + message[:500], "code": code}
+        trace_path = Path(job["result"]).with_suffix(".trace.json")
+        if trace_path.is_file():
+            trace = json.loads(trace_path.read_text(encoding="utf-8"))
+            trace["status"] = "failed"
+            trace["errorCode"] = message.split(":", 1)[0][:80]
+            trace_path.write_text(json.dumps(trace, ensure_ascii=False), encoding="utf-8")
     target = Path(job["result"])
     pending = target.with_suffix(".tmp")
     pending.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")

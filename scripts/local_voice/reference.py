@@ -16,7 +16,8 @@ def prepare_reference(engine, audio, prompt, cache):
     cache.clear()
     identity = 'amadeus-reference-' + str(uuid.uuid4())
     # Match inference_zero_shot's preprocessing before using the official cache API.
-    normalized = engine.frontend.text_normalize(prompt, split=False)
+    from text_plan import model_text
+    normalized = model_text(engine.frontend, prompt)
     engine.add_zero_shot_spk(normalized, str(path), identity)
     cache.update(key=key, id=identity)
     return identity, False

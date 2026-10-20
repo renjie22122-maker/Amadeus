@@ -140,3 +140,29 @@ Long-text fixture: the user's mirror story with the ordinary upstream reference 
 Reference features use the upstream `add_zero_shot_spk` / `zero_shot_spk_id` API with at most one ephemeral entry. Audio-content SHA-256 plus the exact transcript invalidates it, not filenames or timestamps alone. No speaker features are saved to model checkpoints. Reference changes evict the previous entry; worker release and successful deleted-reference cleanup discard the process. Receipts add `referencePrepareSeconds` and `referenceReused`.
 
 One same-text before/after comparison took 61.22 s with reference caching versus 88.67 s before it, with identical full-WAV SHA-256 (`21f20016fe38ce2f47e19d329e3e683ae339fd19db0e0a4182cf69fff2e6c7b3`). This is a single local observation, not a guaranteed speedup under other loads. Reference extraction no longer repeats for every normalized text segment.
+
+### Synthesis coverage diagnostics
+
+The worker preserves source spans, submits explicit sentence-sized segments, and
+disables the model's second normalization pass. Kana and Hangul bypass the
+Chinese/English normalizer, including reference transcripts. This avoids treating
+Japanese kanji as proof that the text is Chinese. Source text is never silently
+truncated to fit a segment.
+
+Empty spoken segments and implausibly short dense-script audio produce an error.
+These are conservative anomaly checks, not proof of transcription accuracy:
+`generated-unverified` explicitly means no semantic coverage verification occurred.
+There is no automatic regeneration loop or automatic change of voice. Streaming
+can already have delivered earlier chunks when a later segment fails.
+
+The local voice config's sibling `diagnostics/` keeps the latest 20 synthesis
+traces (source/model text, segment offsets, duration and device; no credentials
+or reference transcript). They contain private narration text; keep this folder
+local and delete it when no longer needed. Temporary worker logs and audio are
+not retained there. Diagnostics are for troubleshooting, not a public UI step.
+
+All runtime modules and regression tests are in this repository; no developer
+scratch directory is required. On a new computer run `Setup-Local-Voice.cmd`,
+prepare models, and configure voices using the documented setup. Model weights,
+voice recordings, `.data`, credentials and machine-specific config are not
+included in Git. Reconfigure paths rather than copying old absolute paths.

@@ -397,5 +397,23 @@ class ResidentTests(unittest.TestCase):
                 pool.run([sys.executable,str(script),str(request)], env=None, timeout=5, probe=lambda c:('cpu',''),on_tick=disconnected)
             self.assertFalse(pool.available())
 
+from text_plan import plan_text, model_text, check_audio
+class TextPlanTests(unittest.TestCase):
+    def test_lossless(self):
+        for text in ['こんにちは。私は案内役です。明日は晴れです。', '“那面不用？”我问。\n她没答话。', 'A'*501, 'Hello. Next paragraph!\nDone.', '안녕하세요! 다음 문장입니다.', '...   ']:
+            rows=plan_text(text)
+            self.assertEqual(''.join(r['source'] for r in rows), text)
+            self.assertTrue(all(text[r['start']:r['end']]==r['source'] for r in rows))
+    def test_language_guard(self):
+        class Front:
+            def text_normalize(self,*a,**k): raise AssertionError('wrong normalizer')
+        for text in ['私は15分前に来ました。', '안녕하세요 123']:
+            self.assertEqual(model_text(Front(),text),text)
+    def test_short_and_empty(self):
+        with self.assertRaisesRegex(ValueError,'VOICE_INCOMPLETE'): check_audio('你好',0)
+        with self.assertRaisesRegex(ValueError,'VOICE_COVERAGE_SUSPECT'): check_audio('あ'*150,9.28)
+        check_audio('はい',.5)
+        check_audio('あ'*150,30)
+
 if __name__ == "__main__":
     unittest.main()

@@ -258,7 +258,18 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                         for attempt in range(2):
                             request.write_text(json.dumps(job), encoding="utf-8")
                             with (directory / "worker.log").open("ab") as logs:
-                                returncode = run_worker([python, "-X", "utf8", str(Path(__file__).with_name("worker.py")), str(request)], stdout=logs, stderr=logs, env=env, timeout=max(.1, deadline - time.monotonic()), check=False, resident=resident if speech else None, **({"on_tick": pump} if streaming else {}))
+                                try:
+                                    returncode = run_worker([python, "-X", "utf8", str(Path(__file__).with_name("worker.py")), str(request)], stdout=logs, stderr=logs, env=env, timeout=max(.1, deadline - time.monotonic()), check=False, resident=resident if speech else None, **({"on_tick": pump} if streaming else {}))
+                                finally:
+                                    if speech and config_path:
+                                        trace_file = Path(job["result"]).with_suffix(".trace.json")
+                                        if trace_file.is_file():
+                                            trace_root = Path(config_path).parent / "diagnostics"
+                                            trace_root.mkdir(exist_ok=True)
+                                            (trace_root / (uuid.uuid4().hex + ".json")).write_bytes(trace_file.read_bytes())
+                                            for expired in sorted(trace_root.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[20:]:
+                                                expired.unlink()
+
                             result_path = Path(job["result"])
                             if not result_path.is_file():
                                 return self.reply(503, {"error": "VOICE_WORKER_FAILED: model worker exited without a result (exit " + str(returncode) + "); check native dependencies"})
