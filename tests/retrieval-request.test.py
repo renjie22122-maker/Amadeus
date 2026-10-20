@@ -53,4 +53,21 @@ class Disconnect(unittest.TestCase):
    def write(self,b):raise ConnectionAbortedError('peer left')
   obj.wfile=Broken()
   self.assertFalse(obj.send(200,{}));self.assertEqual(calls,[200]);self.assertTrue(obj.close_connection)
+class LightDuplicates(unittest.IsolatedAsyncioTestCase):
+ async def test_only_exact_processed_original_resolves_duplicate(self):
+  from types import SimpleNamespace
+  class Values:
+   def __init__(self, values): self.values=values
+   async def get_by_id(self,key): return self.values.get(key)
+  statuses={'a':{'status':'failed','metadata':{'is_duplicate':True,'duplicate_kind':'content_hash','original_doc_id':'b'}},'b':{'status':'processed'}}
+  rag=SimpleNamespace(doc_status=Values(statuses),full_docs=Values({'b':{'content':'same'}}))
+  self.assertTrue(await h.light_document_complete(rag,'a','same'))
+  self.assertTrue(await h.light_document_complete(rag,'a','same\n'))
+  self.assertFalse(await h.light_document_complete(rag,'a','different'))
+  statuses['b']={'status':'processing'}
+  self.assertFalse(await h.light_document_complete(rag,'a','same'))
+  statuses['b']=statuses['a']
+  self.assertFalse(await h.light_document_complete(rag,'a','same'))
+  self.assertFalse(await h.light_document_complete(rag,'missing','same'))
+
 if __name__=='__main__':unittest.main()

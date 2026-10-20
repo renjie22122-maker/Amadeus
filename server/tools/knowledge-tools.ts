@@ -138,7 +138,7 @@ export function installKnowledgeTools(registry: ToolRegistry) {
           ? results
           : {
               results,
-              diagnostics: c.knowledge.diagnostics(c.scopes, a.asOf),
+              diagnostics: await c.knowledge.diagnosticsAsync(c.scopes, a.asOf),
               retrievalDiagnostics: c.knowledge.lastRetrieval,
             },
       );

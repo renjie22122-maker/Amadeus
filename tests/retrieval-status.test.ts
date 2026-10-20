@@ -176,6 +176,10 @@ test('large corpus inspection yields to other requests and retains identical sta
   assert.ok(yielded);
   assert.deepEqual(actual, knowledge.statistics(['general'], at));
   assert.deepEqual(
+    await knowledge.diagnosticsAsync(['general'], at),
+    knowledge.diagnostics(['general'], at),
+  );
+  assert.deepEqual(
     await knowledge.indexStatusesAsync('general'),
     knowledge.indexStatuses('general'),
   );

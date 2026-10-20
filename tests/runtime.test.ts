@@ -1154,10 +1154,10 @@ test(
                 command:
                   '"' +
                   process.execPath +
-                  '" -e "console.log(123);setTimeout(()=>console.log(456),2500)"',
+                  `" -e "console.log(123);const fs=require('node:fs');const t=setInterval(()=>{if(fs.existsSync('release-command')){clearInterval(t);console.log(456)}},50)"`,
                 folder: 0,
                 background: true,
-                timeoutSeconds: 10,
+                timeoutSeconds: 20,
                 reason: 'bounded background test',
               },
             },
@@ -1207,10 +1207,12 @@ test(
     });
     try {
       const run = f.runtime.start('chat', 'Prepare two independent outputs');
-      await until(() =>
-        f.store
-          .events('chat')
-          .some((e) => e.type === 'tool.started' && e.data.callId === 'wait-bg'),
+      await until(
+        () =>
+          f.store
+            .events('chat')
+            .some((e) => e.type === 'tool.started' && e.data.callId === 'wait-bg'),
+        10000,
       );
       await new Promise((r) => setTimeout(r, 100));
       const before = calls;

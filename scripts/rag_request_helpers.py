@@ -85,3 +85,23 @@ def embedding_windows(encoder, texts, purpose='passage'):
             start=end-min(32,max(0,end-start-1))
         groups.append(group)
     return windows,groups,tokens,{'inputTokens':tokens,'windows':len(windows),'maxModelInputTokens':max(lengths,default=0),'modelTokenLimit':limit}
+
+async def light_document_complete(rag, doc_id, text):
+    """Accept duplicates only after their exact-content original finishes; bound chains."""
+    seen = set()
+    duplicate = False
+    for _ in range(8):
+        if doc_id in seen: return False
+        seen.add(doc_id)
+        status = await rag.doc_status.get_by_id(doc_id)
+        if not status: return False
+        if status.get("status") == "processed":
+            if not duplicate: return True
+            original = await rag.full_docs.get_by_id(doc_id)
+            return bool(original and isinstance(original.get("content"), str) and original["content"].strip() == text.strip())
+        metadata = status.get("metadata") or {}
+        if not metadata.get("is_duplicate") or metadata.get("duplicate_kind") != "content_hash": return False
+        original_id = metadata.get("original_doc_id")
+        if not isinstance(original_id, str) or not original_id: return False
+        doc_id, duplicate = original_id, True
+    return False

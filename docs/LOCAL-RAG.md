@@ -131,3 +131,6 @@ Optional LightRAG query errors now preserve scoped base retrieval and report lig
 
 
 Cold vector shard restoration selects a bounded page of eligible IDs through a partial covering index before loading vector payloads. This avoids sorting the corpus-sized vector JSON payload for every page, while preserving scope and temporal document filters.
+
+
+LightRAG duplicate-content entries count as complete only when the referenced original is processed and its text matches after boundary-whitespace trimming (as stored by LightRAG). Unknown jobs may be reconciled against the original request digest and persisted document states; reconciliation does not resubmit extraction or repeat model calls. Missing, changed or unfinished evidence remains unknown.

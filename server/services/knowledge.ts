@@ -118,7 +118,12 @@ export class Knowledge {
     return statuses;
   }
   diagnostics(scopes: string[], asOf = Date.now()) {
-    const statistics = this.statistics(scopes, asOf);
+    return this.diagnosticReport(this.statistics(scopes, asOf));
+  }
+  async diagnosticsAsync(scopes: string[], asOf = Date.now()) {
+    return this.diagnosticReport(await this.statisticsAsync(scopes, asOf));
+  }
+  private diagnosticReport(statistics: ReturnType<Knowledge['statistics']>) {
     return {
       status: statistics.state === 'ready' ? 'no_match' : statistics.state,
       queryOutcome: 'no_match',
@@ -786,9 +791,35 @@ export class Knowledge {
         ) as any[];
       const completed = new Set<string>(previous?.completed || []);
       if (previous?.jobId) {
-        const job = await retrievalPost('lightRag', c, '/documents/status', {
+        let job = await retrievalPost('lightRag', c, '/documents/status', {
           jobId: previous.jobId,
         });
+        if (
+          job.status === 'unknown' &&
+          Array.isArray(previous.batch) &&
+          previous.batch.length <= 16
+        ) {
+          const original = previous.batch.map(
+            (key: string) =>
+              this.store.db
+                .prepare('SELECT id,document_id,text FROM chunks WHERE scope=? AND id=?')
+                .get(c.scope, key) as any,
+          );
+          if (
+            original.every(
+              (r: any) => r && documentAt(this.store.maybe('document', r.document_id), Date.now()),
+            )
+          ) {
+            job = await retrievalPost('lightRag', c, '/documents/status', {
+              jobId: previous.jobId,
+              reconcile: {
+                scope: c.scope,
+                texts: original.map((r: any) => r.text),
+                file_sources: original.map((r: any) => 'amadeus-' + r.document_id + '-' + r.id),
+              },
+            });
+          }
+        }
         if (job.status !== 'completed')
           return { status: job.status, completed: completed.size, total: rows.length };
         for (const key of previous.batch) completed.add(key);

@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
-from rag_request_helpers import RequestDiagnostics, embedding_windows
+from rag_request_helpers import RequestDiagnostics, embedding_windows, light_document_complete
 
 CODE_HASH = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 HELPER_HASH = hashlib.sha256(Path(__file__).with_name("rag_request_helpers.py").read_bytes()).hexdigest()
@@ -347,14 +347,20 @@ async def light_insert(data):
     texts, sources = data["texts"], data["file_sources"]
     if not 0 < len(texts) <= 16 or len(texts)!=len(sources) or sum(map(len,texts))>100000:
         raise ValueError("Ingest at most 16 chunks and 100000 characters per batch")
-    from lightrag.base import DocStatus
     ids = ["doc-" + hashlib.sha256((source + text).encode()).hexdigest() for source,text in zip(sources,texts)]
     await rag.ainsert(texts, ids=ids, file_paths=sources)
-    for doc_id in ids:
-        status = await rag.doc_status.get_by_id(doc_id)
-        if not status or status.get("status") not in (DocStatus.PROCESSED, "processed"):
+    for doc_id, text in zip(ids, texts):
+        if not await light_document_complete(rag, doc_id, text):
             raise ValueError("Document pipeline did not finish successfully")
     return {"completed": len(texts)}
+
+async def light_reconcile(data):
+    # Read persisted document state only; never resubmit an unknown extraction job.
+    rag = await rag_for(data["scope"])
+    for source, text in zip(data["file_sources"], data["texts"]):
+        doc_id = "doc-" + hashlib.sha256((source + text).encode()).hexdigest()
+        if not await light_document_complete(rag, doc_id, text): return {"status":"unknown"}
+    return {"status":"completed", "completed":len(data["texts"]), "reconciled":True}
 
 def run_job(key, data):
     with JOB_LOCK:
@@ -435,6 +441,21 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"jobId":key, **JOBS[key]}
             elif self.path == "/lightrag/documents/status":
                 result = JOBS.get(data["jobId"], {"status":"unknown"})
+                original = data.get("reconcile")
+                if result.get("status") == "unknown" and isinstance(original, dict):
+                    # The complete original request must match the submission digest.
+                    if hashlib.sha256(json.dumps(original, sort_keys=True).encode()).hexdigest() != data["jobId"]:
+                        raise ValueError("Reconciliation request does not match job")
+                    if not isinstance(original.get("texts"),list) or not 0 < len(original["texts"]) <= 16 or sum(map(len,original["texts"])) > 100000:
+                        raise ValueError("Invalid reconciliation batch")
+                    if len(original.get("file_sources",[])) != len(original["texts"]): raise ValueError("Invalid reconciliation sources")
+                    future = asyncio.run_coroutine_threadsafe(light_reconcile(original),LOOP)
+                    try: result = future.result(timeout=min(55,DIAGNOSTICS.remaining()))
+                    except Exception:
+                        future.cancel()
+                        raise
+                    if result["status"] == "completed":
+                        with JOB_LOCK: JOBS[data["jobId"]] = result; save_jobs()
             elif self.path == "/lightrag/query/data":
                 future = asyncio.run_coroutine_threadsafe(light_query(data),LOOP)
                 try:

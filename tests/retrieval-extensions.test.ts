@@ -235,3 +235,36 @@ test('optional LightRAG failure preserves scoped base results and reports degrad
   assert.equal(kb.lastRetrieval.degraded, true);
   assert.ok((kb.lastRetrieval.timingsMs as any).lightRag >= 0);
 });
+
+test('unknown LightRAG jobs reconcile exact scoped batch without a second submission', async (t) => {
+  let original: any;
+  let submissions = 0,
+    checks = 0;
+  const baseUrl = await service(t, (path, body) => {
+    if (path === '/documents/texts') {
+      original = structuredClone(body);
+      submissions++;
+      return { jobId: 'original', status: 'processing' };
+    }
+    checks++;
+    if (body.reconcile) {
+      assert.equal(body.reconcile.scope, 'general');
+      assert.deepEqual(body.reconcile, original);
+      return { status: 'completed' };
+    }
+    return { status: 'unknown' };
+  });
+  const light: any = { enabled: true, baseUrl, scope: 'general', mode: 'mix' };
+  light.authorizedTarget = retrievalTarget('lightRag', light);
+  const store = new Store(':memory:');
+  const kb = new Knowledge(store, undefined, () => ({ lightRag: light }));
+  t.after(() => {
+    kb.close();
+    store.close();
+  });
+  kb.import('general', 'source', 'original content');
+  await kb.syncLightRag();
+  assert.equal((await kb.syncLightRag()).status, 'synced');
+  assert.equal(submissions, 1);
+  assert.equal(checks, 2);
+});
