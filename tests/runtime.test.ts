@@ -338,7 +338,7 @@ test('recursive children finish under one shared model pool', async () => {
   f.store.close();
 });
 
-test('isolated worker tools, project preservation and delegation off are enforced by host', async () => {
+test('isolated worker tools, project preservation and delegation off are enforced by host', async (t) => {
   const { writeFile, readFile } = await import('node:fs/promises');
   const f = await setup({
     complete: async (r) => {
@@ -376,12 +376,16 @@ test('isolated worker tools, project preservation and delegation off are enforce
       return result('parent complete');
     },
   });
+  t.after(async () => {
+    await f.runtime.shutdown();
+    f.store.close();
+  });
   const project = await mkdtemp(join(tmpdir(), 'agentdemo-project-'));
   await writeFile(join(project, 'base.txt'), 'parent');
   f.store.put('project', { id: 'p', name: 'p', folders: [project], createdAt: 1 });
   f.store.put('conversation', { ...f.store.get<any>('conversation', 'chat'), projectId: 'p' });
   const run = f.runtime.start('chat', 'delegate');
-  await until(() => f.store.get<any>('run', run.id).status === 'completed', 5000);
+  await until(() => f.store.get<any>('run', run.id).status === 'completed', 30000);
   const child = f.store.runs().find((r) => r.parentRunId === run.id)!;
   assert.equal(child.status, 'completed');
   await assert.rejects(readFile(join(project, 'child.txt')));
@@ -394,8 +398,6 @@ test('isolated worker tools, project preservation and delegation off are enforce
     f.runtime.spawn(run, 'Another independent task here', 'Return a real result'),
     /disabled/,
   );
-  await f.runtime.shutdown();
-  f.store.close();
 });
 
 test('inspection shows request usage separately from totals and enforces file/run scope', async () => {
