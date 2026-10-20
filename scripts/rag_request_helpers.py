@@ -86,7 +86,7 @@ def embedding_windows(encoder, texts, purpose='passage'):
         groups.append(group)
     return windows,groups,tokens,{'inputTokens':tokens,'windows':len(windows),'maxModelInputTokens':max(lengths,default=0),'modelTokenLimit':limit}
 
-async def light_document_complete(rag, doc_id, text):
+async def light_document_complete(rag, doc_id, text, source=None):
     """Accept duplicates only after their exact-content original finishes; bound chains."""
     seen = set()
     duplicate = False
@@ -94,6 +94,13 @@ async def light_document_complete(rag, doc_id, text):
         if doc_id in seen: return False
         seen.add(doc_id)
         status = await rag.doc_status.get_by_id(doc_id)
+        if not status and source and len(seen) == 1:
+            # LightRAG can persist a batch duplicate under a generated dup-* ID.
+            lookup = getattr(rag.doc_status, "get_doc_by_file_path", None)
+            candidate = await lookup(source) if lookup else None
+            metadata = (candidate or {}).get("metadata") or {}
+            if candidate and candidate.get("file_path") == source and metadata.get("is_duplicate") and metadata.get("duplicate_kind") == "content_hash":
+                status = candidate
         if not status: return False
         if status.get("status") == "processed":
             if not duplicate: return True

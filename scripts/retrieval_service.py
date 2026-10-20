@@ -349,8 +349,8 @@ async def light_insert(data):
         raise ValueError("Ingest at most 16 chunks and 100000 characters per batch")
     ids = ["doc-" + hashlib.sha256((source + text).encode()).hexdigest() for source,text in zip(sources,texts)]
     await rag.ainsert(texts, ids=ids, file_paths=sources)
-    for doc_id, text in zip(ids, texts):
-        if not await light_document_complete(rag, doc_id, text):
+    for doc_id, text, source in zip(ids, texts, sources):
+        if not await light_document_complete(rag, doc_id, text, source):
             raise ValueError("Document pipeline did not finish successfully")
     return {"completed": len(texts)}
 
@@ -359,7 +359,7 @@ async def light_reconcile(data):
     rag = await rag_for(data["scope"])
     for source, text in zip(data["file_sources"], data["texts"]):
         doc_id = "doc-" + hashlib.sha256((source + text).encode()).hexdigest()
-        if not await light_document_complete(rag, doc_id, text): return {"status":"unknown"}
+        if not await light_document_complete(rag, doc_id, text, source): return {"status":"unknown"}
     return {"status":"completed", "completed":len(data["texts"]), "reconciled":True}
 
 def run_job(key, data):

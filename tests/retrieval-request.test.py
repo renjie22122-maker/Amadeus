@@ -70,4 +70,19 @@ class LightDuplicates(unittest.IsolatedAsyncioTestCase):
   self.assertFalse(await h.light_document_complete(rag,'a','same'))
   self.assertFalse(await h.light_document_complete(rag,'missing','same'))
 
+ async def test_generated_duplicate_id_is_resolved_only_with_matching_source_and_content(self):
+  from types import SimpleNamespace
+  class Values:
+   async def get_by_id(self,key):return {'status':'processed'} if key=='original' else None
+   async def get_doc_by_file_path(self,source):return self.row
+  statuses=Values();statuses.row={'file_path':'source-a','status':'failed','metadata':{'is_duplicate':True,'duplicate_kind':'content_hash','original_doc_id':'original'}}
+  class Docs:
+   async def get_by_id(self,key):return {'content':'same'}
+  rag=SimpleNamespace(doc_status=statuses,full_docs=Docs())
+  self.assertTrue(await h.light_document_complete(rag,'missing','same','source-a'))
+  self.assertFalse(await h.light_document_complete(rag,'missing','other','source-a'))
+  self.assertFalse(await h.light_document_complete(rag,'missing','same','source-b'))
+  statuses.row['metadata']['duplicate_kind']='filename'
+  self.assertFalse(await h.light_document_complete(rag,'missing','same','source-a'))
+
 if __name__=='__main__':unittest.main()

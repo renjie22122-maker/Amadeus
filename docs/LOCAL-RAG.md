@@ -134,3 +134,5 @@ Cold vector shard restoration selects a bounded page of eligible IDs through a p
 
 
 LightRAG duplicate-content entries count as complete only when the referenced original is processed and its text matches after boundary-whitespace trimming (as stored by LightRAG). Unknown jobs may be reconciled against the original request digest and persisted document states; reconciliation does not resubmit extraction or repeat model calls. Missing, changed or unfinished evidence remains unknown.
+
+Generated duplicate IDs are resolved through the exact submitted source path, then validated against the processed original content; filename-only matches never imply success.
