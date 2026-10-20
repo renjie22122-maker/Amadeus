@@ -1,3 +1,4 @@
+import { installChatTranscriptions, continueChatTranscription } from './chat-transcription.js';
 import { installDeliveryReceipts, remoteReviewPolicy } from './chat-recall.js';
 import { canRememberApproval, rememberedApprovalScope } from '../../shared/approval-grants.js';
 import { chatApprovalSummary } from './chat-approval-format.js';
@@ -56,6 +57,7 @@ export class ChatConnections {
   ) {
     this.groups = new ChatGroupContext(store);
     installDeliveryReceipts(store);
+    installChatTranscriptions(store);
     store.db.exec(
       'CREATE TABLE IF NOT EXISTS chat_received(connection_id TEXT NOT NULL,message_id TEXT NOT NULL,sender_id TEXT NOT NULL,payload TEXT NOT NULL,at INTEGER NOT NULL,PRIMARY KEY(connection_id,message_id)); CREATE INDEX IF NOT EXISTS chat_received_recent ON chat_received(connection_id,at);',
     );
@@ -503,7 +505,9 @@ export class ChatConnections {
       )
       .run(c.id, now - 86400000, c.id);
     let helpRequested =
-      !m.media?.length && (m.text.trim() === '/help' || m.textOrigin === 'mention-only');
+      !m.media?.length &&
+      !m.mentionedIds?.length &&
+      (m.text.trim() === '/help' || m.textOrigin === 'mention-only');
     if (c.peerType === 'group') {
       this.groups.observe(c, m, now);
       const prefix = c.groupPrefix || '/amadeus';
@@ -659,6 +663,11 @@ export class ChatConnections {
       }
       const active = this.runtime.active(c.conversationId);
       if (m.text.trim() === '/stop') {
+        this.store.db
+          .prepare(
+            "UPDATE chat_transcription SET state='stopped' WHERE connection_id=? AND state='waiting'",
+          )
+          .run(c.id);
         this.store.db
           .prepare(
             "UPDATE chat_inbox SET state='cancelled',text='',media=NULL WHERE connection_id=? AND state IN ('queued','receiving','downloading')",
@@ -971,6 +980,12 @@ export class ChatConnections {
           continue;
         }
         if (terminal(run.status)) {
+          if (
+            continueChatTranscription(this.store, c, row, run, (key, text) =>
+              this.reply(c, key, text),
+            )
+          )
+            continue;
           const result = this.store
             .eventsForRun(run.id, ['assistant.message'])
             .filter((e) => e.data.final && !e.data.incomplete)
@@ -1028,7 +1043,7 @@ export class ChatConnections {
               c,
               row.id,
               noReply
-                ? '在。你希望我帮你做什么？'
+                ? '收到你的消息了，但这次未生成有效答复。请重新提问或说明希望我回应的内容。'
                 : result?.data.text
                   ? chatPlainText(result.data.text)
                   : `Task ${run.status}. Inspect the local conversation for details.`,
@@ -1108,7 +1123,7 @@ export class ChatConnections {
           c.conversationId,
           `[Chat transport: ${c.transport}; ${c.peerType || 'private'} ID: ${c.peerId}. Use inspect_chat for current group/members/media and prepare_chat_reply for native mentions, quotes or stickers. Never infer real identity from display names.]\n` +
             (c.peerType === 'group'
-              ? `This is an explicitly addressed request from platform sender ${next.sender_id || 'unknown'} in this group. This sender is not necessarily the controller, group owner, or the subject being discussed. Do not transfer one member's identity to another. Previous unsolicited checks and their [NO_REPLY] rule do not apply: respond normally, briefly unless detail is requested. A mention without text calls for a short acknowledgement, not silence. Media metadata alone does not mean the image was seen.\n`
+              ? `This is an explicitly addressed request from platform sender ${next.sender_id || 'unknown'} in this group. This sender is not necessarily the controller, group owner, or the subject being discussed. Do not transfer one member's identity to another. Previous unsolicited checks and their [NO_REPLY] rule do not apply: respond normally, briefly unless detail is requested. Mention ID labels identify people mentioned by the current sender; they are neither the sender identity nor an empty bot mention. A statement or social remark may receive a brief natural response; do not output the internal NO_REPLY marker on an explicitly addressed turn. Do not claim arbitrary people or owners are authoritative about facts; distinguish claims, nicknames and verified platform roles. Media metadata alone does not mean the image was seen.\n`
               : '') +
             next.text,
           0,

@@ -74,6 +74,16 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
           : media.length
             ? ('media-placeholder' as const)
             : ('mention-only' as const),
+        mentionedIds: Array.isArray(event.message)
+          ? [
+              ...new Set<string>(
+                event.message
+                  .filter((x: any) => x.type === 'at' || x.type === 'mention')
+                  .map((x: any) => String(x.data?.qq ?? x.data?.user_id ?? ''))
+                  .filter((x: string) => x && x !== c.accountId && x !== 'all'),
+              ),
+            ]
+          : [],
         timestamp,
         peerType: c.peerType || 'private',
         addressed,

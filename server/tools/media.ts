@@ -1,3 +1,4 @@
+import { trackChatTranscription, observeChatTranscript } from '../services/chat-transcription.js';
 import { createHash } from 'node:crypto';
 import { mediaReferenceBudget } from '../../shared/media-capabilities.js';
 import { approvalSnapshot } from './approval-snapshot.js';
@@ -91,23 +92,31 @@ export function installMedia(registry: ToolRegistry) {
         c.signal,
       );
       revalidate();
+      const job = await c.media.submit({
+        connectionId: serviceId,
+        conversationId: c.conversation.id,
+        run: c.run,
+        prepared: (id) => {
+          c.bindEffect?.('media-job', id);
+          trackChatTranscription(c.store, c.run.id, id, a.reference);
+        },
+        operationKey: c.run.id + ':' + c.callId,
+        prompt: '',
+        audio: {
+          bytes: Buffer.concat(chunks),
+          mime: output.metadata.mime,
+          name: output.metadata.name,
+        },
+        expectedConnection: JSON.stringify(service),
+      });
+      trackChatTranscription(c.store, c.run.id, job.id, a.reference);
+      observeChatTranscript(c.store, c.run.id, job);
       return {
-        content: JSON.stringify(
-          await c.media.submit({
-            connectionId: serviceId,
-            conversationId: c.conversation.id,
-            run: c.run,
-            prepared: (id) => c.bindEffect?.('media-job', id),
-            operationKey: c.run.id + ':' + c.callId,
-            prompt: '',
-            audio: {
-              bytes: Buffer.concat(chunks),
-              mime: output.metadata.mime,
-              name: output.metadata.name,
-            },
-            expectedConnection: JSON.stringify(service),
-          }),
-        ),
+        content: JSON.stringify({
+          ...job,
+          remoteVoiceNote:
+            'For received chat audio, the host continues this conversation when transcription completes. Do not ask the user to insert a draft or claim the transcript before reading it.',
+        }),
       };
     },
   });
@@ -227,9 +236,11 @@ export function installMedia(registry: ToolRegistry) {
       'Read a media job receipt and locally saved outputs in this conversation. Host polls remote jobs automatically; no need for a rapid tool polling loop.',
     effect: 'read',
     schema: z.object({ jobId: z.string() }),
-    run: (a, c) => ({
-      content: JSON.stringify(c.media.public(c.media.get(a.jobId, c.conversation.id))),
-    }),
+    run: (a, c) => {
+      const job = c.media.public(c.media.get(a.jobId, c.conversation.id));
+      observeChatTranscript(c.store, c.run.id, job);
+      return { content: JSON.stringify(job) };
+    },
   });
   registry.add({
     name: 'inspect_media',

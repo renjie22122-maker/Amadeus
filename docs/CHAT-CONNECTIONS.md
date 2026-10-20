@@ -121,3 +121,9 @@ No new daemon, port, dependency or startup task is required. Tables migrate on n
 ### Quick help
 
 A bare native mention or `/help` returns a small deterministic help message without calling the model. The controller also sees status/stop and, on remotely reviewable work routes, grant-management commands. Help never mints approval codes. Mention plus text/media still dispatches normally. `sentMessages` contains only confirmed recent deliveries; pre-upgrade messages, untracked media and a reply still being generated may be absent. Do not ask users for internal delivery IDs.
+
+### Received voice messages
+
+Remote voice transcription keeps the existing approval and service boundaries. Once an approved transcription job is submitted for an attachment on the incoming message, a durable continuation waits for its text. If the original run finishes before reading the text, the host resumes in the same route with the original sender, without touching composer drafts or requiring Insert draft. Already consumed transcripts do not trigger duplicate answers. Changed connection authority, interrupted runs and `/stop` prevent continuation; failure or a 15-minute wait timeout gives a concise notice. This is chat-only orchestration, not automatic approval or a change to local microphone editing.
+
+Native mentions of other members retain their IDs and message text; they are not bare bot mentions. On explicit requests, an invalid NO_REPLY result is reported as an invalid answer rather than falsely treating the message as empty.

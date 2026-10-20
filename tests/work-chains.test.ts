@@ -136,6 +136,8 @@ test('approval detects changed project, permissions or execution backend', () =>
 test('transcription binds a durable job after upload approval and never uploads on denial', async () => {
   const d = definitions().get('transcribe_media');
   const c = ctx();
+  // This isolated tool fixture has no chat transport tables.
+  c.store.db = { prepare: () => ({ get: () => undefined }) };
   let submitted = 0,
     approved = false,
     bound = false;

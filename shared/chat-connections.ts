@@ -87,6 +87,7 @@ export interface ChatIncoming {
   media?: ChatRemoteFile[];
   addressed?: boolean;
   textOrigin?: 'user' | 'media-placeholder' | 'mention-only';
+  mentionedIds?: string[];
 }
 export interface ChatSecrets {
   token: string;

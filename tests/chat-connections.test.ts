@@ -1,4 +1,9 @@
 import {
+  trackChatTranscription,
+  observeChatTranscript,
+  continueChatTranscription,
+} from '../server/services/chat-transcription.js';
+import {
   deliveryReceipt,
   recallTarget,
   remoteReviewPolicy,
@@ -623,4 +628,91 @@ test('platform windows reserve bridge recall time without claiming a universal O
   assert.equal(remoteReviewPolicy(base('onebot11')).ttlMs, 90000);
   assert.equal(remoteReviewPolicy(base('telegram')).ttlMs, 300000);
   assert.equal(remoteReviewPolicy(base('whatsapp')).cleanup, false);
+});
+
+function voiceFixture(t: any) {
+  const f = fixture(t),
+    run = { id: 'voice-run', status: 'completed', conversationId: f.c.conversationId };
+  const row = { id: 'voice-input', sender_id: f.c.senderId };
+  f.store.db
+    .prepare(
+      "INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id,sender_id,attachment_ids) VALUES(?,?,?,'running','',?,?,?)",
+    )
+    .run(row.id, f.c.id, Date.now(), run.id, row.sender_id, JSON.stringify(['voice-audio']));
+  trackChatTranscription(f.store, run.id, 'voice-job', 'attachment:voice-audio');
+  const job = {
+    id: 'voice-job',
+    kind: 'transcription',
+    status: 'submitting',
+    runId: run.id,
+    conversationId: f.c.conversationId,
+  };
+  f.store.put('media-job', job);
+  const replies: string[] = [];
+  return {
+    ...f,
+    run,
+    row,
+    job,
+    replies,
+    advance: () =>
+      continueChatTranscription(f.store, f.c, row, run, (_key, text) => replies.push(text)),
+  };
+}
+test('voice completion queues one same-sender continuation without consuming a composer draft', (t) => {
+  const f = voiceFixture(t);
+  f.store.put('attachment', {
+    id: 'unsent-draft',
+    conversationId: f.c.conversationId,
+    messageEventId: null,
+  });
+  assert(f.advance());
+  assert.equal(
+    f.store.db.prepare("SELECT count(*) n FROM chat_inbox WHERE state='queued'").get()!.n,
+    0,
+  );
+  f.store.put('media-job', {
+    ...f.job,
+    status: 'completed',
+    text: 'Can you understand this voice message?',
+  });
+  assert(f.advance());
+  assert(!f.advance());
+  const queued = f.store.db.prepare("SELECT * FROM chat_inbox WHERE state='queued'").get() as any;
+  assert.equal(queued.connection_id, f.c.id);
+  assert.equal(queued.sender_id, f.c.senderId);
+  assert.equal(queued.attachment_ids, '[]');
+  assert(queued.text.includes('Can you understand'));
+  assert.equal(f.store.get<any>('attachment', 'unsent-draft').messageEventId, null);
+  assert.equal(f.replies.length, 0);
+});
+test('already consumed voice transcripts do not duplicate model replies; changed authority cannot continue', (t) => {
+  const f = voiceFixture(t);
+  const done = { ...f.job, status: 'completed', text: 'hello' };
+  f.store.put('media-job', done);
+  observeChatTranscript(f.store, f.run.id, done);
+  assert(!f.advance());
+  f.store.db.prepare("UPDATE chat_transcription SET state='waiting'").run();
+  f.c.revision++;
+  assert(!f.advance());
+  assert.equal(f.store.db.prepare('SELECT state FROM chat_transcription').get()!.state, 'stopped');
+});
+test('voice failure and timeout give one clear notice and do not execute transcript tasks', (t) => {
+  const f = voiceFixture(t);
+  f.store.put('media-job', { ...f.job, status: 'failed' });
+  assert(f.advance());
+  assert.equal(f.replies.length, 1);
+  assert(!f.advance());
+  assert.equal(
+    f.store.db.prepare("SELECT count(*) n FROM chat_inbox WHERE state='queued'").get()!.n,
+    0,
+  );
+});
+test('unrelated audio and draft recording do not register remote continuations', (t) => {
+  const f = voiceFixture(t);
+  trackChatTranscription(f.store, f.run.id, 'other', 'attachment:unsent-draft');
+  assert.equal(f.store.db.prepare('SELECT count(*) n FROM chat_transcription').get()!.n, 1);
+  f.store.db.prepare('UPDATE chat_transcription SET created_at=?').run(Date.now() - 900001);
+  assert(f.advance());
+  assert(f.replies[0].includes('超时'));
 });

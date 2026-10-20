@@ -1086,3 +1086,25 @@ test('new explicit request supersedes an unfinished unsolicited response without
   channels.tick();
   assert.equal(calls.length, 2);
 });
+
+test('bot mention plus a person and text preserves the target and dispatches normally', (t) => {
+  const { channels, c, calls, store } = ordinaryGroup(t);
+  const m = groupMessage(
+    c,
+    [
+      { type: 'at', data: { qq: c.accountId } },
+      { type: 'at', data: { qq: '125' } },
+      { type: 'text', data: { text: 'would like a coffee' } },
+    ],
+    'multi-mention',
+  );
+  assert.equal(m.textOrigin, 'user');
+  assert.deepEqual(m.mentionedIds, ['125']);
+  assert(m.text.includes('[Mention ID: 125]'));
+  assert(m.text.includes('would like a coffee'));
+  assert.equal(channels.receive(c.id, m), 'queued');
+  channels.tick();
+  assert.equal(calls.length, 1);
+  assert(calls[0][1].includes('would like a coffee'));
+  assert.equal(store.db.prepare('SELECT count(*) n FROM chat_outbox').get()!.n, 0);
+});
