@@ -1,3 +1,9 @@
+import {
+  deliveryReceipt,
+  recallTarget,
+  remoteReviewPolicy,
+} from '../server/services/chat-recall.js';
+import { chatApprovalSummary } from '../server/services/chat-approval-format.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -352,6 +358,25 @@ test('remote approvals are bound, single-use and invalidated by changed payloads
   assert(texts.some((text) => /^\/deny [a-f0-9]{24}$/.test(text)));
   assert(!notices.includes('Action required in Amadeus on your computer'));
   const ticket = store.db.prepare('SELECT code FROM chat_approval').get()!;
+  channel.receive(c.id, {
+    id: 'details',
+    senderId: c.senderId,
+    peerId: c.peerId,
+    timestamp: Date.now(),
+    text: '/details ' + ticket.code,
+  });
+  assert.equal(calls.filter((x) => x[0] === 'answer').length, 0);
+  assert.equal(
+    store.db.prepare('SELECT used FROM chat_approval WHERE code=?').get(ticket.code)!.used,
+    0,
+  );
+  assert(
+    store.db
+      .prepare('SELECT text FROM chat_outbox')
+      .all()
+      .some((r) => String(r.text).includes('report.txt')),
+  );
+
   const send = (id: string) =>
     channel.receive(c.id, {
       id,
@@ -492,4 +517,110 @@ test('reauthorization remains visible; explicit pause clears its notice reason',
   channel.pause(c.id);
   assert.equal(channel.overview()[0].status.status, 'paused');
   assert.equal(store.get<any>('chat-transport-state', c.id).reason, 'manual');
+});
+
+test('approval summaries preview media prose without changing payload or hiding command targets', () => {
+  const payload = {
+    command: 'Generate speech',
+    backend: 'media-service',
+    cwd: 'http://127.0.0.1:8812',
+    estimatedUsd: 0,
+    request: { model: 'tts', prompt: '語'.repeat(500), options: { voice: 'voice-a' } },
+    risk: { level: 'high', zh: '需要人工确认' },
+  };
+  const before = JSON.stringify(payload),
+    summary = chatApprovalSummary(payload);
+  assert(summary.includes('共 500 字符'));
+  assert(summary.includes('voice-a'));
+  assert(summary.includes('http://127.0.0.1:8812'));
+  assert(!summary.includes('語'.repeat(101)));
+  assert.equal(JSON.stringify(payload), before);
+  const command = 'echo ' + 'long '.repeat(150);
+  const shell = chatApprovalSummary({
+    command,
+    backend: 'shell',
+    cwd: 'D:/work',
+    path: 'D:/work/result.txt',
+  });
+  assert(shell.includes(command));
+  assert(shell.includes('D:/work/result.txt'));
+});
+
+test('recall receipts bind bot ownership, exact route and original requester', (t) => {
+  const { store, c } = fixture(t);
+  c.transport = 'onebot11';
+  store.db
+    .prepare(
+      'INSERT INTO chat_inbox(id,connection_id,received_at,state,text,sender_id) VALUES(?,?,?,?,?,?)',
+    )
+    .run('request', c.id, Date.now(), 'done', '', 'member');
+  deliveryReceipt(store, c, { id: 'request:0' }, 'msg1');
+  assert.equal(recallTarget(store, c, 'request:0', 'member').message_id, 'msg1');
+  assert.throws(() => recallTarget(store, c, 'request:0', 'stranger'));
+  assert.throws(() => recallTarget(store, { ...c, peerId: 'elsewhere' }, 'request:0', c.senderId));
+  assert.throws(() => recallTarget(store, c, 'incoming-message', c.senderId));
+  assert.equal(recallTarget(store, c, 'request:0', 'admin', true).message_id, 'msg1');
+  store.db.prepare("UPDATE chat_delivery SET state='retracted'").run();
+  assert.throws(() => recallTarget(store, c, 'request:0', c.senderId));
+});
+test('expired review cancels queued fragments, cleans only its receipts, and renews without answering locally', (t) => {
+  const { store, channel, c, calls } = fixture(t);
+  c.remoteApprovals = true;
+  store.put('chat-connection', c);
+  store.put('run', {
+    id: 'review',
+    conversationId: 'chat',
+    status: 'waiting_approval',
+    createdAt: Date.now(),
+  });
+  store.db
+    .prepare(
+      'INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id) VALUES(?,?,?,?,?,?)',
+    )
+    .run('request', c.id, Date.now(), 'running', '', 'review');
+  const q = {
+    id: id(),
+    runId: 'review',
+    conversationId: 'chat',
+    kind: 'approval',
+    status: 'pending',
+    createdAt: Date.now(),
+    payload: { command: 'test', backend: 'test' },
+  };
+  store.put('input', q);
+  channel.tick();
+  const ticket = store.db.prepare('SELECT * FROM chat_approval').get() as any;
+  assert(ticket.expires_at - Date.now() <= remoteReviewPolicy(c).ttlMs);
+  const row = store.db.prepare('SELECT * FROM chat_outbox LIMIT 1').get() as any;
+  deliveryReceipt(store, c, row, 'approval-platform-id');
+  store.db.prepare("UPDATE chat_outbox SET state='sent' WHERE id=?").run(row.id);
+  store.db.prepare('UPDATE chat_approval SET expires_at=?').run(Date.now() - 1);
+  channel.tick();
+  assert.equal(store.db.prepare('SELECT state FROM chat_delivery').get()!.state, 'cleanup-pending');
+  assert.equal(store.get<any>('input', q.id).status, 'pending');
+  assert.equal(calls.filter((x) => x[0] === 'answer').length, 0);
+  const expiry = store.db
+    .prepare("SELECT count(*) n FROM chat_outbox WHERE id LIKE 'approval-expired:%'")
+    .get()!.n;
+  channel.tick();
+  assert.equal(
+    store.db.prepare("SELECT count(*) n FROM chat_outbox WHERE id LIKE 'approval-expired:%'").get()!
+      .n,
+    expiry,
+  );
+  channel.receive(c.id, {
+    id: 'renew-command',
+    senderId: c.senderId,
+    peerId: c.peerId,
+    text: '/renew ' + ticket.code,
+    timestamp: Date.now(),
+  });
+  const renewed = store.db.prepare('SELECT code FROM chat_approval').get()!.code;
+  assert.notEqual(renewed, ticket.code);
+  assert.equal(store.get<any>('input', q.id).status, 'pending');
+});
+test('platform windows reserve bridge recall time without claiming a universal OneBot limit', () => {
+  assert.equal(remoteReviewPolicy(base('onebot11')).ttlMs, 90000);
+  assert.equal(remoteReviewPolicy(base('telegram')).ttlMs, 300000);
+  assert.equal(remoteReviewPolicy(base('whatsapp')).cleanup, false);
 });

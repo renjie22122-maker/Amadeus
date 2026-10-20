@@ -490,8 +490,18 @@ export async function createApp(options: { directory: string; dist?: string; run
     return { ok: true };
   });
   app.post<{ Params: { id: string } }>('/api/inputs/:id', async (req) => {
-    const data = z.object({ answer: z.string().max(12000), allow: z.boolean() }).parse(req.body);
-    runtime.inputs.answer(req.params.id, data.answer, data.allow);
+    const data = z
+      .object({
+        answer: z.string().max(12000),
+        allow: z.boolean(),
+        remember: z.boolean().default(false),
+      })
+      .parse(req.body);
+    runtime.inputs.answer(req.params.id, data.answer, data.allow, data.remember);
+    return { ok: true };
+  });
+  app.delete<{ Params: { id: string } }>('/api/approval-grants/:id', async (req) => {
+    runtime.inputs.grants.revoke(req.params.id);
     return { ok: true };
   });
   effectRoutes(app, store, runtime);

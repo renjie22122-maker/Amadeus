@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mediaReferenceBudget } from '../../shared/media-capabilities.js';
 import { approvalSnapshot } from './approval-snapshot.js';
 import { basename } from 'node:path';
@@ -70,6 +71,11 @@ export function installMedia(registry: ToolRegistry) {
         'approval',
         {
           command: 'Transcribe audio with ' + service.name,
+          repeatable: {
+            kind: 'media-transcription',
+            serviceId,
+            fingerprint: createHash('sha256').update(JSON.stringify(service)).digest('hex'),
+          },
           reason: a.reason,
           backend: 'media-service',
           cwd: new URL(service.baseUrl).origin,
@@ -145,6 +151,11 @@ export function installMedia(registry: ToolRegistry) {
         'approval',
         {
           command: 'Generate ' + service.kind + ' with ' + service.name,
+          repeatable: {
+            kind: 'media-generation',
+            serviceId: a.serviceId,
+            fingerprint: createHash('sha256').update(JSON.stringify(service)).digest('hex'),
+          },
           reason: a.reason,
           backend: 'media-service',
           cwd: new URL(service.baseUrl).origin,

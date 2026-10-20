@@ -1,3 +1,6 @@
+import { installDeliveryReceipts, remoteReviewPolicy } from './chat-recall.js';
+import { canRememberApproval, rememberedApprovalScope } from '../../shared/approval-grants.js';
+import { chatApprovalSummary } from './chat-approval-format.js';
 import { validateReplyPlan, type ChatReplyPlan } from './chat-interaction.js';
 import { chatPlainText } from './chat-format.js';
 import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
@@ -52,6 +55,7 @@ export class ChatConnections {
     readonly directory: string,
   ) {
     this.groups = new ChatGroupContext(store);
+    installDeliveryReceipts(store);
     store.db.exec(
       'CREATE TABLE IF NOT EXISTS chat_received(connection_id TEXT NOT NULL,message_id TEXT NOT NULL,sender_id TEXT NOT NULL,payload TEXT NOT NULL,at INTEGER NOT NULL,PRIMARY KEY(connection_id,message_id)); CREATE INDEX IF NOT EXISTS chat_received_recent ON chat_received(connection_id,at);',
     );
@@ -525,9 +529,12 @@ export class ChatConnections {
         "SELECT count(*) AS n FROM chat_inbox WHERE connection_id=? AND state IN ('queued','receiving','downloading','running','dispatching')",
       )
       .get(key) as { n: number };
-    const approval = m.text.trim().match(/^\/(approve|deny|answer) ([a-f0-9]{24})(?: ([\s\S]+))?$/);
+    const approval = m.text
+      .trim()
+      .match(/^\/(approve|deny|answer|details|allow-similar|renew) ([a-f0-9]{24})(?: ([\s\S]+))?$/);
     const command =
-      !m.media?.length && (['/stop', '/status'].includes(m.text.trim()) || !!approval);
+      !m.media?.length &&
+      (['/stop', '/status', '/grants', '/revoke-grants'].includes(m.text.trim()) || !!approval);
     assert(command || pending.n < 20, 'CHAT_QUEUE', 'Message queue is full.', 429);
     this.store.db
       .prepare(
@@ -563,7 +570,14 @@ export class ChatConnections {
       if (approval) {
         try {
           this.answer(c, approval[1], approval[2], approval[3] || '', now);
-          this.reply(c, keyId, 'Decision recorded for this request only.');
+          if (!['details', 'renew'].includes(approval[1]))
+            this.reply(
+              c,
+              keyId,
+              approval[1] === 'allow-similar'
+                ? '已允许，并记住已说明的范围；/grants 查看，/revoke-grants 撤销。'
+                : '已记录，仅对本次请求生效。',
+            );
         } catch {
           this.reply(
             c,
@@ -571,6 +585,35 @@ export class ChatConnections {
             'Decision rejected: request expired, changed, already answered, or not authorized. Check Amadeus.',
           );
         }
+        return 'done';
+      }
+      if (['/grants', '/revoke-grants'].includes(m.text.trim())) {
+        assert(
+          c.remoteApprovals && c.accessMode === 'work',
+          'CHAT_APPROVAL',
+          'Only the enabled work controller may manage remembered approvals.',
+        );
+        if (m.text.trim() === '/revoke-grants')
+          this.runtime.inputs.grants.revokeConversation(c.conversationId);
+        const grants = this.runtime.inputs.grants.list(c.conversationId);
+        this.reply(
+          c,
+          keyId,
+          m.text.trim() === '/revoke-grants'
+            ? '本会话记住的授权已全部撤销，后续操作重新审核。'
+            : grants.length
+              ? grants
+                  .map(
+                    (g) =>
+                      g.label +
+                      ' · 剩余 ' +
+                      g.remaining +
+                      ' 次 · ' +
+                      new Date(g.expiresAt).toISOString(),
+                  )
+                  .join('\n') + '\n/revoke-grants 撤销本会话全部授权。'
+              : '本会话没有有效的记住授权。',
+        );
         return 'done';
       }
       const active = this.runtime.active(c.conversationId);
@@ -658,13 +701,19 @@ export class ChatConnections {
           q.id,
           q.runId,
           this.approvalDigest(q),
-          Date.now() + 15 * 60000,
+          Date.now() + remoteReviewPolicy(c).ttlMs,
           c.revision,
         );
+      this.store.put('chat-approval-lifecycle', {
+        id: code,
+        connectionId: c.id,
+        inputId: q.id,
+        remote: !localOnly,
+      });
       if (localOnly) {
         this.reply(
           c,
-          'approval:' + q.id,
+          'approval:' + q.id + ':' + code,
           'Amadeus needs a local decision. Request ' +
             q.id +
             '. ' +
@@ -682,19 +731,41 @@ export class ChatConnections {
       }
       this.reply(
         c,
-        'approval:' + q.id,
-        `Amadeus ${q.kind}\nRun: ${q.runId}\nRequest: ${q.id}\nReview the operation below (untrusted task content):\n${payload}\nEnd of operation. Valid for 15 minutes.\n` +
+        'approval:' + q.id + ':' + code,
+        (q.kind === 'approval'
+          ? chatApprovalSummary(q.payload) +
+            `\n有效期：${remoteReviewPolicy(c).label}（包含发送耗时）；超时不执行。` +
+            '\n查看全文：' +
+            (c.peerType === 'group' ? (c.groupPrefix || '/amadeus') + ' ' : '') +
+            '/details ' +
+            code +
+            '\n'
+          : `Amadeus ${q.kind}\n${payload}\nValid for ${remoteReviewPolicy(c).label}.\n`) +
           (c.peerType === 'group'
             ? 'In this group prefix commands with ' + (c.groupPrefix || '/amadeus') + ' .\n'
             : '') +
           (q.kind === 'approval'
-            ? '下面两条独立消息分别是同意和拒绝命令。长按复制其中一条，再发送即可；请先核对以上操作。'
+            ? '同意／拒绝：复制下方对应命令发送。'
             : `/answer ${code} your answer`),
       );
       if (q.kind === 'approval') {
         const prefix = c.peerType === 'group' ? (c.groupPrefix || '/amadeus') + ' ' : '';
-        this.reply(c, 'approval-allow:' + q.id, prefix + '/approve ' + code);
-        this.reply(c, 'approval-deny:' + q.id, prefix + '/deny ' + code);
+        this.reply(c, 'approval-allow:' + q.id + ':' + code, prefix + '/approve ' + code);
+        this.reply(c, 'approval-deny:' + q.id + ':' + code, prefix + '/deny ' + code);
+        if (canRememberApproval(q.payload)) {
+          this.reply(
+            c,
+            'approval-scope:' + q.id + ':' + code,
+            '可选：本次允许，并记住以下范围：' +
+              rememberedApprovalScope(q.payload) +
+              '\n查看 /grants；撤销 /revoke-grants（群聊需加触发前缀）。',
+          );
+          this.reply(
+            c,
+            'approval-remember:' + q.id + ':' + code,
+            prefix + '/allow-similar ' + code,
+          );
+        }
       }
     }
   }
@@ -704,6 +775,27 @@ export class ChatConnections {
     const ticket = this.store.db
       .prepare('SELECT * FROM chat_approval WHERE code=? AND connection_id=?')
       .get(code, c.id) as any;
+    if (action === 'renew') {
+      assert(
+        ticket &&
+          !ticket.used &&
+          ticket.expires_at <= now &&
+          ticket.revision === c.revision &&
+          this.belongs(c, ticket.run_id),
+        'CHAT_APPROVAL',
+        'Only an expired unchanged request can be renewed.',
+      );
+      const q = this.store.get<PendingInput>('input', ticket.input_id);
+      assert(
+        q.status === 'pending' && this.approvalDigest(q) === ticket.digest,
+        'CHAT_APPROVAL',
+        'Request changed.',
+      );
+      this.cleanApprovals(c, now);
+      this.store.db.prepare('DELETE FROM chat_approval WHERE code=?').run(code);
+      this.offerApprovals(c);
+      return;
+    }
     assert(
       ticket &&
         !ticket.used &&
@@ -730,9 +822,17 @@ export class ChatConnections {
       'CHAT_APPROVAL',
       'Local review required.',
     );
+    if (action === 'details') {
+      this.reply(
+        c,
+        'approval-details:' + q.id + ':' + code + ':' + id(),
+        '完整待审批操作（不可信任务内容）：\n' + payload + '\n查看详情不会批准操作。',
+      );
+      return;
+    }
     assert(
       q.kind === 'approval'
-        ? ['approve', 'deny'].includes(action)
+        ? ['approve', 'deny', 'allow-similar'].includes(action)
         : action === 'answer' && text.trim() && text.length <= 12000,
       'CHAT_APPROVAL',
       'Wrong response type.',
@@ -741,8 +841,9 @@ export class ChatConnections {
       q.id,
       q.kind === 'question'
         ? text
-        : `${action === 'approve' ? 'Approved once' : 'Denied'} remotely by bound ${c.transport} account ${c.senderId}.`,
+        : `${action === 'deny' ? 'Denied' : action === 'allow-similar' ? 'Approved with bounded remembered scope' : 'Approved once'} remotely by bound ${c.transport} account ${c.senderId}.`,
       action !== 'deny',
+      action === 'allow-similar',
     );
     this.store.db.prepare('UPDATE chat_approval SET used=1 WHERE code=?').run(code);
     this.store.event(q.conversationId, q.runId, 'chat.approval', {
@@ -751,6 +852,47 @@ export class ChatConnections {
       senderId: c.senderId,
       allow: action !== 'deny',
     });
+  }
+  private cleanApprovals(c: ChatConnection, now = Date.now()) {
+    const tickets = this.store.db
+      .prepare('SELECT * FROM chat_approval WHERE connection_id=?')
+      .all(c.id) as any[];
+    for (const t of tickets) {
+      const meta = this.store.maybe<any>('chat-approval-lifecycle', t.code);
+      if (!meta?.remote) continue;
+      const q = this.store.maybe<PendingInput>('input', t.input_id);
+      if (!t.used && t.expires_at > now && q?.status === 'pending') continue;
+      const pattern = '%:' + t.input_id + ':' + t.code + ':%';
+      // A late send may finish after cleanup was requested. Revisit receipts every tick.
+      this.store.db
+        .prepare(
+          "UPDATE chat_outbox SET state='cancelled',text='' WHERE connection_id=? AND state='pending' AND id LIKE ?",
+        )
+        .run(c.id, pattern);
+      if (remoteReviewPolicy(c).cleanup)
+        this.store.db
+          .prepare(
+            "UPDATE chat_delivery SET state='cleanup-pending' WHERE connection_id=? AND state='sent' AND id LIKE ?",
+          )
+          .run(c.id, pattern);
+      if (!meta.closed) {
+        this.store.put('chat-approval-lifecycle', { ...meta, closed: true });
+        if (!t.used && q?.status === 'pending') {
+          const prefix = c.peerType === 'group' ? (c.groupPrefix || '/amadeus') + ' ' : '';
+          this.reply(
+            c,
+            'approval-expired:' + t.code,
+            '审批码已超时，未批准操作。本地请求仍保留；重新获取：' +
+              prefix +
+              '/renew ' +
+              t.code +
+              (remoteReviewPolicy(c).cleanup
+                ? '。将尝试撤回旧审批消息，平台拒绝时消息可能保留。'
+                : '。此平台暂不支持自动撤回。'),
+          );
+        }
+      }
+    }
   }
   tick() {
     for (const c of this.list()) {
@@ -766,6 +908,7 @@ export class ChatConnections {
         });
         continue;
       }
+      this.cleanApprovals(c);
       this.offerApprovals(c);
       this.queueFiles(c);
       const rows = this.store.db
@@ -791,9 +934,12 @@ export class ChatConnections {
             .eventsForRun(run.id, ['assistant.message'])
             .filter((e) => e.data.final && !e.data.incomplete)
             .at(-1);
+          const proactive = this.store.maybe<{ createdAt: number }>('chat-proactive-run', run.id);
+          const noReply =
+            !!result?.data.text && chatPlainText(result.data.text).trim() === '[NO_REPLY]';
           const silent =
-            !!this.store.maybe('chat-proactive-run', run.id) &&
-            (!result?.data.text || result.data.text.trim() === '[NO_REPLY]');
+            !!proactive &&
+            (!result?.data.text || noReply || this.groups.superseded(c, proactive.createdAt));
           let plan = this.store.maybe<any>('chat-reply-plan', run.id);
           if (plan) {
             try {
@@ -805,6 +951,21 @@ export class ChatConnections {
               this.store.event(c.conversationId, run.id, 'chat.reply.warning', {
                 reason: 'Reply metadata expired or target changed; sent text only.',
               });
+            }
+          }
+          if (
+            !proactive &&
+            c.peerType === 'group' &&
+            ['onebot11', 'onebot12'].includes(c.transport) &&
+            row.sender_id &&
+            !plan?.mentions?.length
+          ) {
+            const targeted = { ...plan, mentions: [row.sender_id] };
+            try {
+              validateReplyPlan(this.store, c, targeted);
+              plan = targeted;
+            } catch {
+              /* Expired/unknown recipients are never guessed. */
             }
           }
           if (!silent && plan)
@@ -825,9 +986,11 @@ export class ChatConnections {
             this.reply(
               c,
               row.id,
-              result?.data.text
-                ? chatPlainText(result.data.text)
-                : `Task ${run.status}. Inspect the local conversation for details.`,
+              noReply
+                ? '在。你希望我帮你做什么？'
+                : result?.data.text
+                  ? chatPlainText(result.data.text)
+                  : `Task ${run.status}. Inspect the local conversation for details.`,
               plan,
             );
           this.store.db
@@ -877,7 +1040,7 @@ export class ChatConnections {
           try {
             this.runtime.start(
               c.conversationId,
-              'Decide whether a brief reply is useful now. Do not chatter, repeat others, or start tasks. If not useful, output exactly [NO_REPLY]. Do not create media, schedule tasks, or execute actions.\n' +
+              'This is an unsolicited participation check, not a request from the controller or a particular member. Media notifications are not requests to inspect or describe images. Decide whether a brief reply is useful now. Do not chatter, repeat others, or start tasks. If not useful, output exactly [NO_REPLY]. Do not create media, schedule tasks, or execute actions.\n' +
                 this.groups.text(c),
               0,
               { runId, attachmentIds: [] },
@@ -903,6 +1066,9 @@ export class ChatConnections {
         this.runtime.start(
           c.conversationId,
           `[Chat transport: ${c.transport}; ${c.peerType || 'private'} ID: ${c.peerId}. Use inspect_chat for current group/members/media and prepare_chat_reply for native mentions, quotes or stickers. Never infer real identity from display names.]\n` +
+            (c.peerType === 'group'
+              ? `This is an explicitly addressed request from platform sender ${next.sender_id || 'unknown'} in this group. This sender is not necessarily the controller, group owner, or the subject being discussed. Do not transfer one member's identity to another. Previous unsolicited checks and their [NO_REPLY] rule do not apply: respond normally, briefly unless detail is requested. A mention without text calls for a short acknowledgement, not silence. Media metadata alone does not mean the image was seen.\n`
+              : '') +
             next.text,
           0,
           {

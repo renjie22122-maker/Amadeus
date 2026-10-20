@@ -13,6 +13,7 @@ export const coreTools = new Set([
   'list_chat_members',
   'read_chat_media',
   'prepare_chat_reply',
+  'retract_chat_message',
   'search_tools',
   'inspect_retrieval_status',
   'search_capabilities',

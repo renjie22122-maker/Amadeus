@@ -11,6 +11,7 @@ export interface ChatReplyPlan {
 export interface ChatBridge {
   query(c: ChatConnection, kind: 'info' | 'members'): Promise<any>;
   importMedia(c: ChatConnection, messageId: string): Promise<string[]>;
+  retract?(c: ChatConnection, deliveryId: string, senderId: string | null): Promise<unknown>;
 }
 const services = new WeakMap<Store, { channels: ChatConnections; bridge: ChatBridge }>();
 export function registerChatInteraction(channels: ChatConnections, bridge: ChatBridge) {
@@ -21,7 +22,7 @@ export function currentChat(store: Store, conversationId: string, runId: string)
   assert(service, 'CHAT_UNAVAILABLE', 'Chat transport is unavailable.');
   const row = store.db
     .prepare(
-      "SELECT connection_id FROM chat_inbox WHERE run_id=? AND state IN ('dispatching','running')",
+      "SELECT connection_id,sender_id FROM chat_inbox WHERE run_id=? AND state IN ('dispatching','running')",
     )
     .get(runId) as any;
   assert(row, 'CHAT_SCOPE', 'Only the current remote chat run can use this tool.');
@@ -32,7 +33,7 @@ export function currentChat(store: Store, conversationId: string, runId: string)
     'Current chat is disabled or outside this conversation.',
   );
   service.channels.authorize(c);
-  return { ...service, c };
+  return { ...service, c, currentSenderId: row.sender_id || null };
 }
 export function chatCapabilities(c: ChatConnection) {
   return {
@@ -42,6 +43,7 @@ export function chatCapabilities(c: ChatConnection) {
     quotedReply: ['onebot11', 'onebot12'].includes(c.transport),
     nativeFaces: c.transport === 'onebot11',
     images: true,
+    retractOwnMessages: ['onebot11', 'onebot12', 'telegram'].includes(c.transport),
     note: 'Bridge features require backend support. Unsupported actions fail explicitly; image stickers use the media upload path, not a universal native sticker format.',
   };
 }

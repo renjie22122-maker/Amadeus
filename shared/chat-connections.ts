@@ -86,6 +86,7 @@ export interface ChatIncoming {
   peerType?: 'private' | 'group';
   media?: ChatRemoteFile[];
   addressed?: boolean;
+  textOrigin?: 'user' | 'media-placeholder' | 'mention-only';
 }
 export interface ChatSecrets {
   token: string;

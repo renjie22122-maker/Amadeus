@@ -1,3 +1,9 @@
+import {
+  installDeliveryReceipts,
+  deliveryReceipt,
+  recallTarget,
+  chatRoute,
+} from './chat-recall.js';
 import { ChatFriendReview } from './chat-friend-review.js';
 import { registerChatInteraction } from './chat-interaction.js';
 import {
@@ -81,10 +87,67 @@ export class ChatTransports {
   private friends: ChatFriendReview;
   constructor(readonly channels: ChatConnections) {
     this.friends = new ChatFriendReview(channels);
+    installDeliveryReceipts(channels.store);
     registerChatInteraction(channels, {
       query: (c, k) => this.queryChat(c, k),
       importMedia: (c, m) => this.importChatMedia(c, m),
+      retract: (c, id, sender) => this.retractChat(c, id, sender),
     });
+  }
+  private async retractChat(c: ChatConnection, id: string, sender: string | null) {
+    const s = this.chatSession(c);
+    let admin = false;
+    if (
+      sender &&
+      sender !== c.senderId &&
+      c.peerType === 'group' &&
+      c.transport.startsWith('onebot')
+    ) {
+      const members = await this.queryChat(c, 'members');
+      admin =
+        Array.isArray(members) &&
+        members.some((m: any) => m.id === sender && ['admin', 'owner'].includes(m.role));
+    }
+    const row = recallTarget(this.channels.store, c, id, sender, admin);
+    return this.retractDelivery(c, s, row);
+  }
+  private async retractDelivery(c: ChatConnection, s: Session, row: any) {
+    // Claim before dispatch: an uncertain delete is never retried automatically.
+    const claimed = this.channels.store.db
+      .prepare(
+        "UPDATE chat_delivery SET state='retracting' WHERE id=? AND state IN ('sent','cleanup-pending')",
+      )
+      .run(row.id);
+    assert(claimed.changes === 1, 'CHAT_RECALL_STATE', 'Message is already being retracted.');
+    try {
+      if (c.transport === 'telegram') {
+        const result = await this.telegram(
+          c,
+          'deleteMessage',
+          { chat_id: c.peerId, message_id: row.message_id },
+          s,
+        );
+        assert(result === true, 'CHAT_RECALL_FAILED', 'Platform did not confirm retraction.');
+      } else if (c.transport === 'onebot11' || c.transport === 'onebot12')
+        await this.socketRequest(
+          c,
+          s,
+          c.transport === 'onebot11' ? 'delete_msg' : 'delete_message',
+          { message_id: row.message_id },
+        );
+      else throw Error('Retraction unsupported');
+      this.channels.store.db
+        .prepare("UPDATE chat_delivery SET state='retracted' WHERE id=?")
+        .run(row.id);
+      return { status: 'retracted', deliveryId: row.id };
+    } catch {
+      this.channels.store.db
+        .prepare("UPDATE chat_delivery SET state='unconfirmed' WHERE id=?")
+        .run(row.id);
+      throw Error(
+        'Message retraction was not confirmed. The platform may reject expired or unsupported retractions.',
+      );
+    }
   }
   private chatSession(c: ChatConnection) {
     this.channels.authorize(c);
@@ -446,13 +509,18 @@ export class ChatTransports {
       }
       if (
         !s.sending &&
-        (
+        ((
           this.channels.store.db
             .prepare(
-              "SELECT state FROM chat_outbox WHERE connection_id=? AND state<>'sent' ORDER BY created_at,rowid LIMIT 1",
+              "SELECT state FROM chat_outbox WHERE connection_id=? AND state NOT IN ('sent','cancelled') ORDER BY created_at,rowid LIMIT 1",
             )
             .get(c.id) as any
-        )?.state === 'pending' &&
+        )?.state === 'pending' ||
+          !!this.channels.store.db
+            .prepare(
+              "SELECT 1 FROM chat_delivery WHERE connection_id=? AND state='cleanup-pending' LIMIT 1",
+            )
+            .get(c.id)) &&
         Date.now() >= s.nextSend &&
         (!(c.transport.startsWith('onebot') || c.transport === 'wecom') ||
           (s.socket?.readyState === WebSocket.OPEN && (c.transport !== 'wecom' || s.ready)))
@@ -1085,7 +1153,7 @@ export class ChatTransports {
   }
   private async send(c: ChatConnection, s: Session, row: any) {
     if (c.transport === 'telegram')
-      await this.telegram(
+      return this.telegram(
         c,
         'sendMessage',
         { chat_id: c.peerId, text: row.text, link_preview_options: { is_disabled: true } },
@@ -1146,7 +1214,7 @@ export class ChatTransports {
       if (!result.id) throw Error('QQ send unconfirmed');
     } else {
       const echo = randomUUID();
-      await new Promise<void>((resolve, reject) => {
+      return await new Promise<any>((resolve, reject) => {
         const timer = setTimeout(() => {
           s.pending.delete(echo);
           reject(Error('OneBot send timeout'));
@@ -1159,7 +1227,7 @@ export class ChatTransports {
                 ? result.errcode === 0
                 : result.retcode === 0 && result.status === 'ok'
             )
-              ? resolve()
+              ? resolve(result.data)
               : reject(Error('OneBot rejected send'));
           },
           reject: () => {
@@ -1200,13 +1268,52 @@ export class ChatTransports {
   private async deliver(c: ChatConnection, s: Session) {
     if (!this.current(c, s)) return;
     this.channels.authorize(this.channels.get(c.id));
+    const cleanup = this.channels.store.db
+      .prepare(
+        "SELECT * FROM chat_delivery WHERE connection_id=? AND state='cleanup-pending' ORDER BY sent_at LIMIT 1",
+      )
+      .get(c.id) as any;
+    if (cleanup) {
+      if (cleanup.route !== chatRoute(c)) {
+        this.channels.store.db
+          .prepare("UPDATE chat_delivery SET state='scope-changed' WHERE id=?")
+          .run(cleanup.id);
+        return;
+      }
+      try {
+        await this.retractDelivery(c, s, cleanup);
+      } catch {
+        /* Persisted unconfirmed; never pretend deletion succeeded. */
+      }
+      return;
+    }
     // Stop at an uncertain delivery to preserve the ordering of multipart responses.
     const row = this.channels.store.db
       .prepare(
-        "SELECT * FROM chat_outbox WHERE connection_id=? AND state<>'sent' ORDER BY created_at,rowid LIMIT 1",
+        "SELECT * FROM chat_outbox WHERE connection_id=? AND state NOT IN ('sent','cancelled') ORDER BY created_at,rowid LIMIT 1",
       )
       .get(c.id) as any;
     if (!row || row.state !== 'pending') return;
+    const ticketCode =
+      /^approval(?:-allow|-deny|-scope|-remember|-details)?:[a-f0-9-]{36}:([a-f0-9]{24}):/.exec(
+        row.id,
+      )?.[1];
+    if (ticketCode) {
+      const t = this.channels.store.db
+        .prepare('SELECT * FROM chat_approval WHERE code=? AND connection_id=?')
+        .get(ticketCode, c.id) as any;
+      const q = t ? this.channels.store.maybe<any>('input', t.input_id) : null;
+      if (!t || t.used || q?.status !== 'pending' || t.expires_at - Date.now() < 30000) {
+        this.channels.store.db
+          .prepare("UPDATE chat_outbox SET state='cancelled',text='' WHERE id=?")
+          .run(row.id);
+        if (t && !t.used && q?.status === 'pending')
+          this.channels.store.db
+            .prepare('UPDATE chat_approval SET expires_at=? WHERE code=?')
+            .run(Date.now(), ticketCode);
+        return;
+      }
+    }
     if (c.transport === 'qq') {
       const context = this.channels.store.maybe<any>('chat-qq-reply', c.id);
       if (!context || context.sequence >= 5 || Date.now() - context.receivedAt >= 3600000) {
@@ -1224,7 +1331,10 @@ export class ChatTransports {
     this.channels.store.db.prepare("UPDATE chat_outbox SET state='sending' WHERE id=?").run(row.id);
     try {
       if (row.reference) await this.sendMedia(c, s, row);
-      else await this.send(c, s, row);
+      else {
+        const result = await this.send(c, s, row);
+        deliveryReceipt(this.channels.store, c, row, result?.message_id);
+      }
       if (!this.closed)
         this.channels.store.db
           .prepare("UPDATE chat_outbox SET state='sent',text='' WHERE id=?")

@@ -39,12 +39,20 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
     time: unknown,
     media: ChatRemoteFile[] = [],
   ) => {
+    const addressed =
+      (c.transport === 'qq' && event.t === 'GROUP_AT_MESSAGE_CREATE') ||
+      (Array.isArray(event.message) &&
+        event.message.some(
+          (x: any) =>
+            (x.type === 'at' && String(x.data?.qq) === c.accountId) ||
+            (x.type === 'mention' && String(x.data?.user_id) === c.accountId),
+        ));
     if (
       id == null ||
       sender == null ||
       peer == null ||
       typeof text !== 'string' ||
-      (!text.trim() && !media.length) ||
+      (!text.trim() && !media.length && !addressed) ||
       text.length > 16000 ||
       media.length > 10
     )
@@ -58,17 +66,17 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
         peerId: String(peer),
         text:
           text.trim() ||
-          'Please inspect the attached media. Use transcribe_media for audio and read_image for images; do not infer unheard content.',
+          (media.length
+            ? '[Media attached without a caption]'
+            : '[Bot mentioned without additional text]'),
+        textOrigin: text.trim()
+          ? ('user' as const)
+          : media.length
+            ? ('media-placeholder' as const)
+            : ('mention-only' as const),
         timestamp,
         peerType: c.peerType || 'private',
-        addressed:
-          (c.transport === 'qq' && event.t === 'GROUP_AT_MESSAGE_CREATE') ||
-          (Array.isArray(event.message) &&
-            event.message.some(
-              (x: any) =>
-                (x.type === 'at' && String(x.data?.qq) === c.accountId) ||
-                (x.type === 'mention' && String(x.data?.user_id) === c.accountId),
-            )),
+        addressed,
         media,
       },
     ];

@@ -89,3 +89,31 @@ Enable friend-request review on one dedicated private work/controller connection
 Each accepted friend receives a new isolated ordinary conversation. Controller history, private memory, projects, work permissions and remote approvals are never inherited. Shared knowledge follows the controller connection setting. Existing/paused routes are preserved. The 20-connection limit and 50-new-requests/day bound apply. Uncertain bridge results are not retried; inspect them in QQ. Task approvals remain separate, using the exact `/approve CODE` command; issuing a review offer no longer adds a contradictory local-only waiting notice.
 
 Remote approval and denial commands are sent as separate short messages for whole-message copying. Group commands include the trigger prefix. These are plain messages, not native platform buttons; full review details remain in the preceding message and codes stay single-use with a 15-minute expiry.
+
+### Group calls, passive media and targeted replies
+
+A native mention without additional text is an explicit call and receives a brief acknowledgement. Passive media and file notifications stay available as context but do not independently trigger unsolicited participation or become fabricated inspection instructions. Later explicit media questions use the existing association/read path.
+
+Each explicit run identifies its current sender separately from the controller and group owner. New explicit requests supersede unfinished proactive replies. The internal `[NO_REPLY]` marker is never delivered literally: proactive runs remain silent; explicit runs that unexpectedly return it receive a brief acknowledgement without claiming to understand attachments.
+
+On OneBot 11/12, explicit group responses default to a native mention of the observed current sender. Valid model-selected recipients are retained; unsolicited whole-group replies do not acquire a default recipient. Unknown/expired recipients and unsupported platform mentions are not guessed. Protocol/scheduler tests verify these boundaries, not a visual model's recognition accuracy.
+
+Remote review defaults to operation, destination, parameters, cost and risk; long media prose has a marked preview. `/details CODE` retrieves the full payload for the same bound controller without approving it. Commands and paths are never shortened; sensitive or oversized payloads still require local review.
+
+### Revocable remembered approvals
+
+Local approval cards offer “Allow and remember scope”; bound remote work controllers can send `/allow-similar CODE`. Media generation/transcription grants bind the configured service: prose, voices, parameters and conversation-authorized references may vary, but per-call estimated cost cannot increase. Changing service identity, endpoint or model configuration requires review; unknown prices are ineligible.
+
+Other approvals with explicit execution backend and command require exact approval-parameter matches, including command, target, arguments and source digests where supplied. Name-only extension discovery, recovery inspection and force-manual requests are ineligible. Grants are conversation-local, valid for 24 hours/up to 100 calls, and never replace capability checks, attachment isolation or execution revalidation.
+
+Revoke from the approved local card, or use `/grants` and `/revoke-grants` remotely (with the group prefix where applicable). Only the enabled remote-approval work controller may manage grants. Grants persist locally across restart; authority/workspace/connection revisions invalidate matching. Revocation affects subsequent requests, not an already running approved operation.
+
+### Review expiry and message retraction
+
+Remote codes use a platform-aware application lifetime: OneBot 11/12 use 90 seconds, reserving time for bridge latency and recall; Telegram uses 5 minutes; other adapters use 2 minutes without automatic deletion. These are application defaults, not universal provider limits. OneBot specifies deletion actions but no common time limit. Telegram documents its own [deleteMessage constraints](https://core.telegram.org/bots/api#deletemessage). Adapters can reject a deletion even inside these windows.
+
+Lifetime includes send queue time. Approval fragments with less than 30 seconds remaining are cancelled, the old code expires, and the controller can send `/renew CODE` for an unchanged pending request. Renewal is explicit, never an infinite reminder loop. Accepted/denied/expired remote offers schedule best-effort cleanup using verified bot send receipts. Unknown outcomes are retained as unconfirmed, not silently retried or reported successful. Unsupported adapters retain messages. Local pending input, conversation history, completed effects and audit records are unaffected by retraction.
+
+Users may explicitly ask the bot to retract its own reply. `inspect_chat.sentMessages` exposes delivery IDs and `retract_chat_message` accepts only a verified delivery in the current route. Ordinary members may retract replies to themselves; the configured controller or freshly queried platform administrators may retract other bot messages. Ambiguous requests require clarification. No arbitrary user-message deletion or cross-chat deletion is supported. Historical messages and media without retained platform receipts cannot be safely retracted.
+
+No new daemon, port, dependency or startup task is required. Tables migrate on normal startup; the existing detached bot supervisor remains the launcher. Deployment needs an idle Amadeus restart, not a NapCat or benchmark restart. On reconnect the scheduler cleans expired offers; it cannot guarantee provider recall after an extended outage.

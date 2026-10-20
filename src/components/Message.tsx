@@ -1,3 +1,4 @@
+import { canRememberApproval, rememberedApprovalScope } from '../../shared/approval-grants.js';
 import { ReadAloud } from './ReadAloud';
 import { AttachmentPreview } from './AttachmentPreview';
 import { approvalPresentation } from '../../shared/approval-presentation';
@@ -254,7 +255,7 @@ export function InputCard({ input, t, refresh, notify }: any) {
   const zh = t('settings') !== 'Settings';
   const pending = input.status === 'pending';
   const risk = approvalPresentation(input.payload, zh);
-  const respond = async (allow: boolean, alternative = false) => {
+  const respond = async (allow: boolean, alternative = false, remember = false) => {
     if (sending) return;
     setSending(true);
     try {
@@ -264,9 +265,12 @@ export function InputCard({ input, t, refresh, notify }: any) {
           (alternative
             ? 'Do not execute this operation. Propose a safer or narrower alternative and explain it.'
             : allow
-              ? 'Approved once for the exact operation shown.'
+              ? remember
+                ? 'Approved with the displayed bounded remembered scope.'
+                : 'Approved once for the exact operation shown.'
               : 'Denied'),
         allow,
+        remember,
       });
       await refresh();
     } catch (e: any) {
@@ -561,6 +565,15 @@ export function InputCard({ input, t, refresh, notify }: any) {
                   : t('answer')
               }
             />
+            {input.kind === 'approval' && canRememberApproval(input.payload) && (
+              <p className="muted">
+                {zh
+                  ? rememberedApprovalScope(input.payload)
+                  : input.payload.backend === 'media-service'
+                    ? 'Same media service configuration in this conversation; text, voices, parameters and authorized references may change. No higher per-call estimate; 24 hours, up to 100 calls; revocable.'
+                    : 'Exactly matching operation parameters, command, backend and target in this conversation. 24 hours, up to 100 calls; revocable.'}
+              </p>
+            )}
             <div className="row end">
               {input.kind === 'approval' && (
                 <>
@@ -573,6 +586,11 @@ export function InputCard({ input, t, refresh, notify }: any) {
                     </button>
                   )}
                 </>
+              )}
+              {input.kind === 'approval' && canRememberApproval(input.payload) && (
+                <button disabled={sending} onClick={() => void respond(true, false, true)}>
+                  {zh ? '允许并记住此范围' : 'Allow and remember scope'}
+                </button>
               )}
               <button className="primary" disabled={sending} onClick={() => void respond(true)}>
                 {sending
@@ -588,7 +606,32 @@ export function InputCard({ input, t, refresh, notify }: any) {
             </div>
           </>
         ) : (
-          <p>{input.answer}</p>
+          <>
+            <p>{input.answer}</p>
+            {input.payload.rememberedGrantId && (
+              <button
+                disabled={sending}
+                onClick={async () => {
+                  setSending(true);
+                  try {
+                    await api(
+                      '/approval-grants/' + input.payload.rememberedGrantId,
+                      undefined,
+                      'DELETE',
+                    );
+                    await refresh();
+                    notify(zh ? '该范围授权已撤销' : 'Scope revoked');
+                  } catch (e) {
+                    notify(String(e));
+                  } finally {
+                    setSending(false);
+                  }
+                }}
+              >
+                {zh ? '撤销此范围授权' : 'Revoke scope'}
+              </button>
+            )}
+          </>
         )}
       </div>
     </details>

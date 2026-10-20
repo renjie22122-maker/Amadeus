@@ -19,6 +19,7 @@ export function capabilityDecision(ctx: ToolContext, name: string, effect: ToolS
           'list_chat_members',
           'read_chat_media',
           'prepare_chat_reply',
+          'retract_chat_message',
           'search_tools',
           'search_knowledge',
           'list_knowledge_documents',

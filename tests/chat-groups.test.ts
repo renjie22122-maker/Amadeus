@@ -660,7 +660,8 @@ test('group file notices and mixed unsupported segments preserve downloadable me
     ],
   })[0];
   assert.equal(mixed.media?.length, 1);
-  assert.match(mixed.text, /attached media/);
+  assert.equal(mixed.textOrigin, 'media-placeholder');
+  assert.match(mixed.text, /Media attached/);
 });
 test('reply plans cannot target another group or promote a claimed identity', async (t) => {
   const { store, channels, c } = setup(t);
@@ -713,7 +714,7 @@ test('passive media can be imported once without starting a model turn or readin
     timestamp: Date.now(),
     media: [{ id: 'encoded-file', kind: 'image', name: 'pic.png' }],
   });
-  assert.match(channels.groups.text(c), /Media not imported/);
+  assert.match(channels.groups.text(c), /content has not been inspected/);
   const refs = await transport.importChatMedia(c, 'pic');
   assert.equal(refs.length, 1);
   const a = store.get<any>('attachment', refs[0].slice(11));
@@ -936,4 +937,116 @@ test('friend denial, capacity and changed permissions cannot enroll or perform u
     /changed/,
   );
   assert.equal(actions.length, 1);
+});
+
+function ordinaryGroup(t: any) {
+  const f = setup(t);
+  Object.assign(f.c, {
+    accessMode: 'chat',
+    allGroupMembers: true,
+    groupContext: true,
+    groupReplyMode: 'participate',
+    remoteApprovals: false,
+  });
+  f.store.put('chat-connection', f.c);
+  return f;
+}
+function groupMessage(c: ChatConnection, parts: any[], mid = 'mention') {
+  return incoming(c, {
+    post_type: 'message',
+    message_type: 'group',
+    self_id: c.accountId,
+    group_id: c.peerId,
+    user_id: '124',
+    message_id: mid,
+    time: Date.now() / 1000,
+    message: parts,
+  })[0];
+}
+test('bare native mention is a real directed request and carries the current sender', (t) => {
+  const { channels, c, calls } = ordinaryGroup(t);
+  const m = groupMessage(c, [{ type: 'at', data: { qq: c.accountId } }]);
+  assert(m);
+  assert.equal(m.addressed, true);
+  assert.equal(m.textOrigin, 'mention-only');
+  assert.equal(channels.receive(c.id, m), 'queued');
+  channels.tick();
+  assert.equal(calls.length, 1);
+  assert(calls[0][1].includes('explicitly addressed request from platform sender 124'));
+  assert(calls[0][1].includes('short acknowledgement'));
+  assert(calls[0][1].includes('Previous unsolicited checks'));
+});
+test('unaddressed media stays readable context without initiating participation; mentioned media queues', (t) => {
+  const { channels, c, store } = ordinaryGroup(t);
+  const media = { type: 'image', data: { file: 'image-id', url: 'https://example.com/image.png' } };
+  const m = groupMessage(c, [media], 'passive');
+  assert.equal(m.textOrigin, 'media-placeholder');
+  assert(!m.text.includes('Please inspect'));
+  assert.equal(channels.receive(c.id, m), 'observed');
+  assert.equal(channels.groups.consume(c, Date.now() + 6000), false);
+  assert(channels.groups.text(c).includes('available-via-read_chat_media'));
+  const explicit = groupMessage(c, [{ type: 'at', data: { qq: c.accountId } }, media], 'explicit');
+  channels.receive(c.id, explicit);
+  assert.equal(
+    store.db.prepare('SELECT state FROM chat_inbox WHERE connection_id=?').get(c.id)!.state,
+    'receiving',
+  );
+});
+test('direct group replies cannot leak NO_REPLY and natively mention the actual sender, not controller', (t) => {
+  const { channels, c, store, calls } = ordinaryGroup(t);
+  channels.receive(c.id, groupMessage(c, [{ type: 'at', data: { qq: c.accountId } }]));
+  channels.tick();
+  const runId = calls[0][3].runId;
+  store.put('run', {
+    id: runId,
+    conversationId: c.conversationId,
+    status: 'completed',
+    createdAt: Date.now(),
+  });
+  store.event(c.conversationId, runId, 'assistant.message', { text: '[NO_REPLY]', final: true });
+  channels.tick();
+  const out: any = store.db
+    .prepare('SELECT text,reply_plan FROM chat_outbox WHERE connection_id=?')
+    .get(c.id);
+  assert(out);
+  assert(!out.text.includes('[NO_REPLY]'));
+  const plan = JSON.parse(out.reply_plan);
+  assert.deepEqual(plan.mentions, ['124']);
+  const action = onebotAction(c, out.text, 'echo', plan);
+  assert(action.params.message.some((p: any) => p.type === 'at' && p.data.qq === '124'));
+  assert(!action.params.message.some((p: any) => p.type === 'at' && p.data.qq === c.senderId));
+});
+test('new explicit request supersedes an unfinished unsolicited response without suppressing future requests', (t) => {
+  const { channels, c, store, calls } = ordinaryGroup(t);
+  channels.receive(c.id, groupMessage(c, [{ type: 'at', data: { qq: c.accountId } }]));
+  channels.tick();
+  const runId = calls[0][3].runId,
+    startedAt = Date.now() - 1000;
+  store.put('chat-proactive-run', { id: runId, createdAt: startedAt });
+  channels.groups.addressed(c, Date.now());
+  store.put('run', {
+    id: runId,
+    conversationId: c.conversationId,
+    status: 'completed',
+    createdAt: startedAt,
+  });
+  store.event(c.conversationId, runId, 'assistant.message', {
+    text: 'outdated unsolicited image commentary',
+    final: true,
+  });
+  channels.tick();
+  assert.equal(store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get()!.n, 0);
+  channels.receive(
+    c.id,
+    groupMessage(
+      c,
+      [
+        { type: 'at', data: { qq: c.accountId } },
+        { type: 'text', data: { text: 'hello' } },
+      ],
+      'next',
+    ),
+  );
+  channels.tick();
+  assert.equal(calls.length, 2);
 });

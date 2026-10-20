@@ -15,9 +15,8 @@ export class ChatGroupContext {
         c.id,
         m.id,
         m.senderId,
-        (m.media?.length
-          ? '[Media not imported; use inspect_chat/read_chat_media with this message ID.] '
-          : '') + m.text.slice(0, 600),
+        (m.media?.length ? '[Media attached; content has not been inspected.] ' : '') +
+          m.text.slice(0, 600),
         now,
       );
     this.store.db
@@ -73,6 +72,18 @@ export class ChatGroupContext {
       )
       .get(c.id) as any;
     if (!last || now - last.at < 5000 || now - last.at > 120000) return;
+    // Media/emoji notifications are observations, not requests to initiate a response.
+    // Retain them for later explicitly addressed questions without spending a model call.
+    const saved = this.store.db
+      .prepare('SELECT payload FROM chat_received WHERE connection_id=? AND message_id=?')
+      .get(c.id, last.message_id) as any;
+    const message = saved ? JSON.parse(saved.payload) : undefined;
+    if (
+      message?.media?.length ||
+      (message?.textOrigin && message.textOrigin !== 'user') ||
+      /^\[(?:Media |Group file upload|Platform face ID:|Bot mentioned)/.test(last.text.trim())
+    )
+      return;
     const b = this.store.maybe<any>('chat-group-budget', c.id) || {
       lastAt: 0,
       lastId: '',
@@ -112,6 +123,10 @@ export class ChatGroupContext {
       lastAt: now,
       lastId: last?.message_id || '',
     });
+  }
+  superseded(c: ChatConnection, startedAt: number) {
+    const budget = this.store.maybe<{ lastAt?: number }>('chat-group-budget', c.id);
+    return (budget?.lastAt || 0) > startedAt;
   }
   clear(key: string) {
     this.store.db.prepare('DELETE FROM chat_group_context WHERE connection_id=?').run(key);

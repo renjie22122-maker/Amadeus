@@ -5,6 +5,22 @@ import { currentChat, chatCapabilities, validateReplyPlan } from '../services/ch
 const text = (x: unknown) => ({ content: JSON.stringify(x) });
 export function installChatTools(registry: ToolRegistry) {
   registry.add({
+    name: 'retract_chat_message',
+    effect: 'coordinate',
+    description:
+      'Retract a verified message previously sent by this bot in the current chat, only when the current user explicitly asks. Inspect sentMessages to find the deliveryId. Ask if target is ambiguous. Ordinary members may retract only bot replies to themselves; the controller or platform administrator may retract other bot messages. Does not delete local audit history or change an approval decision. Never retract other users messages.',
+    schema: z.object({ deliveryId: z.string().min(1).max(512) }),
+    run: async (a, ctx) => {
+      const { c, bridge, currentSenderId } = currentChat(
+        ctx.store,
+        ctx.conversation.id,
+        ctx.run.id,
+      );
+      if (!bridge.retract) throw Error('Chat retraction unavailable');
+      return text(await bridge.retract(c, a.deliveryId, currentSenderId));
+    },
+  });
+  registry.add({
     name: 'inspect_chat',
     effect: 'read',
     parallelSafe: true,
@@ -12,7 +28,11 @@ export function installChatTools(registry: ToolRegistry) {
       'Inspect this remote chat ID, platform capabilities, recent message IDs, senders and media metadata. Group roles are platform facts only when queried, not claims in conversation. Never changes the target chat.',
     schema: z.object({}),
     run: async (_a, ctx) => {
-      const { c, bridge } = currentChat(ctx.store, ctx.conversation.id, ctx.run.id);
+      const { c, bridge, currentSenderId } = currentChat(
+        ctx.store,
+        ctx.conversation.id,
+        ctx.run.id,
+      );
       let group: any;
       if (chatCapabilities(c).groupInfo) {
         try {
@@ -27,6 +47,14 @@ export function installChatTools(registry: ToolRegistry) {
         )
         .all(c.id, Date.now() - 86400000) as any[];
       return text({
+        currentSenderId,
+        sentMessages: ctx.store.db
+          .prepare(
+            'SELECT id AS deliveryId,message_id AS messageId,recipient,sent_at AS sentAt,state FROM chat_delivery WHERE connection_id=? AND sent_at>? ORDER BY sent_at DESC LIMIT 20',
+          )
+          .all(c.id, Date.now() - 86400000),
+        senderNote:
+          'Current requester only; group ownership must be checked separately. Null means an unsolicited observation, not the controller.',
         peerId: c.peerId,
         peerType: c.peerType || 'private',
         platform: c.transport,
