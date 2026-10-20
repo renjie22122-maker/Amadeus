@@ -149,15 +149,15 @@ export async function streamedVectors(
   }
   const snapshots: any[] = [];
   const sql =
-    'SELECT c.* FROM chunks c WHERE c.vector IS NOT NULL AND c.scope IN (' +
+    'SELECT c.* FROM chunks c WHERE c.id IN (SELECT p.id FROM chunks p WHERE p.vector IS NOT NULL AND p.scope IN (' +
     scopes.map(() => '?').join(',') +
-    ') AND c.document_id IN (' +
+    ') AND p.document_id IN (' +
     documentEligibilitySQL +
     ')' +
     (documentIds.length
-      ? ' AND c.document_id IN (' + documentIds.map(() => '?').join(',') + ')'
+      ? ' AND p.document_id IN (' + documentIds.map(() => '?').join(',') + ')'
       : '') +
-    ' AND c.id>? ORDER BY c.id LIMIT ?';
+    ' AND p.id>? ORDER BY p.id LIMIT ?) ORDER BY c.id';
   const batchSize = Math.max(
     1,
     Math.min(4096, Math.floor((16 * 1024 * 1024) / (query.length * 4))),

@@ -180,3 +180,20 @@ test('large corpus inspection yields to other requests and retains identical sta
     knowledge.indexStatuses('general'),
   );
 });
+
+test('vector pagination covers eligibility before loading bounded payloads', (t) => {
+  const { store, knowledge } = fixture(t);
+  const a: any = knowledge.import('general', 'a', 'public alpha');
+  knowledge.import('project:private', 'b', 'private beta');
+  store.db
+    .prepare('UPDATE chunks SET vector=?')
+    .run(JSON.stringify({ model: 'fixture', values: [1, 0] }));
+  const sql =
+    "SELECT c.* FROM chunks c WHERE c.id IN (SELECT p.id FROM chunks p WHERE p.vector IS NOT NULL AND p.scope IN (?) AND p.document_id IN (SELECT id FROM records WHERE kind='document') AND p.id>? ORDER BY p.id LIMIT ?) ORDER BY c.id";
+  const plan = store.db.prepare('EXPLAIN QUERY PLAN ' + sql).all('general', '', 1) as any[];
+  assert.ok(plan.some((r) => r.detail.includes('chunks_vector_page')));
+  const rows = store.db.prepare(sql).all('general', '', 1) as any[];
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].document_id, a.id);
+  assert.equal(store.db.prepare(sql).all('general', rows[0].id, 1).length, 0);
+});

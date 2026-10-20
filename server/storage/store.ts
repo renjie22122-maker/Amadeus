@@ -41,6 +41,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS chunks(id TEXT PRIMARY KEY,scope TEXT NOT NULL,document_id TEXT NOT NULL,name TEXT NOT NULL,ordinal INTEGER NOT NULL,text TEXT NOT NULL,vector TEXT,source_hash TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS chunks_scope ON chunks(scope);
       CREATE INDEX IF NOT EXISTS chunks_document_ordinal ON chunks(document_id,ordinal);
+      CREATE INDEX IF NOT EXISTS chunks_vector_page ON chunks(scope,id,document_id) WHERE vector IS NOT NULL;
       CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(id UNINDEXED,terms);
       CREATE TABLE IF NOT EXISTS ledger(request_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS effects(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,tool TEXT NOT NULL,args TEXT NOT NULL,state TEXT NOT NULL,result TEXT);

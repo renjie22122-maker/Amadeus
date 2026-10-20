@@ -128,3 +128,6 @@ Large-corpus statistics and index-status HTTP/tool requests yield every 64 rows 
 
 
 Optional LightRAG query errors now preserve scoped base retrieval and report lightRagStatus=unavailable with elapsed time. This does not certify graph coverage; an enabled connection may still be building its graph.
+
+
+Cold vector shard restoration selects a bounded page of eligible IDs through a partial covering index before loading vector payloads. This avoids sorting the corpus-sized vector JSON payload for every page, while preserving scope and temporal document filters.
