@@ -1,0 +1,87 @@
+"""Bounded, content-free request diagnostics for the optional RAG service."""
+import json, re, threading, time, uuid
+from contextlib import contextmanager
+
+class RequestDiagnostics:
+    def __init__(self, root):
+        self.root, self.local, self.write_lock = root, threading.local(), threading.Lock()
+
+    def begin(self, path, request_id='', budget_ms=60000):
+        request_id = request_id if re.fullmatch(r'[a-zA-Z0-9-]{1,64}', request_id) else uuid.uuid4().hex
+        self.local.state = {'requestId':request_id, 'path':path, 'start':time.monotonic(),
+                            'budgetMs':budget_ms, 'at':int(time.time()*1000), 'stagesMs':{}}
+
+    def add(self, **values):
+        state = getattr(self.local, 'state', None)
+        if state is not None: state.update(values)
+
+    def remaining(self):
+        state = getattr(self.local, 'state', None)
+        return max(0, state['budgetMs']/1000-(time.monotonic()-state['start'])) if state else 60
+
+    def check(self):
+        if self.remaining() <= 0: raise TimeoutError('Request deadline exceeded')
+
+    @contextmanager
+    def stage(self, name):
+        start = time.monotonic()
+        try: yield
+        finally:
+            state = getattr(self.local, 'state', None)
+            if state is not None:
+                stages = state['stagesMs']; stages[name] = stages.get(name, 0)+(time.monotonic()-start)*1000
+
+    @contextmanager
+    def locked(self, lock, name):
+        with self.stage(name+'Wait'):
+            acquired = lock.acquire(timeout=self.remaining())
+        if not acquired: raise TimeoutError('Model queue deadline exceeded')
+        try:
+            self.check()
+            with self.stage(name): yield
+        finally: lock.release()
+
+    def finish(self, outcome):
+        state = getattr(self.local, 'state', None)
+        if state is None: return
+        self.local.state = None
+        elapsed = (time.monotonic()-state.pop('start'))*1000
+        state.update(outcome=outcome, elapsedMs=round(elapsed,2), deadlineExceeded=elapsed>=state['budgetMs'])
+        state['stagesMs'] = {k:round(v,2) for k,v in state['stagesMs'].items()}
+        # No prompts, URLs, credentials, response vectors or exception messages.
+        try:
+            with self.write_lock:
+                path=self.root/'requests.jsonl'
+                if path.exists() and path.stat().st_size >= 1024*1024:
+                    path.replace(self.root/'requests.previous.jsonl')
+                with path.open('a',encoding='utf-8') as stream: stream.write(json.dumps(state)+'\n')
+        except OSError: pass  # Diagnostics must never fail an otherwise successful request.
+
+
+def embedding_windows(encoder, texts, purpose='passage'):
+    """Retokenize prefixed windows before inference; never silently truncate a tail."""
+    tokenizer=encoder.tokenizer
+    limits=[int(v) for v in (getattr(encoder,'max_seq_length',None),getattr(tokenizer,'model_max_length',None))
+            if isinstance(v,(int,float)) and 8 <= v <= 1000000]
+    if not limits: raise ValueError('Embedding model must declare a finite context length')
+    limit=min(limits)
+    windows,groups,tokens,lengths=[],[],0,[]
+    for text in texts:
+        prefix='query: ' if text.startswith('query: ') or purpose=='query' else 'passage: '
+        body=text.split(': ',1)[1] if text.startswith(('query: ','passage: ')) else text
+        # This is counting/splitting, not model inference. Suppress only this tokenizer's length warning.
+        ids=tokenizer.encode(body,add_special_tokens=False,verbose=False)
+        tokens+=len(ids); group=[]; start=0
+        while True:
+            end=min(len(ids),start+min(480,limit-8))
+            while True:
+                window=prefix+tokenizer.decode(ids[start:end],skip_special_tokens=True)
+                length=len(tokenizer.encode(window,add_special_tokens=True,truncation=False,verbose=False))
+                if length<=limit: break
+                if end-start<=1: raise ValueError('Embedding prefix/token exceeds model context')
+                end=start+max(1,(end-start)//2)
+            group.append(len(windows));windows.append(window);lengths.append(length)
+            if end>=len(ids): break
+            start=end-min(32,max(0,end-start-1))
+        groups.append(group)
+    return windows,groups,tokens,{'inputTokens':tokens,'windows':len(windows),'maxModelInputTokens':max(lengths,default=0),'modelTokenLimit':limit}

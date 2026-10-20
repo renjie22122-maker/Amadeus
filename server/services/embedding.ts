@@ -1,3 +1,4 @@
+import { ragFetch } from './rag-http.js';
 import { QueryCache } from './query-cache.js';
 import { createHash } from 'node:crypto';
 import { localEncode } from './local-embedding.js';
@@ -72,22 +73,23 @@ export class Embeddings {
       'Embedding URL cannot contain embedded credentials.',
     );
     const base = s.baseUrl.replace(/\/$/, '');
-    const response = await fetch(base.endsWith('/embeddings') ? base : base + '/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(s.apiKey ? { Authorization: 'Bearer ' + s.apiKey } : {}),
+    const response = await ragFetch(
+      base.endsWith('/embeddings') ? base : base + '/embeddings',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(s.apiKey ? { Authorization: 'Bearer ' + s.apiKey } : {}),
+        },
+        body: JSON.stringify({
+          model: s.model,
+          input: /^intfloat\/multilingual-e5-(small|base|large)$/.test(s.model)
+            ? texts.map((text) => (purpose === 'query' ? 'query: ' : 'passage: ') + text)
+            : texts,
+        }),
       },
-      body: JSON.stringify({
-        model: s.model,
-        input: /^intfloat\/multilingual-e5-(small|base|large)$/.test(s.model)
-          ? texts.map((text) => (purpose === 'query' ? 'query: ' : 'passage: ') + text)
-          : texts,
-      }),
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(60000)])
-        : AbortSignal.timeout(60000),
-    });
+      signal,
+    );
     assert(response.ok, 'EMBEDDING_FAILED', 'Embedding endpoint returned HTTP ' + response.status);
     const data = (await response.json()) as any;
     assert(

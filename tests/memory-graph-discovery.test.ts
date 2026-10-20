@@ -38,7 +38,11 @@ test('legacy source nodes are readable, searchable, paginated and lifecycle-filt
     assert.equal(catalog.nextOffset, 1);
     assert.equal(catalog.statistics.provenanceRelations, 2);
     assert.equal(catalog.statistics.semanticEntities, 0);
-    assert.ok(['用户偏好中英双语技术文档','Amadeus project uses SQLite'].includes(catalog.entities[0].displayName));
+    assert.ok(
+      ['用户偏好中英双语技术文档', 'Amadeus project uses SQLite'].includes(
+        catalog.entities[0].displayName,
+      ),
+    );
     assert.equal(graph.catalog(['user'], { offset: 1 }).entities.length, 1);
     const found = graph.search(['user'], '双语 文档');
     assert.ok(found.paths.length);
@@ -224,5 +228,57 @@ test('automatic graph learning checks human quotations, deduplicates calls and r
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('graph verifies duplicate quotes once per search, rechecks changes, and uses document index', () => {
+  const store = new Store(':memory:');
+  try {
+    store.put('document', { id: 'doc', scope: 'general', createdAt: 1 });
+    store.db
+      .prepare('INSERT INTO chunks(id,scope,document_id,name,ordinal,text,source_hash) VALUES(?,?,?,?,?,?,?)')
+      .run('chunk', 'general', 'doc', 'source', 0, 'original evidence', 'fixture');
+    for (const id of ['a', 'b', 'c'])
+      store.put('memory-entity', { id, scope: 'general', name: id, aliases: [], automatic: true });
+    for (const [id, to] of [
+      ['one', 'b'],
+      ['two', 'c'],
+    ])
+      store.put('knowledge-edge', {
+        id,
+        scope: 'general',
+        from: 'a',
+        to,
+        relation: 'related',
+        evidence: [{ type: 'document', id: 'doc', quote: 'original evidence' }],
+        active: true,
+        validFrom: 1,
+        validUntil: null,
+      });
+    const graph = new KnowledgeGraph(store);
+    const original = graph.supported.bind(graph);
+    let checked = 0;
+    graph.supported = (...args) => {
+      checked++;
+      return original(...args);
+    };
+    assert.equal(graph.search(['general'], 'original').diagnostics.usableEdges, 2);
+    assert.equal(checked, 1);
+    assert.match(
+      JSON.stringify(
+        store.db
+          .prepare(
+            'EXPLAIN QUERY PLAN SELECT 1 FROM chunks WHERE document_id=? AND instr(text,?)>0 LIMIT 1',
+          )
+          .all('doc', 'original'),
+      ),
+      /chunks_document_ordinal/,
+    );
+    store.db.prepare('UPDATE chunks SET text=? WHERE id=?').run('replacement', 'chunk');
+    assert.equal(graph.search(['general'], 'original').diagnostics.usableEdges, 0);
+    assert.equal(checked, 2);
+    assert.equal(graph.search(['other'], 'original').paths.length, 0);
+  } finally {
+    store.close();
   }
 });

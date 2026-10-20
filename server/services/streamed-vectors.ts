@@ -131,6 +131,8 @@ export async function streamedVectors(
         rows,
         diagnostics: {
           backend: 'persistent-external',
+          vectorHealthBasis: 'cached_manifest_coverage',
+          vectorInputMode: 'cached_index_query',
           cacheHit: true,
           batchedCacheSearch: !!batched,
           batches: manifest.shards.length,
@@ -244,6 +246,8 @@ export async function streamedVectors(
     rows: best,
     diagnostics: {
       backend: external?.enabled ? 'streamed-external' : 'streamed-exact',
+      vectorHealthBasis: 'rows_read_this_request',
+      vectorInputMode: external?.enabled ? 'bounded_snapshot_upload' : 'exact_scan',
       batches,
       batchSize,
       fallbackBatches: fallback,

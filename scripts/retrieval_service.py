@@ -5,10 +5,13 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from rag_request_helpers import RequestDiagnostics, embedding_windows
 
 CODE_HASH = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+HELPER_HASH = hashlib.sha256(Path(__file__).with_name("rag_request_helpers.py").read_bytes()).hexdigest()
 ROOT = Path(os.environ.get("AGENTDEMO_DATA_DIR", str(Path(__file__).resolve().parent.parent / ".data"))) / "retrieval-service"
 ROOT.mkdir(parents=True, exist_ok=True)
+DIAGNOSTICS = RequestDiagnostics(ROOT)
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 TOKEN = CONFIG["token"]
 if len(TOKEN) < 32:
@@ -31,7 +34,7 @@ LOOP = asyncio.new_event_loop()
 threading.Thread(target=LOOP.run_forever, daemon=True).start()
 
 def model(kind):
-    with LOCK:
+    with DIAGNOSTICS.locked(LOCK, "modelLoad"):
         if kind not in MODELS:
             from sentence_transformers import SentenceTransformer, CrossEncoder
             import torch
@@ -51,19 +54,14 @@ def model(kind):
 def embeddings(texts, purpose="passage"):
     import numpy as np
     encoder = model("embedding")
-    windows, groups, tokens = [], [], 0
-    for text in texts:
-        prefix = "query: " if text.startswith("query: ") or purpose == "query" else "passage: "
-        body = text.split(": ", 1)[1] if text.startswith(("query: ", "passage: ")) else text
-        ids = encoder.tokenizer.encode(body, add_special_tokens=False)
-        tokens += len(ids)
-        group = []
-        for i in range(0, max(1, len(ids)), 448):
-            group.append(len(windows))
-            windows.append(prefix + encoder.tokenizer.decode(ids[i:i+480], skip_special_tokens=True))
-        groups.append(group)
-    with LOCK:
-        values = encoder.encode(windows, normalize_embeddings=True, batch_size=8)
+    with DIAGNOSTICS.stage("tokenize"):
+        windows, groups, tokens, stats = embedding_windows(encoder, texts, purpose)
+        DIAGNOSTICS.add(**stats)
+    batches=[]
+    for start in range(0,len(windows),8):
+        with DIAGNOSTICS.locked(LOCK, "embeddingInference"):
+            batches.append(encoder.encode(windows[start:start+8], normalize_embeddings=True, batch_size=8))
+    values=np.concatenate(batches,axis=0)
     out = []
     for group in groups:
         v = np.mean(values[group], axis=0)
@@ -80,11 +78,17 @@ def rerank(data):
         raise ValueError("Rerank input too large")
     scorer = model("rerank")
     pairs = [(query, t) for t in texts]
-    lengths = scorer.tokenizer(pairs, truncation=False, padding=False, return_length=True)["length"]
-    if max(lengths) > 8192:
+    lengths = scorer.tokenizer(pairs, truncation=False, padding=False, return_length=True, verbose=False)["length"]
+    limits=[8192]+[int(v) for v in (getattr(scorer.tokenizer,"model_max_length",None),
+        getattr(scorer.model.config,"max_position_embeddings",None)) if isinstance(v,(int,float)) and 8<=v<=1000000]
+    limit=min(limits)
+    DIAGNOSTICS.add(maxModelInputTokens=max(lengths),modelTokenLimit=limit,pairs=len(pairs))
+    if max(lengths) > limit:
         raise ValueError("Candidate exceeds reranker token limit; split it first")
-    with LOCK:
-        scores = scorer.predict(pairs, batch_size=4, activation_fn=torch.nn.Sigmoid())
+    scores=[]
+    for start in range(0,len(pairs),4):
+        with DIAGNOSTICS.locked(LOCK, "rerankInference"):
+            scores.extend(scorer.predict(pairs[start:start+4], batch_size=4, activation_fn=torch.nn.Sigmoid()))
     return sorted([dict(index=i, score=float(s)) for i, s in enumerate(scores)], key=lambda r: -r["score"])
 
 def ensure_vector_snapshot(identity, expected, present, count_rows, upload):
@@ -312,7 +316,7 @@ async def create_rag(scope):
         return choice["message"]["content"]
     class LocalTokenizer:
         def encode(self, text):
-            with LOCK: return model("embedding").tokenizer.encode(text, add_special_tokens=False)
+            with LOCK: return model("embedding").tokenizer.encode(text, add_special_tokens=False, verbose=False)
         def decode(self, tokens):
             with LOCK: return model("embedding").tokenizer.decode(tokens, skip_special_tokens=True)
         def __deepcopy__(self, memo): return self
@@ -369,20 +373,35 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
     def send(self, status, data):
         raw = json.dumps(data, ensure_ascii=False).encode()
-        self.send_response(status); self.send_header("Content-Type","application/json")
-        self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
+        try:
+            self.send_response(status); self.send_header("Content-Type","application/json")
+            self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
+            return True
+        except (ConnectionError, BrokenPipeError, TimeoutError):
+            # The peer is gone. Never attempt a second error response on this socket.
+            self.close_connection=True
+            return False
     def do_GET(self):
         if self.path == "/health":
-            return self.send(200, {"application":"Amadeus Local RAG", "ready":list(MODELS), "protocol":1, "codeHash":CODE_HASH})
+            return self.send(200, {"application":"Amadeus Local RAG", "ready":list(MODELS), "protocol":1, "codeHash":CODE_HASH, "helperHash":HELPER_HASH})
         self.send(404, {"error":"Not found"})
     def do_POST(self):
         auth = self.headers.get("Authorization","").removeprefix("Bearer ") or self.headers.get("X-API-Key","")
         if not hmac.compare_digest(auth, TOKEN): return self.send(401, {"error":"Unauthorized"})
         try:
-            self.connection.settimeout(60)
+            budget=int(self.headers.get("X-Amadeus-Timeout-Ms","60000"))
+        except ValueError: budget=60000
+        budget=max(100,min(120000,budget))
+        known_paths={"/v1/embeddings","/embeddings","/rerank","/vectors/search","/vectors/search-batch","/lightrag/query/data","/lightrag/documents/texts","/lightrag/documents/status"}
+        DIAGNOSTICS.begin(self.path if self.path in known_paths else "unknown",self.headers.get("X-Amadeus-Request-Id",""),budget)
+        outcome="failed"
+        try:
+            self.connection.settimeout(min(60,budget/1000))
             size = int(self.headers.get("Content-Length","0"))
             if not 0 < size <= 128*1024*1024: raise ValueError("Invalid request size")
-            data = json.loads(self.rfile.read(size))
+            with DIAGNOSTICS.stage("readBody"):
+                data = json.loads(self.rfile.read(size))
+            DIAGNOSTICS.check()
             if self.path in ("/v1/embeddings", "/embeddings"):
                 if data.get("model") and data["model"] != CONFIG["embeddingModel"]:
                     raise ValueError("Embedding model changed; restart local service before reindexing")
@@ -394,9 +413,12 @@ class Handler(BaseHTTPRequestHandler):
                 result = {"object":"list","model":CONFIG["embeddingModel"],
                     "data":[{"object":"embedding","index":i,"embedding":v} for i,v in enumerate(values)],
                     "usage":{"prompt_tokens":tokens,"total_tokens":tokens}}
-            elif self.path == "/rerank": result = rerank(data)
-            elif self.path == "/vectors/search": result = cached_vector_search(data)
-            elif self.path == "/vectors/search-batch": result = cached_vector_batch(data)
+            elif self.path == "/rerank":
+                with DIAGNOSTICS.stage("rerank"): result = rerank(data)
+            elif self.path == "/vectors/search":
+                with DIAGNOSTICS.stage("vectorSearch"): result = cached_vector_search(data)
+            elif self.path == "/vectors/search-batch":
+                with DIAGNOSTICS.stage("vectorSearch"): result = cached_vector_batch(data)
             elif self.path == "/lightrag/documents/texts":
                 if not isinstance(data.get("scope"),str) or not 0<len(data["scope"])<=200:
                     raise ValueError("Invalid scope")
@@ -415,15 +437,25 @@ class Handler(BaseHTTPRequestHandler):
                 result = JOBS.get(data["jobId"], {"status":"unknown"})
             elif self.path == "/lightrag/query/data":
                 future = asyncio.run_coroutine_threadsafe(light_query(data),LOOP)
-                try: result = future.result(timeout=55)
+                try:
+                    with DIAGNOSTICS.stage("lightRag"): result = future.result(timeout=min(55,DIAGNOSTICS.remaining()))
                 except Exception:
                     future.cancel()
                     raise
             else: return self.send(404, {"error":"Not found"})
-            self.send(200,result)
+            DIAGNOSTICS.check()
+            with DIAGNOSTICS.stage("writeResponse"):
+                outcome="ok" if self.send(200,result) else "client_disconnected"
+        except (ConnectionError, BrokenPipeError) as error:
+            outcome="client_disconnected"
+            self.close_connection=True
         except Exception as error:
-            print(type(error).__name__, flush=True)
-            self.send(422, {"error":type(error).__name__, "message":"Request failed; inspect local service configuration and resource limits."})
+            outcome="deadline_exceeded" if isinstance(error,TimeoutError) else "failed"
+            DIAGNOSTICS.add(errorType=type(error).__name__)
+            if not self.send(504 if isinstance(error,TimeoutError) else 422, {"error":type(error).__name__, "message":"Request failed; inspect local service diagnostics and resource limits."}):
+                outcome="client_disconnected"
+        finally:
+            DIAGNOSTICS.finish(outcome)
 
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(); parser.add_argument("--warmup",action="store_true"); parser.add_argument("--vector-worker",action="store_true")

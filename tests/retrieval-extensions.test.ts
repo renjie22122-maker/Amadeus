@@ -217,3 +217,21 @@ test('vector outage preserves lexical evidence and explicit lexical mode never e
     [],
   );
 });
+
+test('optional LightRAG failure preserves scoped base results and reports degradation', async (t) => {
+  const baseUrl = await service(t, () => ({ error: 'unavailable' }));
+  const light: any = { enabled: true, baseUrl, scope: 'general', mode: 'mix' };
+  light.authorizedTarget = retrievalTarget('lightRag', light);
+  const store = new Store(':memory:');
+  const kb = new Knowledge(store, undefined, () => ({ lightRag: light }));
+  t.after(() => {
+    kb.close();
+    store.close();
+  });
+  const doc: any = kb.import('general', 'facts', 'The capital is Paris.');
+  const result = await kb.hybrid(['general'], 'capital');
+  assert.ok(result.some((r: any) => r.documentId === doc.id));
+  assert.equal(kb.lastRetrieval.lightRagStatus, 'unavailable');
+  assert.equal(kb.lastRetrieval.degraded, true);
+  assert.ok((kb.lastRetrieval.timingsMs as any).lightRag >= 0);
+});

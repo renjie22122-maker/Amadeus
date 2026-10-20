@@ -516,7 +516,18 @@ export class KnowledgeMaintenance {
         }
         const documents = this.store
           .list<any>('document')
-          .filter((d) => d.scope === w.id && d.validUntil == null);
+          .filter((d) => d.scope === w.id && d.validUntil == null)
+          .filter((doc) => {
+            const indexed =
+              this.store.maybe<any>('knowledge-index-job', doc.id + '|' + w.target)?.status ===
+              'completed';
+            const graphEnabled = this.config && w.graphProfileId && w.graphTarget;
+            const graphed =
+              !graphEnabled ||
+              this.store.maybe<any>('graph-learning', doc.id + '|' + w.graphTarget)?.status ===
+                'completed';
+            return !indexed || !graphed;
+          });
         publish(
           { phase: 'indexing', completed: 0, total: documents.length, currentFile: undefined },
           true,

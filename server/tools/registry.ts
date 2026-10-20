@@ -1001,12 +1001,12 @@ export function tools() {
     effect: 'read',
     parallelSafe: true,
     schema: z.object({ memoryBudgetMiB: z.number().positive().finite().optional() }),
-    run: (a, c) => {
+    run: async (a, c) => {
       const embedding = new Embeddings(() => c.config.get().embedding);
       const settings = c.config.get().retrieval;
       return text({
         observedAt: Date.now(),
-        knowledge: c.knowledge.statistics(c.scopes, Date.now(), a.memoryBudgetMiB),
+        knowledge: await c.knowledge.statisticsAsync(c.scopes, Date.now(), a.memoryBudgetMiB),
         memory: memoryStatus(
           c.store,
           memoryScopes(c),

@@ -2,7 +2,7 @@ import { selectEvidence } from './research-evidence.js';
 import { streamedVectors } from './streamed-vectors.js';
 import { vectorRecord, validVector } from './vector-record.js';
 import { retrievalTarget } from '../../shared/retrieval.js';
-import { knowledgeStatus } from './retrieval-status.js';
+import { knowledgeStatus, knowledgeStatusAsync } from './retrieval-status.js';
 import type { RetrievalSettings } from '../../shared/retrieval.js';
 import { externalVectorSearch, rerankCandidates, retrievalPost } from './retrieval-extensions.js';
 import { KnowledgeGraph } from './knowledge-graph.js';
@@ -84,6 +84,38 @@ export class Knowledge {
       asOf,
       memoryBudgetMiB,
     );
+  }
+  statisticsAsync(scopes: string[], asOf = Date.now(), memoryBudgetMiB?: number) {
+    return knowledgeStatusAsync(
+      this.store,
+      scopes,
+      this.embeddings?.fingerprint() || '',
+      !!this.embeddings?.enabled(),
+      asOf,
+      memoryBudgetMiB,
+    );
+  }
+  async indexStatusesAsync(scope: string) {
+    const statuses: ReturnType<Knowledge['indexStatuses']> = {};
+    const rows = this.store.db
+      .prepare('SELECT document_id,vector FROM chunks WHERE scope=?')
+      .iterate(scope);
+    let visited = 0;
+    for (const row of rows as Iterable<any>) {
+      if (++visited % 64 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+      const item = this.vectorStatuses([row])[row.document_id];
+      const old = (statuses[row.document_id] ||= {
+        completed: 0,
+        total: 0,
+        invalid: 0,
+        status: 'pending',
+      });
+      old.completed += item.completed;
+      old.total += item.total;
+      old.invalid += item.invalid;
+      old.status = old.completed === old.total ? 'indexed' : old.completed ? 'partial' : 'pending';
+    }
+    return statuses;
   }
   diagnostics(scopes: string[], asOf = Date.now()) {
     const statistics = this.statistics(scopes, asOf);
@@ -878,38 +910,47 @@ export class Knowledge {
     const light = options.lightRag;
     if (light?.enabled && scopes.includes(light.scope)) {
       const lightStarted = performance.now();
-      const response = await retrievalPost(
-        'lightRag',
-        light,
-        '/query/data',
-        { scope: light.scope, query, mode: light.mode, top_k: 20, chunk_top_k: 20 },
-        signal,
-      );
-      timings.lightRag = performance.now() - lightStarted;
-      assert(
-        Array.isArray(response?.data?.chunks),
-        'LIGHTRAG_RESPONSE',
-        'Expected LightRAG data.chunks.',
-      );
-      const docs = this.store
-        .list<any>('document')
-        .filter((d) => d.scope === light.scope && documentAt(d, asOf));
-      for (const r of response.data.chunks.slice(0, 30)) {
-        if (
-          typeof r.content !== 'string' ||
-          r.content.length > 20000 ||
-          typeof r.file_path !== 'string'
-        )
-          continue;
-        // Never trust external answers or names alone. Import with this stable source ID.
-        const doc = docs.find((d) => r.file_path.startsWith('amadeus-' + d.id + '-'));
-        if (doc) {
-          const chunkId = r.file_path.slice(('amadeus-' + doc.id + '-').length);
-          const chunk = this.store.db
-            .prepare('SELECT text FROM chunks WHERE id=? AND document_id=?')
-            .get(chunkId, doc.id) as any;
-          if (chunk?.text.includes(r.content)) addEvidence(doc.id, r.content, 'lightrag');
+      try {
+        const response = await retrievalPost(
+          'lightRag',
+          light,
+          '/query/data',
+          { scope: light.scope, query, mode: light.mode, top_k: 20, chunk_top_k: 20 },
+          signal,
+        );
+        diagnostics.lightRagStatus = 'searched';
+        assert(
+          Array.isArray(response?.data?.chunks),
+          'LIGHTRAG_RESPONSE',
+          'Expected LightRAG data.chunks.',
+        );
+        const docs = this.store
+          .list<any>('document')
+          .filter((d) => d.scope === light.scope && documentAt(d, asOf));
+        for (const r of response.data.chunks.slice(0, 30)) {
+          if (
+            typeof r.content !== 'string' ||
+            r.content.length > 20000 ||
+            typeof r.file_path !== 'string'
+          )
+            continue;
+          // Never trust external answers or names alone. Import with this stable source ID.
+          const doc = docs.find((d) => r.file_path.startsWith('amadeus-' + d.id + '-'));
+          if (doc) {
+            const chunkId = r.file_path.slice(('amadeus-' + doc.id + '-').length);
+            const chunk = this.store.db
+              .prepare('SELECT text FROM chunks WHERE id=? AND document_id=?')
+              .get(chunkId, doc.id) as any;
+            if (chunk?.text.includes(r.content)) addEvidence(doc.id, r.content, 'lightrag');
+          }
         }
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        diagnostics.degraded = true;
+        diagnostics.lightRagStatus = 'unavailable';
+        diagnostics.lightRagReason = 'query_failed';
+      } finally {
+        timings.lightRag = performance.now() - lightStarted;
       }
     }
     let result = this.enrich(

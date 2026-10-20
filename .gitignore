@@ -47,3 +47,5 @@ build/
 
 !/scripts/bot/
 /scripts/bot/*.local.json
+
+!/scripts/rag_request_helpers.py

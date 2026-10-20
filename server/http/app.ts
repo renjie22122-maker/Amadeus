@@ -641,7 +641,7 @@ export async function createApp(options: { directory: string; dist?: string; run
   });
   app.get<{ Querystring: { scope: string } }>('/api/knowledge/index-status', async (req) => {
     checkScope(req.query.scope);
-    return runtime.knowledge.indexStatuses(req.query.scope);
+    return runtime.knowledge.indexStatusesAsync(req.query.scope);
   });
   localVoiceRoutes(app, config, directory);
   app.post('/api/media/local-voice', async () => configureLocalVoice(config, directory));
@@ -667,7 +667,7 @@ export async function createApp(options: { directory: string; dist?: string; run
   app.post('/api/knowledge/lightrag-sync', async () => runtime.knowledge.syncLightRag());
   app.get<{ Querystring: { scope: string } }>('/api/knowledge/statistics', async (req) => {
     checkScope(req.query.scope);
-    return runtime.knowledge.statistics([req.query.scope]);
+    return runtime.knowledge.statisticsAsync([req.query.scope]);
   });
   app.post('/api/knowledge/batch-index', async (req) => {
     const { scope } = z.object({ scope: z.string() }).parse(req.body);

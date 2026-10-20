@@ -37,8 +37,19 @@ test('automatic sources preserve versions, reuse vectors, isolate scopes and ret
   await manager.tick();
   assert.equal(store.list<any>('document').length, 1);
   assert.equal(calls, 1);
+  store.db.exec(
+    'CREATE TEMP TABLE vector_writes(n INTEGER); INSERT INTO vector_writes VALUES(0); CREATE TEMP TRIGGER count_vector_writes AFTER UPDATE OF vector ON chunks BEGIN UPDATE vector_writes SET n=n+1; END;',
+  );
+  const originalIndex = knowledge.index.bind(knowledge);
+  let indexCalls = 0;
+  knowledge.index = async (...args) => {
+    indexCalls++;
+    return originalIndex(...args);
+  };
   await manager.tick();
   assert.equal(calls, 1);
+  assert.equal(indexCalls, 0);
+  assert.equal(store.db.prepare('SELECT n FROM vector_writes').get()!.n, 0);
   await writeFile(join(root, 'guide.md'), '# Guide\nThe retention period is fourteen days.');
   await manager.tick();
   const docs = store.list<any>('document');

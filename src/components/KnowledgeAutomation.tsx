@@ -293,7 +293,7 @@ export function KnowledgeAutomation({
             ? '范围有未保存的修改。保存后按自动维护开关增量处理。'
             : 'Unsaved source changes. Save to apply automatic incremental maintenance.'
           : zh
-            ? '新增文件夹保存后自动增量处理；未变化文件复用解析与索引。保存不会重置失败项。'
+            ? '新增文件夹保存后自动增量处理；未变化文件跳过解析；已完成的向量不读取、不重算、不写回。保存不会重置失败项。'
             : 'Added folders are processed incrementally when enabled; unchanged files reuse parsing and indexes. Saving does not reset failed items.'}
       </p>
       <p role="status">
@@ -335,8 +335,8 @@ export function KnowledgeAutomation({
       )}
       <p className="muted">
         {zh
-          ? '新增文件夹仅解析新增或变化的文件；已有文件仍会校验内容哈希，同一模型的已完成索引会复用。'
-          : 'Adding folders parses only new or changed files. Existing sources are hash-checked and completed indexes for the same model are reused.'}
+          ? '新增文件夹仅解析新增或变化的文件；已有文件仍会校验内容哈希，同一模型的已完成索引保持不动。'
+          : 'Adding folders parses only new or changed files. Existing sources are hash-checked and completed indexes for the same model remain untouched.'}
       </p>
       {value.scan && (
         <p className="muted">
@@ -373,8 +373,8 @@ export function KnowledgeAutomation({
           </ul>
           <p>
             {zh
-              ? '点击“重试失败项”重新处理失败项；保存范围不会重置失败次数。未变化的成功文件不会重复导入。'
-              : 'Use Retry failed items to reset failures; saving sources preserves failure counts. Unchanged successful files are reused.'}
+              ? '点击“重试失败项”重新处理失败项；保存范围不会重置失败次数。未变化的成功文件不会重复导入或写回向量。'
+              : 'Use Retry failed items to reset failures; saving sources preserves failure counts. Unchanged successful files are skipped without rewriting vectors.'}
           </p>
         </details>
       )}

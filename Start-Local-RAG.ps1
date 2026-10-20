@@ -10,7 +10,8 @@ try { $taskExisting = Invoke-RestMethod 'http://127.0.0.1:8811/health' -TimeoutS
 if ($taskExisting) {
     if ($taskExisting.application -ne 'Amadeus Local RAG') { throw 'Port 8811 belongs to another service.' }
     $taskCodeHash = (Get-FileHash -LiteralPath (Join-Path $taskRoot 'scripts/retrieval_service.py') -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($taskExisting.codeHash -ne $taskCodeHash) {
+    $taskHelperHash = (Get-FileHash -LiteralPath (Join-Path $taskRoot 'scripts/rag_request_helpers.py') -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($taskExisting.codeHash -ne $taskCodeHash -or $taskExisting.helperHash -ne $taskHelperHash) {
         Write-Warning 'Local RAG code changed. Restart this service after active imports finish; opening Amadeus does not reload the existing retrieval process.'
     }
     Write-Host 'Local RAG already running. Configuration changes require restarting this service.'

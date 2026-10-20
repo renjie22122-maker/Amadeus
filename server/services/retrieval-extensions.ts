@@ -1,3 +1,4 @@
+import { ragFetch } from './rag-http.js';
 import { QueryCache } from './query-cache.js';
 const rerankCache = new QueryCache<any>();
 import { terms } from './memory-retrieval.js';
@@ -33,22 +34,23 @@ export async function retrievalPost(
     'Use HTTPS or a loopback HTTP endpoint without URL credentials.',
   );
   const perform = async (signal?: AbortSignal) => {
-    const response = await fetch(c.baseUrl.replace(/\/$/, '') + path, {
-      method: 'POST',
-      redirect: 'error',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(c.apiKey
-          ? kind === 'lightRag'
-            ? { 'X-API-Key': c.apiKey }
-            : { Authorization: 'Bearer ' + c.apiKey }
-          : {}),
+    const response = await ragFetch(
+      c.baseUrl.replace(/\/$/, '') + path,
+      {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(c.apiKey
+            ? kind === 'lightRag'
+              ? { 'X-API-Key': c.apiKey }
+              : { Authorization: 'Bearer ' + c.apiKey }
+            : {}),
+        },
+        body: JSON.stringify(body),
       },
-      body: JSON.stringify(body),
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(60000)])
-        : AbortSignal.timeout(60000),
-    });
+      signal,
+    );
     assert(response.ok, 'RETRIEVAL_SERVICE', 'Retrieval service returned HTTP ' + response.status);
     // Bound response memory and avoid returning remote exception bodies or credentials.
     const reader = response.body?.getReader();

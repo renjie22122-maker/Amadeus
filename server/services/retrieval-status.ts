@@ -32,7 +32,7 @@ export function indexAdvice(count: number, dimensions: number[], memoryBudgetMiB
   };
 }
 
-export function knowledgeStatus(
+function* knowledgeStatusSteps(
   store: Store,
   scopes: string[],
   fingerprint: string,
@@ -60,7 +60,9 @@ export function knowledgeStatus(
           ')',
       )
       .iterate(...allowed);
+    let visited = 0;
     for (const row of rows as Iterable<any>) {
+      if (++visited % 64 === 0) yield;
       if (!current.has(row.document_id)) continue;
       chunks++;
       textBytes += Number(row.bytes);
@@ -96,6 +98,26 @@ export function knowledgeStatus(
     issueCount: Array.isArray(w.issues) ? w.issues.length : 0,
     hasError: !!w.error,
     updatedAt: w.updatedAt ?? null,
+    currentCycle: w.progress
+      ? {
+          startedAt: w.progress.startedAt ?? null,
+          updatedAt: w.progress.updatedAt ?? null,
+          phase: w.progress.phase ?? 'unknown',
+          completed: w.progress.completed ?? 0,
+          total: w.progress.total ?? null,
+          imported: w.progress.imported ?? 0,
+          unchangedSkipped: w.progress.reused ?? 0,
+          failed: w.progress.failed ?? 0,
+        }
+      : null,
+    lastCompletedScan: w.scan
+      ? {
+          files: w.scan.files ?? 0,
+          newOrChanged: w.scan.updated ?? 0,
+          unchanged: w.scan.unchanged ?? 0,
+        }
+      : null,
+    note: 'Processing includes scanning unchanged files. Imported counts are document operations, not vector writes. Compare observations with matching scopes, asOf and timestamps; old traces do not prove current growth.',
   }));
   const failed = sources.some((w) => w.hasError || w.issueCount > 0);
   const state = !allowed.length
@@ -206,4 +228,24 @@ export function memoryStatus(
     vectors: { stored, eligibleCompatible: compatible, eligibleUnindexed: eligible - compatible },
     note: 'State counts overlap expiration. Recall eligibility is not a promise of a query match; conversation-local memories from other chats are excluded.',
   };
+}
+
+export function knowledgeStatus(...args: Parameters<typeof knowledgeStatusSteps>) {
+  const steps = knowledgeStatusSteps(...args);
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  return next.value;
+}
+export async function knowledgeStatusAsync(...args: Parameters<typeof knowledgeStatusSteps>) {
+  const steps = knowledgeStatusSteps(...args);
+  try {
+    let next = steps.next();
+    while (!next.done) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      next = steps.next();
+    }
+    return next.value;
+  } finally {
+    steps.return(undefined as never);
+  }
 }

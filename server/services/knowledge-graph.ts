@@ -49,7 +49,17 @@ export class KnowledgeGraph {
     }
     const c = this.store.maybe<any>('conversation', e.conversationId || '');
     const scoped = c?.projectId ? 'project:' + c.projectId : 'user';
-    const event = c && this.store.events(c.id).find((x) => String(x.id) === e.id);
+    const row =
+      c &&
+      (this.store.db
+        .prepare('SELECT id,type,data,created_at FROM events WHERE conversation_id=? AND id=?')
+        .get(c.id, e.id) as any);
+    const event = row &&
+      String(row.id) === e.id && {
+        type: row.type,
+        data: JSON.parse(row.data),
+        createdAt: row.created_at,
+      };
     return (
       scoped === scope &&
       !this.store.maybe(
@@ -103,8 +113,20 @@ export class KnowledgeGraph {
     return this.store.list<GraphEdge>('knowledge-edge').filter((e) => e.scope === scope);
   }
   private visibleEdges(scopes: string[], at: number, conversationId?: string) {
-    return this.store
-      .list<GraphEdge>('knowledge-edge')
+    const checked = new Map<string, boolean>();
+    const supported = (scope: string, evidence: GraphEvidence) => {
+      const key = JSON.stringify([scope, evidence]);
+      if (!checked.has(key)) checked.set(key, !!this.supported(scope, evidence, at));
+      return checked.get(key)!;
+    };
+    return (
+      this.store.db
+        .prepare(
+          "SELECT data FROM records WHERE kind='knowledge-edge' AND json_extract(data,'$.scope') IN (SELECT value FROM json_each(?))",
+        )
+        .all(JSON.stringify(scopes)) as { data: string }[]
+    )
+      .map((r) => JSON.parse(r.data) as GraphEdge)
       .filter(
         (e) =>
           scopes.includes(e.scope) &&
@@ -114,20 +136,31 @@ export class KnowledgeGraph {
           e.evidence.length > 0 &&
           e.evidence.every(
             (x) =>
-              this.supported(e.scope, x, at) &&
+              supported(e.scope, x) &&
               (x.type !== 'memory' ||
                 memoryAccessible(this.store.get('memory', x.id), conversationId)) &&
               (x.type !== 'event' || e.scope !== 'user' || x.conversationId === conversationId),
           ),
       );
   }
-  private visibleEntities(scopes: string[], at: number, conversationId?: string) {
+  private visibleEntities(
+    scopes: string[],
+    at: number,
+    conversationId?: string,
+    edges?: GraphEdge[],
+  ) {
     const lifecycle = new MemoryLifecycle(this.store);
     const supportedNodes = new Set(
-      this.visibleEdges(scopes, at, conversationId).flatMap((e) => [e.from, e.to]),
+      (edges ?? this.visibleEdges(scopes, at, conversationId)).flatMap((e) => [e.from, e.to]),
     );
-    return this.store
-      .list<any>('memory-entity')
+    return (
+      this.store.db
+        .prepare(
+          "SELECT data FROM records WHERE kind='memory-entity' AND json_extract(data,'$.scope') IN (SELECT value FROM json_each(?))",
+        )
+        .all(JSON.stringify(scopes)) as { data: string }[]
+    )
+      .map((r) => JSON.parse(r.data))
       .filter((e) => scopes.includes(e.scope) && e.confirmed !== false)
       .flatMap((e) => {
         if (e.automatic && !supportedNodes.has(e.id)) return [];
@@ -165,7 +198,8 @@ export class KnowledgeGraph {
     } = {},
   ) {
     const at = options.asOf ?? Date.now();
-    const rows = this.visibleEntities(scopes, at, options.conversationId);
+    const edges = this.visibleEdges(scopes, at, options.conversationId);
+    const rows = this.visibleEntities(scopes, at, options.conversationId, edges);
     const q = terms(options.query || '');
     const filtered = rows
       .filter(
@@ -176,7 +210,6 @@ export class KnowledgeGraph {
       .sort((a, b) => a.id.localeCompare(b.id));
     const offset = Math.max(0, options.offset || 0),
       limit = Math.min(200, Math.max(1, options.limit || 50));
-    const edges = this.visibleEdges(scopes, at, options.conversationId);
     return {
       entities: filtered.slice(offset, offset + limit).map(({ searchableText, ...e }) => e),
       total: filtered.length,
@@ -201,8 +234,8 @@ export class KnowledgeGraph {
     return [...tokens].filter((t) => words.has(t)).length;
   }
   search(scopes: string[], query: string, at = Date.now(), depth = 2, conversationId?: string) {
-    const entities = this.visibleEntities(scopes, at, conversationId);
     const allowed = this.visibleEdges(scopes, at, conversationId);
+    const entities = this.visibleEntities(scopes, at, conversationId, allowed);
     const q = terms(query);
     const scored = new Map(entities.map((e) => [e.id, this.match(e, query, q)]));
     // Evidence can find a semantic relation even when the query doesn't contain its entire label.

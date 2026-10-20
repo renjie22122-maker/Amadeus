@@ -11,7 +11,7 @@ export function installChatTools(registry: ToolRegistry) {
     description:
       'Read document, chunk and vector coverage/counts for this conversation authorized knowledge scopes only. No private memory or configuration, no model calls.',
     schema: z.object({}),
-    run: (_a, ctx) => text(ctx.knowledge.statistics(ctx.scopes, Date.now())),
+    run: async (_a, ctx) => text(await ctx.knowledge.statisticsAsync(ctx.scopes, Date.now())),
   });
   registry.add({
     name: 'read_chat_message',

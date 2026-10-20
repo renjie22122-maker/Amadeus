@@ -67,7 +67,7 @@ export function KnowledgeProgress({ value, zh }: { value: any; zh: boolean }) {
         {zh ? '导入 ' : 'Imported '}
         {p.imported}
         {' · '}
-        {zh ? '复用 ' : 'Reused '}
+        {zh ? '未变化／已跳过 ' : 'Unchanged / skipped '}
         {p.reused}
         {' · '}
         {zh ? '问题 ' : 'Issues '}

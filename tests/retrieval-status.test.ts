@@ -137,3 +137,46 @@ test('import health and vector dimensions do not collapse into no-match', (t) =>
   t.after(() => lexical.close());
   assert.equal(lexical.statistics(['general']).state, 'lexical_only');
 });
+
+test('scan health separates unchanged work from imports without exposing source paths', (t) => {
+  const { store, knowledge } = fixture(t);
+  store.put('knowledge-watch', {
+    id: 'general',
+    status: 'processing',
+    progress: {
+      startedAt: 100,
+      updatedAt: 200,
+      phase: 'scanning',
+      completed: 3,
+      total: 4,
+      imported: 0,
+      reused: 3,
+      failed: 0,
+      currentFile: 'SECRET_PATH',
+    },
+    scan: { files: 4, updated: 0, unchanged: 4 },
+  });
+  const result = knowledge.statistics(['general']);
+  assert.equal(result.sources[0].currentCycle?.imported, 0);
+  assert.equal(result.sources[0].currentCycle?.unchangedSkipped, 3);
+  assert.equal(result.sources[0].currentCycle?.phase, 'scanning');
+  assert.equal(result.sources[0].lastCompletedScan?.newOrChanged, 0);
+  assert.ok(!JSON.stringify(result).includes('SECRET_PATH'));
+});
+
+test('large corpus inspection yields to other requests and retains identical statistics', async (t) => {
+  const { knowledge } = fixture(t);
+  for (let i = 0; i < 150; i++) knowledge.import('general', 'd' + i, 'hello world ' + i);
+  const at = Date.now();
+  let yielded = false;
+  setImmediate(() => {
+    yielded = true;
+  });
+  const actual = await knowledge.statisticsAsync(['general'], at);
+  assert.ok(yielded);
+  assert.deepEqual(actual, knowledge.statistics(['general'], at));
+  assert.deepEqual(
+    await knowledge.indexStatusesAsync('general'),
+    knowledge.indexStatuses('general'),
+  );
+});

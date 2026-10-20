@@ -72,6 +72,7 @@ type Session = {
   qqToken?: { value: string; expires: number };
 };
 export class ChatTransports {
+  private downloadMedia = downloadChatBytes;
   private timer?: ReturnType<typeof setInterval>;
   private sessions = new Map<string, Session>();
   private webhooks = new Map<number, Server>();
@@ -893,6 +894,18 @@ export class ChatTransports {
         let url = file.url,
           bytes: Buffer | undefined,
           headers: Record<string, string> = {};
+        // A forwarded image may have a valid CDN URL but no bridge-local cache entry.
+        // Use the same bounded public-HTTPS downloader; never read bridge filesystem paths.
+        if (c.transport === 'onebot11' && file.kind === 'image' && file.url) {
+          try {
+            bytes = await this.downloadMedia(
+              file.url,
+              AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+            );
+          } catch {
+            signal.throwIfAborted();
+          }
+        }
         if (c.transport === 'telegram') {
           const f = await this.telegram(c, 'getFile', { file_id: file.id }, s);
           assert(
@@ -929,7 +942,7 @@ export class ChatTransports {
             'Unsupported or oversized bridge file.',
           );
           bytes = Buffer.from(f.data, 'base64');
-        } else if (c.transport === 'onebot11' && !!file.id) {
+        } else if (c.transport === 'onebot11' && !!file.id && !bytes) {
           const action =
             file.kind === 'image' ? 'get_image' : file.kind === 'audio' ? 'get_record' : 'get_file';
           const f = await this.socketRequest(c, s, action, {
@@ -938,7 +951,7 @@ export class ChatTransports {
             ...(c.peerType === 'group' ? { group_id: Number(c.peerId) } : {}),
             out_format: 'mp3',
           });
-          url = f.url;
+          url = f.url || file.url;
           if (typeof f.base64 === 'string') {
             assert(
               f.base64.length <= Math.ceil(chatMediaLimit / 3) * 4 &&
@@ -955,7 +968,7 @@ export class ChatTransports {
             'CHAT_MEDIA_UNSUPPORTED',
             'The platform did not provide downloadable file bytes.',
           );
-          bytes = await downloadChatBytes(
+          bytes = await this.downloadMedia(
             url,
             signal,
             headers,

@@ -1213,3 +1213,64 @@ test('quoted message recovery validates platform group even when the quote is re
   foreign = false;
   assert.equal((await transport.readChatMessage(c, 'old', 0, 0, 1)).text, 'quoted evidence');
 });
+
+test('forward images prefer scoped CDN bytes even if get_image cache lookup would fail', async (t) => {
+  const { channels, c, store } = setup(t);
+  const transport: any = new ChatTransports(channels);
+  transport.chatSession = () => ({ abort: new AbortController(), pending: new Map() });
+  let downloads = 0;
+  transport.downloadMedia = async (url: string) => {
+    assert.equal(url, 'https://cdn.example.org/scoped.jpg');
+    downloads++;
+    return Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0d8AAAAASUVORK5CYII=',
+      'base64',
+    );
+  };
+  transport.socketRequest = async () => {
+    throw Error('must not need bridge cache');
+  };
+  channels.receive(c.id, {
+    id: 'forward-image',
+    senderId: '123',
+    peerId: c.peerId,
+    peerType: 'group',
+    text: 'image',
+    timestamp: Date.now(),
+    media: [
+      {
+        id: 'uncached-id',
+        url: 'https://cdn.example.org/scoped.jpg',
+        kind: 'image',
+        name: 'image.png',
+      },
+    ],
+  });
+  const refs = await transport.importChatMedia(c, 'forward-image');
+  assert.equal(refs.length, 1);
+  assert.equal(downloads, 1);
+  assert.equal(store.get<any>('attachment', refs[0].slice(11)).mime, 'image/png');
+  await assert.rejects(() => transport.importChatMedia({ ...c, id: 'foreign' }, 'forward-image'));
+});
+
+test('unsafe image URL is rejected and bridge bytes remain a bounded fallback', async (t) => {
+  const { channels, c } = setup(t);
+  const transport: any = new ChatTransports(channels);
+  transport.chatSession = () => ({ abort: new AbortController(), pending: new Map() });
+  let calls = 0;
+  transport.socketRequest = async () => {
+    calls++;
+    return { base64: Buffer.from('GIF89a test').toString('base64') };
+  };
+  channels.receive(c.id, {
+    id: 'unsafe-image',
+    senderId: '123',
+    peerId: c.peerId,
+    peerType: 'group',
+    text: 'image',
+    timestamp: Date.now(),
+    media: [{ id: 'id', url: 'file:///C:/secret', kind: 'image', name: 'image.gif' }],
+  });
+  assert.equal((await transport.importChatMedia(c, 'unsafe-image')).length, 1);
+  assert.equal(calls, 1);
+});
