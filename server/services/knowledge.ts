@@ -319,6 +319,7 @@ export class Knowledge {
       semanticStatus: 'not_started',
       embeddingModel: null,
       embeddingDimension: null,
+      timingsMs: {},
     };
     const record = (extra: any) => {
       this.store.put('retrieval-trace', {
@@ -336,8 +337,11 @@ export class Knowledge {
         diagnostics,
         ...extra,
       });
-      const old = this.store.list<any>('retrieval-trace').sort((a, b) => b.startedAt - a.startedAt);
-      for (const row of old.slice(500)) this.store.remove('retrieval-trace', row.id);
+      this.store.db
+        .prepare(
+          "DELETE FROM records WHERE kind='retrieval-trace' AND id NOT IN (SELECT id FROM records WHERE kind='retrieval-trace' ORDER BY json_extract(data,'$.startedAt') DESC LIMIT 500)",
+        )
+        .run();
     };
     try {
       const results = await this.retrieve(
@@ -395,6 +399,24 @@ export class Knowledge {
     mode: 'hybrid' | 'lexical' = 'hybrid',
   ) {
     this.lastRetrieval = diagnostics;
+    const timings = (diagnostics.timingsMs ||= {}) as Record<string, number>;
+    const measure = <T>(stage: string, fn: () => T): T => {
+      const at = performance.now();
+      try {
+        return fn();
+      } finally {
+        timings[stage] = performance.now() - at;
+      }
+    };
+    const finish = (
+      rows: any[],
+      scopes: string[],
+      query: string,
+      limit: number,
+      asOf: number,
+      signal?: AbortSignal,
+      documentIds: string[] = [],
+    ) => this.finish(rows, scopes, query, limit, asOf, signal, documentIds, diagnostics);
     signal?.throwIfAborted();
     if (!query.trim() || !scopes.length) return [];
     if (mode === 'lexical') {
@@ -404,10 +426,12 @@ export class Knowledge {
         semanticStatus: 'disabled_by_request',
       });
       // Explicit lexical mode has no embedding, graph, sidecar or reranker dependency.
-      return this.search(scopes, query, limit, asOf, documentIds).map((hit) => ({
-        ...hit,
-        retrievalDiagnostics: diagnostics,
-      }));
+      return measure('lexical', () => this.search(scopes, query, limit, asOf, documentIds)).map(
+        (hit) => ({
+          ...hit,
+          retrievalDiagnostics: diagnostics,
+        }),
+      );
     }
     if (
       !bypassPolicy &&
@@ -415,7 +439,7 @@ export class Knowledge {
       this.store.maybe<any>('retrieval-policy', scopes[0])?.mode === 'lexical'
     ) {
       Object.assign(diagnostics, { backend: 'lexical', semanticStatus: 'disabled_by_policy' });
-      return this.finish(
+      return finish(
         this.search(scopes, query, 60, asOf, documentIds),
         scopes,
         query,
@@ -425,15 +449,20 @@ export class Knowledge {
         documentIds,
       );
     }
-    const lexical = this.search(scopes, query, 60, asOf, documentIds);
+    const lexical = measure('lexical', () => this.search(scopes, query, 60, asOf, documentIds));
     Object.assign(diagnostics, { lexicalCandidates: lexical.length });
     if (!this.embeddings?.enabled() || !scopes.length) {
       Object.assign(diagnostics, { backend: 'lexical', semanticStatus: 'not_configured' });
-      return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
+      return finish(lexical, scopes, query, limit, asOf, signal, documentIds);
     }
     let q: number[];
     try {
-      [q] = await this.embeddings.encode([query], signal, 'query');
+      const at = performance.now();
+      try {
+        [q] = await this.embeddings.encode([query], signal, 'query');
+      } finally {
+        timings.queryEmbedding = performance.now() - at;
+      }
       assert(validVector(q), 'INVALID_QUERY_VECTOR', 'Invalid query embedding.');
     } catch (error) {
       if (signal?.aborted) throw error;
@@ -443,7 +472,7 @@ export class Knowledge {
         reason: 'query_embedding_unavailable',
         semanticStatus: 'query_embedding_failed',
       });
-      return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
+      return finish(lexical, scopes, query, limit, asOf, signal, documentIds);
     }
     Object.assign(diagnostics, {
       embeddingModel: this.embeddings.fingerprint(),
@@ -460,6 +489,7 @@ export class Knowledge {
     ).n;
     if (vectorCount >= 2000) {
       try {
+        const vectorStarted = performance.now();
         const streamed = await streamedVectors(
           this.store,
           scopes,
@@ -470,6 +500,7 @@ export class Knowledge {
           this.retrieval().vectors,
           signal,
         );
+        timings.vectorSearch = performance.now() - vectorStarted;
         Object.assign(diagnostics, streamed.diagnostics, {
           semanticStatus: streamed.rows.length ? 'searched' : 'no_compatible_candidates',
           semanticCandidates: streamed.rows.length,
@@ -505,7 +536,7 @@ export class Knowledge {
               },
             });
           });
-        return this.finish(
+        return finish(
           [...merged.values()].sort((a, b) => b.score - a.score),
           scopes,
           query,
@@ -570,8 +601,7 @@ export class Knowledge {
       semanticStatus: 'no_compatible_candidates',
       semanticCandidates: 0,
     });
-    if (!vectors.length)
-      return this.finish(lexical, scopes, query, limit, asOf, signal, documentIds);
+    if (!vectors.length) return finish(lexical, scopes, query, limit, asOf, signal, documentIds);
     let ranked: { id: string; score: number }[];
     const external = this.retrieval().vectors;
     if (external?.enabled) {
@@ -695,7 +725,7 @@ export class Knowledge {
           },
         });
       });
-    return this.finish(
+    return finish(
       [...merged.values()].sort((a, b) => b.score - a.score),
       scopes,
       query,
@@ -793,7 +823,9 @@ export class Knowledge {
     asOf: number,
     signal?: AbortSignal,
     documentIds: string[] = [],
+    diagnostics: Record<string, unknown> = {},
   ) {
+    const timings = (diagnostics.timingsMs ||= {}) as Record<string, number>;
     const options = this.retrieval(),
       pool = new Map(rows.map((r) => [r.id, r]));
     const addEvidence = (documentId: string, quote: string, origin: string, edgeId?: string) => {
@@ -834,7 +866,9 @@ export class Knowledge {
       });
     };
     if (options.graph !== false) {
+      const graphStarted = performance.now();
       const graph = new KnowledgeGraph(this.store).search(scopes, query, asOf, 2);
+      timings.documentGraph = performance.now() - graphStarted;
       for (const path of graph.paths)
         for (const edge of path.edges)
           for (const evidence of edge.evidence)
@@ -843,6 +877,7 @@ export class Knowledge {
     }
     const light = options.lightRag;
     if (light?.enabled && scopes.includes(light.scope)) {
+      const lightStarted = performance.now();
       const response = await retrievalPost(
         'lightRag',
         light,
@@ -850,6 +885,7 @@ export class Knowledge {
         { scope: light.scope, query, mode: light.mode, top_k: 20, chunk_top_k: 20 },
         signal,
       );
+      timings.lightRag = performance.now() - lightStarted;
       assert(
         Array.isArray(response?.data?.chunks),
         'LIGHTRAG_RESPONSE',
@@ -882,8 +918,14 @@ export class Knowledge {
       60,
       asOf,
     );
-    if (options.rerank?.enabled)
-      result = await rerankCandidates(options.rerank, query, result, signal);
+    if (options.rerank?.enabled) {
+      const at = performance.now();
+      try {
+        result = await rerankCandidates(options.rerank, query, result, signal);
+      } finally {
+        timings.rerank = performance.now() - at;
+      }
+    }
     return result
       .filter(
         (r) =>

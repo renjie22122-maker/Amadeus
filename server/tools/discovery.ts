@@ -12,6 +12,8 @@ export const coreTools = new Set([
   'inspect_chat',
   'list_chat_members',
   'read_chat_media',
+  'read_chat_message',
+  'inspect_knowledge_status',
   'prepare_chat_reply',
   'retract_chat_message',
   'search_tools',

@@ -1,3 +1,4 @@
+import { richSegments, richSummary } from './chat-rich.js';
 import {
   createHmac,
   timingSafeEqual,
@@ -307,7 +308,20 @@ export function incoming(c: ChatConnection, event: any): ChatIncoming[] {
       parsed.text,
       event.time,
       parsed.media,
-    );
+    ).map((m) => ({
+      ...m,
+      text:
+        parsed.media.length &&
+        !event.message?.some((p: any) => p.type === 'text' && p.data?.text?.trim()) &&
+        richSummary(event.message)
+          ? '[Media attached; content not inspected.] ' + m.text
+          : m.text,
+      rich: richSegments(event.message),
+      ...(!event.message?.some((p: any) => p.type === 'text' && p.data?.text?.trim()) &&
+      richSummary(event.message)
+        ? { textOrigin: 'media-placeholder' as const }
+        : {}),
+    }));
   }
   if (
     event.type !== 'message' ||
@@ -451,6 +465,8 @@ function groupSegments(parts: any, account: string) {
           },
         },
       ];
+    if (['forward', 'json', 'xml'].includes(p?.type))
+      return [{ type: 'text', data: { text: richSummary([p]) } }];
     if (p?.type === 'face')
       return [
         {

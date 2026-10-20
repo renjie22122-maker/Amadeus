@@ -10,6 +10,13 @@ export interface ChatReplyPlan {
 }
 export interface ChatBridge {
   query(c: ChatConnection, kind: 'info' | 'members'): Promise<any>;
+  readMessage?(
+    c: ChatConnection,
+    messageId: string,
+    forwardIndex: number,
+    offset: number,
+    limit: number,
+  ): Promise<any>;
   importMedia(c: ChatConnection, messageId: string): Promise<string[]>;
   retract?(c: ChatConnection, deliveryId: string, senderId: string | null): Promise<unknown>;
 }

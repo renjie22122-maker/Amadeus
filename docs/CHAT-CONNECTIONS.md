@@ -145,3 +145,11 @@ attachment references. Service changes invalidate the snapshot until the owner
 reviews and saves again. Pause, disable or revoke blocks future submissions;
 already submitted jobs are not automatically cancelled. Every use is audited
 with the actual requesting member. Platform media delivery limits still apply.
+
+### Quoted messages, forwarded records and shared cards
+
+OneBot 11 retains forward resource IDs and bounded JSON/XML card text and HTTP(S) links. Cards alone do not initiate participation. `read_chat_message` reads messages received or quoted in the current route, validates recovered chat identity, and expands forwarded records with pagination (20 nodes by default). Forward authors are untrusted attribution, never members or authorization. Returned `mediaMessageId` references let `read_chat_media` import that page's attachments; image understanding still requires vision and audio requires transcription.
+
+Card claims do not verify linked content. Expired/retracted records, app-only identifiers and unavailable URLs remain explicit limitations. Existing web tools handle requested link fetching; there is no automatic URL fetch, internal protocol execution or unbounded recursive forward traversal. Output/depth limits are reported. `inspect_knowledge_status` exposes only authorized knowledge counts and vector coverage, without private memory or configuration.
+
+For NapCat shortcuts, optional local `bridgeWebUiConfig` points to its `config/webui.json`. The bridge launcher reads the current token and opens the built-in token-prefill login route only on loopback HTTP(S). Do not share the resulting URL; browser history may retain it. Credentials are not stored in the shortcut or committed configuration.

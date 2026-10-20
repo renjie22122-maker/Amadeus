@@ -1,3 +1,5 @@
+import { QueryCache } from './query-cache.js';
+const rerankCache = new QueryCache<any>();
 import { terms } from './memory-retrieval.js';
 import { createHash } from 'node:crypto';
 import {
@@ -30,40 +32,68 @@ export async function retrievalPost(
     'RETRIEVAL_ENDPOINT',
     'Use HTTPS or a loopback HTTP endpoint without URL credentials.',
   );
-  const response = await fetch(c.baseUrl.replace(/\/$/, '') + path, {
-    method: 'POST',
-    redirect: 'error',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(c.apiKey
-        ? kind === 'lightRag'
-          ? { 'X-API-Key': c.apiKey }
-          : { Authorization: 'Bearer ' + c.apiKey }
-        : {}),
-    },
-    body: JSON.stringify(body),
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(60000)])
-      : AbortSignal.timeout(60000),
-  });
-  assert(response.ok, 'RETRIEVAL_SERVICE', 'Retrieval service returned HTTP ' + response.status);
-  // Bound response memory and avoid returning remote exception bodies or credentials.
-  const reader = response.body?.getReader();
-  assert(reader, 'RETRIEVAL_RESPONSE', 'Missing retrieval response.');
-  const parts: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const r = await reader.read();
-      if (r.done) break;
-      size += r.value.length;
-      assert(size <= 8 * 1024 * 1024, 'RETRIEVAL_RESPONSE', 'Retrieval response exceeds 8 MiB.');
-      parts.push(r.value);
+  const perform = async (signal?: AbortSignal) => {
+    const response = await fetch(c.baseUrl.replace(/\/$/, '') + path, {
+      method: 'POST',
+      redirect: 'error',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(c.apiKey
+          ? kind === 'lightRag'
+            ? { 'X-API-Key': c.apiKey }
+            : { Authorization: 'Bearer ' + c.apiKey }
+          : {}),
+      },
+      body: JSON.stringify(body),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(60000)])
+        : AbortSignal.timeout(60000),
+    });
+    assert(response.ok, 'RETRIEVAL_SERVICE', 'Retrieval service returned HTTP ' + response.status);
+    // Bound response memory and avoid returning remote exception bodies or credentials.
+    const reader = response.body?.getReader();
+    assert(reader, 'RETRIEVAL_RESPONSE', 'Missing retrieval response.');
+    const parts: Uint8Array[] = [];
+    let size = 0;
+    try {
+      for (;;) {
+        const r = await reader.read();
+        if (r.done) break;
+        size += r.value.length;
+        assert(size <= 8 * 1024 * 1024, 'RETRIEVAL_RESPONSE', 'Retrieval response exceeds 8 MiB.');
+        parts.push(r.value);
+      }
+    } finally {
+      void reader.cancel().catch(() => {});
     }
-  } finally {
-    void reader.cancel().catch(() => {});
+    const result = JSON.parse(Buffer.concat(parts).toString('utf8'));
+    if (kind === 'rerank') {
+      assert(
+        Array.isArray(result) &&
+          result.length <= 60 &&
+          result.length === (body as any)?.texts?.length &&
+          new Set(result.map((r) => r.index)).size === result.length &&
+          result.every(
+            (r) =>
+              Number.isInteger(r.index) &&
+              r.index >= 0 &&
+              r.index < result.length &&
+              Number.isFinite(r.score),
+          ),
+        'RERANK_RESPONSE',
+        'Invalid reranker scores.',
+      );
+      return result.map((r) => ({ index: r.index, score: r.score }));
+    }
+    return result;
+  };
+  if (kind === 'rerank' && path === '/rerank') {
+    const key = createHash('sha256')
+      .update(JSON.stringify([c, body]))
+      .digest('hex');
+    return rerankCache.get(key, perform, signal);
   }
-  return JSON.parse(Buffer.concat(parts).toString('utf8'));
+  return perform(signal);
 }
 
 // Bound each wire payload; total corpus size is not a request-size limit.

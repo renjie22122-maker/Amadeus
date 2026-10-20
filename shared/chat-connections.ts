@@ -92,6 +92,7 @@ export interface ChatIncoming {
   addressed?: boolean;
   textOrigin?: 'user' | 'media-placeholder' | 'mention-only';
   mentionedIds?: string[];
+  rich?: { forwards: string[]; replies: string[]; cards: any[] };
 }
 export interface ChatSecrets {
   token: string;

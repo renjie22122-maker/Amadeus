@@ -111,12 +111,30 @@ test('research selection groups duplicate passages, diversifies chapters and rec
 
 test('persistent manifests query without vector payload, invalidate on deletion, and recover evicted cache', async (t) => {
   const snapshots = new Map<string, string[]>();
+  let batchSupported = false;
   let uploads = 0,
     probes = 0;
   const server = createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw);
+    if (req.url === '/vectors/search-batch') {
+      if (!batchSupported) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.setHeader('Content-Type', 'application/json');
+      res.end(
+        JSON.stringify({
+          results: body.generations.map((generation: string) => ({
+            generation,
+            result: (snapshots.get(generation) || []).slice(0, 60).map((id) => ({ id, score: 1 })),
+          })),
+        }),
+      );
+      return;
+    }
     if (body.cachedOnly) probes++;
     else {
       uploads++;
@@ -159,6 +177,12 @@ test('persistent manifests query without vector payload, invalidate on deletion,
     assert.equal(hit.diagnostics.backend, 'persistent-external');
     assert.equal(uploads, 1);
     assert.equal(probes, 1);
+    batchSupported = true;
+    const batched = await run();
+    assert.equal(batched.diagnostics.batchedCacheSearch, true);
+    assert.deepEqual(batched.rows, hit.rows);
+    assert.equal(probes, 1);
+    batchSupported = false;
     snapshots.clear();
     assert.equal((await run()).rows.length, 1);
     assert.equal(uploads, 2);

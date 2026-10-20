@@ -1,8 +1,10 @@
+import { QueryCache } from './query-cache.js';
 import { createHash } from 'node:crypto';
 import { localEncode } from './local-embedding.js';
 import type { Settings } from '../../shared/types.js';
 import { assert } from '../core/errors.js';
 export class Embeddings {
+  private queryCache = new QueryCache<number[][]>();
   constructor(private settings: () => Settings['embedding']) {}
   enabled() {
     const s = this.settings();
@@ -26,6 +28,34 @@ export class Embeddings {
     signal?: AbortSignal,
     purpose: 'query' | 'passage' = 'passage',
   ): Promise<number[][]> {
+    if (purpose === 'query' && texts.length === 1 && texts[0].length <= 16000) {
+      const settings = this.settings();
+      const revision = JSON.stringify(settings);
+      const key = createHash('sha256')
+        .update(JSON.stringify([settings, texts, purpose]))
+        .digest('hex');
+      return this.queryCache.get(
+        key,
+        async (shared) => {
+          const result = await this.encodeUncached(texts, shared, purpose);
+          assert(
+            JSON.stringify(this.settings()) === revision,
+            'EMBEDDING_CHANGED',
+            'Embedding settings changed during query.',
+          );
+          return result;
+        },
+        signal,
+      );
+    }
+    return this.encodeUncached(texts, signal, purpose);
+  }
+  private async encodeUncached(
+    texts: string[],
+    signal?: AbortSignal,
+    purpose: 'query' | 'passage' = 'passage',
+  ): Promise<number[][]> {
+    signal?.throwIfAborted();
     const s = this.settings();
     if (s.backend === 'local') return localEncode(texts, purpose, signal);
     assert(this.enabled(), 'EMBEDDING_DISABLED', 'Configure an embedding connection first.');

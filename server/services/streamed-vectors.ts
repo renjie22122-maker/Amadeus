@@ -51,22 +51,56 @@ export async function streamedVectors(
   if (manifest) {
     try {
       let hits: { id: string; score: number }[] = [];
+      // Optional batched cache protocol: one isolated worker can serve many shards.
+      // Older/external backends retain the existing per-shard path.
+      let batched: Map<string, any> | undefined;
+      try {
+        const results: any[] = [];
+        for (let offset = 0; offset < manifest.shards.length; offset += 64) {
+          const shards = manifest.shards.slice(offset, offset + 64);
+          const response = await retrievalPost(
+            'vectors',
+            external!,
+            '/vectors/search-batch',
+            {
+              backend: external!.backend,
+              index: external!.index,
+              generations: shards.map((x: any) => x.generation),
+              query,
+              limit: 60,
+            },
+            signal,
+          );
+          if (
+            !Array.isArray(response.results) ||
+            response.results.length !== shards.length ||
+            response.results.some((r: any, i: number) => r.generation !== shards[i].generation)
+          )
+            throw Error('Invalid batched vector response');
+          results.push(...response.results);
+        }
+        batched = new Map(results.map((r) => [r.generation, r]));
+      } catch (error) {
+        if (signal?.aborted) throw error;
+      }
       for (const shard of manifest.shards) {
         signal?.throwIfAborted();
-        const result = await retrievalPost(
-          'vectors',
-          external!,
-          '/vectors/search',
-          {
-            backend: external!.backend,
-            index: external!.index,
-            generation: shard.generation,
-            query,
-            limit: 60,
-            cachedOnly: true,
-          },
-          signal,
-        );
+        const result =
+          batched?.get(shard.generation) ??
+          (await retrievalPost(
+            'vectors',
+            external!,
+            '/vectors/search',
+            {
+              backend: external!.backend,
+              index: external!.index,
+              generation: shard.generation,
+              query,
+              limit: 60,
+              cachedOnly: true,
+            },
+            signal,
+          ));
         if (result.cacheMiss) throw Error('Snapshot evicted');
         const ids = new Set(shard.ids),
           seen = new Set<string>();
@@ -98,6 +132,7 @@ export async function streamedVectors(
         diagnostics: {
           backend: 'persistent-external',
           cacheHit: true,
+          batchedCacheSearch: !!batched,
           batches: manifest.shards.length,
           batchSize: 0,
           fallbackBatches: 0,

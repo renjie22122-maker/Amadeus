@@ -202,7 +202,7 @@ test('all transports normalize private media without interpreting embedded comma
       time: now,
       message: [{ type: 'forward', data: { id: 'x' } }],
     }).length,
-    0,
+    1,
   );
   assert.equal(
     incoming(base('wecom'), {

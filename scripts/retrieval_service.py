@@ -87,6 +87,42 @@ def rerank(data):
         scores = scorer.predict(pairs, batch_size=4, activation_fn=torch.nn.Sigmoid())
     return sorted([dict(index=i, score=float(s)) for i, s in enumerate(scores)], key=lambda r: -r["score"])
 
+def ensure_vector_snapshot(identity, expected, present, count_rows, upload):
+    """Only reuse a successfully populated content-addressed collection, never a partial write."""
+    folder=ROOT / "collection-ready"
+    folder.mkdir(exist_ok=True)
+    stamp=folder / (hashlib.sha256(identity.encode()).hexdigest()+".ready")
+    if present and stamp.exists() and int(count_rows()) == expected:
+        os.utime(stamp,None)
+        return False
+    stamp.unlink(missing_ok=True)
+    upload()
+    if int(count_rows()) == expected:
+        temporary=stamp.with_suffix("."+str(threading.get_ident())+".tmp")
+        temporary.write_text(str(expected),encoding="utf-8");os.replace(temporary,stamp)
+        for old in sorted(folder.glob("*.ready"),key=lambda f:f.stat().st_mtime,reverse=True)[256:]:
+            try: old.unlink()
+            except OSError: pass
+    return True
+
+def cached_vector_batch(data):
+    generations = data.get("generations")
+    if (not isinstance(generations,list) or not 0 < len(generations) <= 64 or
+        len(set(generations)) != len(generations) or
+        any(not isinstance(g,str) or len(g)!=64 or any(c not in "0123456789abcdef" for c in g) for g in generations)):
+        raise ValueError("Expected 1-64 distinct cached generations")
+    # One isolated native process per query batch, not one Python startup per shard.
+    if data.get("backend") == "faiss" and "--vector-worker" not in sys.argv:
+        child = subprocess.run([sys.executable,"-X","utf8",__file__,"--vector-worker"],
+            input=json.dumps({**data,"batch":True}),text=True,encoding="utf-8",capture_output=True,timeout=50,
+            creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+        if child.returncode != 0: raise ValueError("Isolated vector batch failed")
+        return json.loads(child.stdout)
+    results=[]
+    for generation in generations:
+        results.append({"generation":generation, **cached_vector_search({**data,"generation":generation,"cachedOnly":True})})
+    return {"results":results}
+
 def cached_vector_search(data):
     generation = data.get("generation", "")
     if not isinstance(generation, str) or len(generation) != 64 or any(c not in "0123456789abcdef" for c in generation):
@@ -161,6 +197,7 @@ def vector_search(data):
     with LOCK:
         if backend == "faiss":
             import faiss
+            faiss.omp_set_num_threads(min(4,os.cpu_count() or 1))
             key = hashlib.sha256((key + faiss.__version__).encode()).hexdigest()
             if key not in INDEXES:
                 cache = ROOT / "faiss"
@@ -169,7 +206,9 @@ def vector_search(data):
                 d = x.shape[1]
                 if cached.exists():
                     index = faiss.read_index(str(cached))
+                    os.utime(cached,None)
                     INDEXES[key] = index
+                    while len(INDEXES) > 2: INDEXES.popitem(last=False)
                     scores, indices = index.search(q, top)
                     return dict(result=[dict(id=rows[int(i)]["id"],score=float(v)) for i,v in zip(indices[0],scores[0]) if i>=0],
                         effectiveIndex=effective,fallbackReason=reason)
@@ -185,9 +224,12 @@ def vector_search(data):
                 index.add(x); INDEXES[key] = index
                 temporary = cache / (key + "." + str(os.getpid()) + ".tmp")
                 faiss.write_index(index, str(temporary)); os.replace(temporary,cached)
-                for old in sorted(cache.glob("*.index"),key=lambda f:f.stat().st_mtime,reverse=True)[4:]:
-                    try: old.unlink()
-                    except OSError: pass
+                total_bytes = 0
+                for old in sorted(cache.glob("*.index"),key=lambda f:f.stat().st_mtime,reverse=True):
+                    total_bytes += old.stat().st_size
+                    if total_bytes > 512*1024*1024 and old != cached:
+                        try: old.unlink()
+                        except OSError: pass
                 while len(INDEXES) > 2: INDEXES.popitem(last=False)
             INDEXES.move_to_end(key)
             scores, indices = INDEXES[key].search(q, top)
@@ -199,10 +241,14 @@ def vector_search(data):
             if not url: effective, reason = "exact-local", "Embedded Qdrant local mode does not run the server HNSW index"
             name = "amadeus_" + key[:24]
             try:
-                if not client.collection_exists(name):
+                present=client.collection_exists(name)
+                if not present:
                     client.create_collection(name, vectors_config=models.VectorParams(size=x.shape[1], distance=models.Distance.COSINE))
-                for start in range(0, len(rows), 256):
-                    client.upsert(name, points=[models.PointStruct(id=i, vector=x[i].tolist()) for i in range(start, min(start+256, len(rows)))], wait=True)
+                def upload():
+                    for start in range(0, len(rows), 256):
+                        client.upsert(name, points=[models.PointStruct(id=i, vector=x[i].tolist()) for i in range(start, min(start+256, len(rows)))], wait=True)
+                ensure_vector_snapshot(key+json.dumps([url,CONFIG.get("qdrantKey")]),len(rows),present,
+                    lambda:client.count(name,exact=True).count,upload)
                 found = client.query_points(name, query=q[0].tolist(), limit=top).points
                 hits = [(int(p.id), p.score) for p in found]
             finally: client.close()
@@ -350,6 +396,7 @@ class Handler(BaseHTTPRequestHandler):
                     "usage":{"prompt_tokens":tokens,"total_tokens":tokens}}
             elif self.path == "/rerank": result = rerank(data)
             elif self.path == "/vectors/search": result = cached_vector_search(data)
+            elif self.path == "/vectors/search-batch": result = cached_vector_batch(data)
             elif self.path == "/lightrag/documents/texts":
                 if not isinstance(data.get("scope"),str) or not 0<len(data["scope"])<=200:
                     raise ValueError("Invalid scope")
@@ -382,7 +429,8 @@ if __name__ == "__main__":
     parser=argparse.ArgumentParser(); parser.add_argument("--warmup",action="store_true"); parser.add_argument("--vector-worker",action="store_true")
     args=parser.parse_args()
     if args.vector_worker:
-        print(json.dumps(vector_search(json.load(sys.stdin)))); sys.exit(0)
+        request=json.load(sys.stdin)
+        print(json.dumps(cached_vector_batch(request) if request.get("batch") else vector_search(request))); sys.exit(0)
     if args.warmup:
         model("embedding"); model("rerank")
     print("Amadeus local RAG listening on 127.0.0.1:8811",flush=True)

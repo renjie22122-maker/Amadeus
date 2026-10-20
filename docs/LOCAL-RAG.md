@@ -97,3 +97,13 @@ To request focused peer scrutiny, link `researchCaseId` in `submit_team_proposal
 No new model, package, reindexing or launcher change is needed. The running service loads the update only after a later restart. These regression-tested mechanisms do not establish an improvement in literary interpretation or general reasoning scores.
 
 CLI extraction selection is provider-neutral: explicit `--profile` wins (unknown IDs or incompatible transports fail), otherwise retain existing extraction settings; for a new configuration use the compatible default profile or sole OpenAI Chat connection. Ambiguous choices leave extraction unconfigured with a message, while embedding/reranking remain usable. No corpus is sent during configuration. An explicit profile replaces the old extraction connection. Switching embedding models no longer carries over the old offline directory unless explicitly specified again.
+
+### Query latency and cache behavior
+
+Retrieval traces record executed stages in `diagnostics.timingsMs`: lexical search, query embedding, streamed vectors, document graph, LightRAG and reranking. Total latency alone does not identify corpus size as the bottleneck. On a manifest cache hit, `vectorHealth.scanned` is build-time coverage, not a fresh full scan.
+
+Query embeddings and reranking of identical input use process-local caches (64 entries, 120 seconds), including concurrent request coalescing with independent caller cancellation. Cancelling all subscribers aborts the shared request. Keys include connection/model/credential configuration and exact input. No full retrieval results or disk query cache are stored; scope/version checks remain in place. Candidate counts and reranking quality settings are unchanged.
+
+Compatible services support `/vectors/search-batch` for up to 64 cached shards. FAISS retains native process isolation while starting Python once per batch; older adapters use the per-shard protocol. FAISS disk indexes have a 512 MiB eviction budget instead of a four-file limit; memory retains at most two indexes. Qdrant reuses content-addressed collections only after successful population and count verification; partial writes, deletion and count changes trigger repair. This write optimization is not yet applied to Milvus.
+
+An isolated synthetic four-shard HNSW microtest (64 vectors per shard, 16 dimensions) measured 1.294 s serial versus 0.307 s batched with identical scores/ranks. This is not a production end-to-end guarantee. Cold model loading and long-passage reranking can still dominate. Existing local RAG processes require an idle restart to load the updated Python implementation; launcher change detection remains in effect.
