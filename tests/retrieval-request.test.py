@@ -137,7 +137,9 @@ class LightResume(unittest.IsolatedAsyncioTestCase):
   class Values:
    def __init__(self,d):self.d=d
    async def get_by_id(self,k):return self.d.get(k)
-   async def get_docs_by_statuses(self,statuses,**kw):return {k:v for k,v in self.d.items() if v.get('status') in statuses}
+   async def get_docs_by_statuses(self,statuses,**kw):
+    values={s.value for s in statuses}
+    return {k:v for k,v in self.d.items() if v.get('status') in values}
   rag=SimpleNamespace(doc_status=Values(rows),full_docs=Values(docs))
   plan=await h.light_resume_plan(rag,texts,sources)
   self.assertEqual(plan,{'completed':[ids[0]],'pending':[ids[1]]})

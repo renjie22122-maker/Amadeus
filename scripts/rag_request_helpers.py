@@ -130,7 +130,9 @@ async def light_resume_plan(rag, texts, sources):
         if status.get("status") not in ("failed", "pending", "processing", "parsing", "analyzing"):
             raise ValueError("Document is not recoverable")
         pending.append(doc_id)
-    unfinished = await rag.doc_status.get_docs_by_statuses(["failed", "pending", "processing", "parsing", "analyzing"], strict=True)
+    from enum import Enum
+    recovery_status = Enum("RecoveryStatus", {s.upper():s for s in ("failed", "pending", "processing", "parsing", "analyzing")}, type=str)
+    unfinished = await rag.doc_status.get_docs_by_statuses(list(recovery_status), strict=True)
     for doc_id in unfinished:
         status = await rag.doc_status.get_by_id(doc_id)
         if (status.get("metadata") or {}).get("is_duplicate"):
