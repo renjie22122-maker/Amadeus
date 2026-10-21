@@ -958,3 +958,21 @@ test('changed chat revision invalidates an old multi-message delivery plan', (t)
     ['current reply'],
   );
 });
+
+test('remote private style is transient and leaves local conversation settings untouched', (t) => {
+  const { channel, c, calls, store } = fixture(t);
+  const before = store.get('conversation', 'chat');
+  channel.receive(c.id, {
+    id: 'casual',
+    senderId: '123',
+    peerId: '123',
+    text: 'hello!',
+    timestamp: Date.now(),
+  });
+  channel.tick();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1], /Remote conversation style/);
+  assert.match(calls[0][1], /serious factual questions/);
+  assert.match(calls[0][1], /never relaxes permissions/);
+  assert.deepEqual(store.get('conversation', 'chat'), before);
+});

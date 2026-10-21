@@ -1274,3 +1274,33 @@ test('unsafe image URL is rejected and bridge bytes remain a bounded fallback', 
   assert.equal((await transport.importChatMedia(c, 'unsafe-image')).length, 1);
   assert.equal(calls, 1);
 });
+
+test('remote group banter guidance preserves sender and authorization boundaries', (t) => {
+  const { channels, c, calls } = ordinaryGroup(t);
+  channels.receive(
+    c.id,
+    groupMessage(c, [
+      { type: 'at', data: { qq: c.accountId } },
+      { type: 'text', data: { text: 'nice joke' } },
+    ]),
+  );
+  channels.tick();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1], /Remote conversation style/);
+  assert.match(calls[0][1], /not a fixed persona/);
+  assert.match(calls[0][1], /Do not transfer one member's identity/);
+  assert.match(calls[0][1], /never relaxes permissions/);
+});
+
+test('local pure and project conversations retain their existing configuration', () => {
+  for (const projectId of [null, 'project']) {
+    const local = {
+      id: 'local',
+      projectId,
+      permission: 'auto',
+      memory: true,
+      skillIds: ['writing'],
+    } as any;
+    assert.equal(restrictedChat(local), local);
+  }
+});

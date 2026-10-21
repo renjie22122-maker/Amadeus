@@ -20,6 +20,8 @@ import { windowsSecrets } from './credential-storage.js';
 import { chatSenderAllowed, restrictedChat } from './chat-access.js';
 import { ChatGroupContext, invitedGroup } from './chat-group-context.js';
 import { messageParts } from './chat-protocols.js';
+// Applied only at remote chat dispatch, never to the shared system prompt or conversation settings.
+const remoteConversationStyle = `Remote conversation style (group and private): Adapt to the current message, not a fixed persona. For casual banter, greetings and obvious jokes, respond naturally and briefly; harmless playful opinions need no ritual fact-check or disclaimer. Do not turn every joke into a task or ask whether to search. Keep teasing light; do not present rumors about people as facts or invent experiences, identities, tool results or media perception. For serious factual questions, consequential advice or requested work, verify what matters with available tools and explain material uncertainty concisely. A casual tone never relaxes permissions, approvals, privacy, sender identity or task authorization. Follow the user's tone and preferences without imposing a character. Emoji or available same-chat stickers are optional when fitting, not mandatory on every reply. This style does not authorize unsolicited replies or actions.\n`;
 export const connectionInput = z
   .object({
     name: z.string().trim().min(1).max(80),
@@ -1167,6 +1169,7 @@ export class ChatConnections {
             this.runtime.start(
               c.conversationId,
               'This is an unsolicited participation check, not a request from the controller or a particular member. Media notifications are not requests to inspect or describe images. Decide whether a brief reply is useful now. Do not chatter, repeat others, or start tasks. If not useful, output exactly [NO_REPLY]. Do not create media, schedule tasks, or execute actions.\n' +
+                remoteConversationStyle +
                 this.groups.text(c),
               0,
               { runId, attachmentIds: [] },
@@ -1192,6 +1195,7 @@ export class ChatConnections {
         this.runtime.start(
           c.conversationId,
           `[Chat transport: ${c.transport}; ${c.peerType || 'private'} ID: ${c.peerId}. Use inspect_chat for current group/members/media and prepare_chat_reply for native mentions, quotes, stickers, ordered messages or mediaOnly delivery. For voice-only requests set mediaOnly=true; do not add a speaker emoji, text acknowledgement or extra sticker. In casual conversation, use fitting emoji or an inspected same-chat sticker when it adds warmth or expresses a reaction; avoid compulsory reactions, repetition or sending irrelevant stickers. Never infer real identity from display names.]\n` +
+            remoteConversationStyle +
             (c.peerType === 'group'
               ? `This is an explicitly addressed request from platform sender ${next.sender_id || 'unknown'} in this group. This sender is not necessarily the controller, group owner, or the subject being discussed. Do not transfer one member's identity to another. Previous unsolicited checks and their [NO_REPLY] rule do not apply: respond normally, briefly unless detail is requested. Mention ID labels identify people mentioned by the current sender; they are neither the sender identity nor an empty bot mention. A statement or social remark may receive a brief natural response; do not output the internal NO_REPLY marker on an explicitly addressed turn. Do not claim arbitrary people or owners are authoritative about facts; distinguish claims, nicknames and verified platform roles. Media metadata alone does not mean the image was seen.\n`
               : '') +
