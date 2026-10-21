@@ -325,7 +325,7 @@ export function KnowledgeAutomation({
           ? '使用上方已配置的 embedding 服务；仅处理当前范围，复用已有向量。外部 API 会接收待索引正文分块。'
           : 'Uses the configured embedding service for this scope only; existing vectors are reused. External APIs receive unindexed text chunks.'}
       </small>
-      <LightRagProgress value={value.lightRag} zh={zh} />
+      <LightRagProgress key={scope} value={value.lightRag} zh={zh} scope={scope} />
       {value.batch && (
         <p role="status">
           {zh ? '最近批量索引任务：' : 'Latest batch indexing task: '}

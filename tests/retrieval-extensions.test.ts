@@ -278,3 +278,41 @@ test('unknown LightRAG jobs reconcile exact scoped batch without a second submis
   assert.equal(submissions, 1);
   assert.equal(checks, 2);
 });
+test('LightRAG explicit scoped recovery preserves batch and never restarts active jobs', async (t) => {
+  let state = 'unknown';
+  let resumed = 0;
+  let submitted: any;
+  const baseUrl = await service(t, (path, body) => {
+    if (path === '/documents/texts') {
+      submitted = body;
+      return { jobId: 'job', status: 'processing' };
+    }
+    if (path === '/documents/resume') {
+      resumed++;
+      assert.deepEqual(body.original, submitted);
+      assert.equal(body.confirmRetry, true);
+      state = 'processing';
+      return { jobId: 'job', status: state };
+    }
+    return { status: state, completed: 0 };
+  });
+  const light: any = { enabled: true, baseUrl, scope: 'general', mode: 'mix' };
+  light.authorizedTarget = retrievalTarget('lightRag', light);
+  const store = new Store(':memory:');
+  const kb = new Knowledge(store, undefined, () => ({ lightRag: light }));
+  t.after(() => {
+    kb.close();
+    store.close();
+  });
+  kb.import('general', 'test', 'Source retained across graph recovery.');
+  await kb.syncLightRag();
+  await kb.syncLightRag();
+  assert.equal(resumed, 0);
+  await assert.rejects(() => kb.syncLightRag('private'), /scope/i);
+  assert.equal(resumed, 0);
+  assert.equal((await kb.syncLightRag('general')).status, 'processing');
+  await kb.syncLightRag('general');
+  assert.equal(resumed, 1);
+  state = 'completed';
+  assert.equal((await kb.syncLightRag()).status, 'synced');
+});

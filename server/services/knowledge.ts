@@ -802,14 +802,20 @@ export class Knowledge {
     }
     return value;
   }
-  async syncLightRag() {
+  async syncLightRag(recoveryScope?: string) {
     const c = this.retrieval().lightRag;
     if (!c?.enabled || c.authorizedTarget !== retrievalTarget('lightRag', c))
       return { status: 'disabled' };
+    if (recoveryScope !== undefined)
+      assert(
+        recoveryScope === c.scope,
+        'LIGHTRAG_SCOPE',
+        'Recovery scope must match the authorized graph scope.',
+      );
     if (this.lightSyncBusy) return { status: 'processing' };
     const id = createHash('sha256').update(retrievalTarget('lightRag', c)).digest('hex');
     try {
-      const result = await this.runLightRagSync();
+      const result = await this.runLightRagSync(recoveryScope !== undefined);
       this.store.put('lightrag-progress', { id, ...result, observedAt: Date.now() });
       return result;
     } catch (error) {
@@ -823,7 +829,7 @@ export class Knowledge {
       throw error;
     }
   }
-  private async runLightRagSync() {
+  private async runLightRagSync(recover = false) {
     const c = this.retrieval().lightRag;
     if (!c?.enabled || c.authorizedTarget !== retrievalTarget('lightRag', c))
       return { status: 'disabled' };
@@ -869,6 +875,37 @@ export class Knowledge {
               },
             });
           }
+        }
+        if (recover && job.status === 'unknown') {
+          assert(
+            Array.isArray(previous.batch) &&
+              previous.batch.length > 0 &&
+              previous.batch.length <= 16,
+            'LIGHTRAG_RECOVERY',
+            'Original batch is unavailable; inspect the service before retrying.',
+          );
+          const original = previous.batch.map(
+            (key: string) =>
+              this.store.db
+                .prepare('SELECT id,document_id,text FROM chunks WHERE scope=? AND id=?')
+                .get(c.scope, key) as any,
+          );
+          assert(
+            original.every(
+              (r: any) => r && documentAt(this.store.maybe('document', r.document_id), Date.now()),
+            ),
+            'LIGHTRAG_RECOVERY',
+            'Original sources changed; inspect before retrying.',
+          );
+          job = await retrievalPost('lightRag', c, '/documents/resume', {
+            jobId: previous.jobId,
+            confirmRetry: true,
+            original: {
+              scope: c.scope,
+              texts: original.map((r: any) => r.text),
+              file_sources: original.map((r: any) => 'amadeus-' + r.document_id + '-' + r.id),
+            },
+          });
         }
         if (job.status !== 'completed')
           return {

@@ -420,7 +420,9 @@ def run_job(key, data, resume=False):
     except Exception as error:
         future.cancel()
         with JOB_LOCK:
-            JOBS[key] = {**JOBS.get(key,{}), "status":"unknown", "error":type(error).__name__}; save_jobs()
+            JOBS[key] = {**JOBS.get(key,{}), "status":"unknown", "error":type(error).__name__,
+                "errorFrames":[{"file":Path(f.filename).name,"line":f.lineno,"function":f.name}
+                    for f in __import__("traceback").extract_tb(error.__traceback__)[-6:]]}; save_jobs()
         probe = asyncio.run_coroutine_threadsafe(light_reconcile(data), LOOP)
         try:
             progress = probe.result(timeout=5)

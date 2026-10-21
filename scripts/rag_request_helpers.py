@@ -101,6 +101,21 @@ async def light_document_complete(rag, doc_id, text, source=None):
             metadata = (candidate or {}).get("metadata") or {}
             if candidate and candidate.get("file_path") == source and metadata.get("is_duplicate") and metadata.get("duplicate_kind") == "content_hash":
                 status = candidate
+        if not status and duplicate:
+            # A batch duplicate may name a provisional ID subsequently deduplicated
+            # against an older document. Resolve its canonical content owner, then
+            # still require PROCESSED status and exact text (hash alone is insufficient).
+            lookup = getattr(rag.doc_status, "get_doc_by_content_hash", None)
+            if lookup:
+                from lightrag.utils_pipeline import compute_text_content_hash
+                candidate = await lookup(compute_text_content_hash(text.strip()))
+                if candidate:
+                    canonical_id, canonical = candidate
+                    original = await rag.full_docs.get_by_id(canonical_id)
+                    return bool(canonical.get("status") == "processed"
+                        and not (canonical.get("metadata") or {}).get("is_duplicate")
+                        and original and isinstance(original.get("content"), str)
+                        and original["content"].strip() == text.strip())
         if not status: return False
         if status.get("status") == "processed":
             if not duplicate: return True

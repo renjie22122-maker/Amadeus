@@ -1,4 +1,16 @@
-export function LightRagProgress({ value, zh }: { value: any; zh: boolean }) {
+import { useState } from 'react';
+import { api } from '../api';
+export function LightRagProgress({
+  value,
+  zh,
+  scope,
+}: {
+  value: any;
+  zh: boolean;
+  scope?: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
   if (!value || value.status === 'disabled') return null;
   const labels: Record<string, [string, string]> = {
     pending: ['等待首次同步', 'Awaiting first synchronization'],
@@ -37,6 +49,47 @@ export function LightRagProgress({ value, zh }: { value: any; zh: boolean }) {
           {value.failed || 0}
         </p>
       )}
+      {scope && ['unknown', 'unavailable', 'pending'].includes(value.status) && (
+        <div>
+          <button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setMessage('');
+              try {
+                const result = await api('/knowledge/lightrag-resume', { scope });
+                setMessage(
+                  ['queued', 'processing', 'synced', 'completed'].includes(result.status)
+                    ? zh
+                      ? '已接续建图，已完成内容保留；进度会自动刷新。'
+                      : 'Graph synchronization resumed; completed content retained. Progress refreshes automatically.'
+                    : zh
+                      ? '尚未恢复，请检查服务状态。'
+                      : 'Not resumed; check service status.',
+                );
+              } catch (error: any) {
+                setMessage(error.message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy
+              ? zh
+                ? '正在核对并恢复…'
+                : 'Checking and resuming…'
+              : zh
+                ? '恢复建图'
+                : 'Resume graph building'}
+          </button>
+          <small>
+            {zh
+              ? '核对原批次，只接续未完成内容，不清空图或重建全库。'
+              : 'Reconciles the original batch and resumes incomplete content without clearing the graph.'}
+          </small>
+        </div>
+      )}
+      {message && <p role="status">{message}</p>}
       <small className="muted">
         {zh
           ? '按已确认完成的正文分块计数，每几秒按分块刷新，失败不扣除已完成进度；不是文件数、向量数或实体数。'

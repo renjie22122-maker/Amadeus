@@ -224,4 +224,29 @@ class ExtractionTransport(unittest.IsolatedAsyncioTestCase):
    log=(Path(tmp)/'extraction-errors.jsonl').read_text()
    self.assertNotIn('secret',log);self.assertIn('401',log)
 
+
+
+class DanglingBatchDuplicate(unittest.IsolatedAsyncioTestCase):
+ async def test_resolves_only_exact_completed_canonical_content(self):
+  import sys
+  from types import SimpleNamespace, ModuleType
+  from unittest.mock import patch
+  class Values:
+   async def get_by_id(self,key):
+    return {'status':'failed','metadata':{'is_duplicate':True,'duplicate_kind':'content_hash','original_doc_id':'provisional'}} if key=='duplicate' else None
+   async def get_doc_by_content_hash(self,key):return ('canonical',self.row)
+  class Docs:
+   async def get_by_id(self,key):return {'content':self.content}
+  states=Values();states.row={'status':'processed'};docs=Docs();docs.content='same'
+  rag=SimpleNamespace(doc_status=states,full_docs=docs)
+  module=ModuleType('lightrag.utils_pipeline');module.compute_text_content_hash=lambda s:s
+  with patch.dict(sys.modules,{'lightrag.utils_pipeline':module}):
+   self.assertTrue(await h.light_document_complete(rag,'duplicate','same\n'))
+   docs.content='different'
+   self.assertFalse(await h.light_document_complete(rag,'duplicate','same'))
+   docs.content='same';states.row={'status':'processing'}
+   self.assertFalse(await h.light_document_complete(rag,'duplicate','same'))
+   states.row={'status':'processed','metadata':{'is_duplicate':True}}
+   self.assertFalse(await h.light_document_complete(rag,'duplicate','same'))
+
 if __name__=='__main__':unittest.main()

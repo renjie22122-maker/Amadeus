@@ -666,6 +666,11 @@ export async function createApp(options: { directory: string; dist?: string; run
     return configureLocalRag(config, directory, data.scope, data.profileId, data);
   });
   app.post('/api/knowledge/lightrag-sync', async () => runtime.knowledge.syncLightRag());
+  app.post('/api/knowledge/lightrag-resume', async (req) => {
+    const { scope } = z.object({ scope: z.string().min(1) }).parse(req.body);
+    checkScope(scope);
+    return runtime.knowledge.syncLightRag(scope);
+  });
   app.get<{ Querystring: { scope: string } }>('/api/knowledge/statistics', async (req) => {
     checkScope(req.query.scope);
     return runtime.knowledge.statisticsAsync([req.query.scope]);
