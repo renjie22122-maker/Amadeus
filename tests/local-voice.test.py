@@ -385,6 +385,17 @@ class ResidentTests(unittest.TestCase):
             finally:
                 pool.close()
 
+    def test_asr_admission_reuses_only_matching_runtime_and_releases_under_pressure(self):
+        from resident import ResidentWorker
+        pool = ResidentWorker()
+        config = {'whisperPython':'isolated-python', 'cpuThreads':2, 'device':'auto'}
+        pool.key = ('isolated-python','whisper','model',None,None,2,0,'cuda')
+        with patch.object(pool,'available',return_value=True), patch.object(pool,'close') as close:
+            self.assertEqual(pool.admit(config,'whisper','model',False,lambda c:('cuda','warm'))[0],'cuda')
+            close.assert_not_called()
+            pool.admit(config,'whisper','other-model',False,lambda c:('cpu','low memory'))
+            close.assert_called_once()
+
     def test_disconnect_discards_worker_without_replay(self):
         from resident import ResidentWorker
         pool = ResidentWorker()

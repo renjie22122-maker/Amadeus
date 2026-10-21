@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { playLocalSpeech } from '../read-aloud-stream';
 import { speechChunks } from '../../shared/read-aloud';
-import { supportsReadAloud } from '../../shared/media-capabilities';
+import { supportsReadAloud, supportsTranscriptionPreview } from '../../shared/media-capabilities';
 import type { ChatConnection } from '../../shared/chat-connections';
 
 /** Explicit, half-duplex browser voice. Never enables a microphone on mount. */
@@ -17,6 +17,23 @@ export function BrowserVoiceChat({
   close: () => void;
   openConversation: (id: string) => void;
 }) {
+  const [previewServices, setPreviewServices] = useState<any[]>([]),
+    [previewService, setPreviewService] = useState(''),
+    [partial, setPartial] = useState(''),
+    [autoEnd, setAutoEnd] = useState(true),
+    [previewInfo, setPreviewInfo] = useState('');
+  const pendingPreview = useRef<Promise<void> | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    void api('/media/services')
+      .then((services) => {
+        if (mounted) setPreviewServices(services.filter(supportsTranscriptionPreview));
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
   const [phase, setPhase] = useState('idle'),
     [error, setError] = useState(''),
     [heard, setHeard] = useState(''),
@@ -72,6 +89,27 @@ export function BrowserVoiceChat({
         blob,
         'voice.' + (blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm'),
       );
+      if (previewService) {
+        await pendingPreview.current;
+        signal.throwIfAborted();
+        const final = await api(
+          '/conversations/' +
+            connection.conversationId +
+            '/transcription-preview?serviceId=' +
+            encodeURIComponent(previewService) +
+            '&sequence=10000',
+          form,
+          undefined,
+          {},
+          signal,
+        );
+        if (!final.text?.trim() || final.hasSpeech === false)
+          throw Error(tr('未识别到语音，没有发送。', 'No speech; nothing sent.'));
+        setHeard(final.text);
+        setPartial('');
+        await respond(final.text, signal);
+        return;
+      }
       const submitted = await api(
         '/conversations/' + connection.conversationId + '/transcribe',
         form,
@@ -214,8 +252,11 @@ export function BrowserVoiceChat({
     setError('');
     setAnswer('');
     setHeard('');
+    setPartial('');
+    setPreviewInfo('');
     const current = new AbortController();
     ctl.current = current;
+    setPhase('connecting');
     try {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined')
         throw Error(
@@ -235,25 +276,135 @@ export function BrowserVoiceChat({
         return;
       }
       mic.current = stream;
+      let lastVoice = Date.now(),
+        meterReady = false;
+      let meter: ReturnType<typeof setInterval> | undefined;
+      let source: MediaStreamAudioSourceNode | undefined;
+      try {
+        source = audio.current.createMediaStreamSource(stream);
+        const analyser = audio.current.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        const samples = new Float32Array(analyser.fftSize);
+        meter = setInterval(() => {
+          if (current.signal.aborted || !stream.active) {
+            clearInterval(meter);
+            source?.disconnect();
+            return;
+          }
+          analyser.getFloatTimeDomainData(samples);
+          if (Math.sqrt(samples.reduce((sum, v) => sum + v * v, 0) / samples.length) > 0.012)
+            lastVoice = Date.now();
+          meterReady = true;
+        }, 100);
+      } catch {
+        /* Without a live meter, keep manual endpointing rather than trusting stale audio. */
+      }
+      const stopMeter = () => {
+        if (meter) clearInterval(meter);
+        source?.disconnect();
+      };
+      current.signal.addEventListener('abort', stopMeter, { once: true });
       const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'].find((t) =>
         MediaRecorder.isTypeSupported(t),
       );
       const rec = new MediaRecorder(stream, type ? { mimeType: type } : {});
       recorder.current = rec;
       const chunks: Blob[] = [];
-      let bytes = 0;
+      let bytes = 0,
+        sequence = 0,
+        lastPreview = Date.now(),
+        previewDelay = 1500;
+      let previewPaused = false;
+      const preview = async () => {
+        if (
+          !previewService ||
+          previewPaused ||
+          pendingPreview.current ||
+          rec.state !== 'recording' ||
+          Date.now() - lastPreview < previewDelay
+        )
+          return;
+        lastPreview = Date.now();
+        const captured = lastPreview;
+        const index = ++sequence;
+        const form = new FormData();
+        form.append('file', new Blob(chunks, { type: rec.mimeType }), 'preview.webm');
+        const work = (async () => {
+          try {
+            const result = await api(
+              '/conversations/' +
+                connection.conversationId +
+                '/transcription-preview?serviceId=' +
+                encodeURIComponent(previewService) +
+                '&sequence=' +
+                index,
+              form,
+              undefined,
+              {},
+              current.signal,
+            );
+            if (current.signal.aborted || rec.state !== 'recording' || result.sequence !== index)
+              return;
+            setPartial(result.text);
+            if (result.device === 'cpu' && result.elapsedMs > 4000) {
+              previewPaused = true;
+              setPreviewInfo(
+                tr(
+                  'CPU 转写较慢，已暂停预览；请手动结束，随后完整识别。',
+                  'CPU is slow; preview paused. Finish manually for full transcription.',
+                ),
+              );
+              return;
+            }
+            previewDelay = Math.max(1500, Math.min(10000, result.elapsedMs || 1500));
+            setPreviewInfo((result.device || '') + ' · ' + Math.round(result.elapsedMs) + ' ms');
+            // Only a fresh VAD decision may end a turn; stale CPU previews cannot cut later speech.
+            if (
+              autoEnd &&
+              meterReady &&
+              Date.now() - lastVoice >= 1200 &&
+              result.hasSpeech &&
+              result.speechEnd != null &&
+              result.audioSeconds - result.speechEnd >= 1.2 &&
+              Date.now() - captured < 1500
+            )
+              rec.stop();
+          } catch (e: any) {
+            if (!current.signal.aborted) {
+              previewDelay = Math.min(10000, previewDelay * 2);
+              setPreviewInfo(
+                tr(
+                  '预览暂不可用，可手动结束后识别。',
+                  'Preview unavailable; finish manually to transcribe.',
+                ),
+              );
+            }
+          }
+        })();
+        pendingPreview.current = work;
+        try {
+          await work;
+        } finally {
+          if (pendingPreview.current === work) pendingPreview.current = null;
+        }
+      };
       rec.ondataavailable = (e) => {
         chunks.push(e.data);
         bytes += e.data.size;
-        if (bytes > 20 * 1024 * 1024 && rec.state === 'recording') rec.stop();
+        if (bytes > 7 * 1024 * 1024 && rec.state === 'recording') rec.stop();
+        else void preview();
       };
       rec.onerror = () => {
+        stopMeter();
         stream.getTracks().forEach((t) => t.stop());
         current.abort();
         setError(tr('录音失败，请重新打开语音对话。', 'Recording failed; reopen voice chat.'));
         setPhase('idle');
       };
       rec.onstop = () => {
+        stopMeter();
+        current.signal.removeEventListener('abort', stopMeter);
         if (timer.current) clearTimeout(timer.current);
         stream.getTracks().forEach((t) => t.stop());
         if (!current.signal.aborted)
@@ -292,10 +443,48 @@ export function BrowserVoiceChat({
       </strong>
       <p>
         {tr(
-          '点击说话，再点结束后自动转写、回复并朗读。内容保存在当前会话，只在网页回复；不是 QQ 电话。麦克风不会持续监听，转写为整句模式。',
-          'Click to speak, then finish to transcribe, respond and read aloud. Saved to this conversation; replies stay in the browser. Not a native platform call, streaming transcription or always-on microphone.',
+          '点击说话，再点结束后自动转写、回复并朗读。内容保存在当前会话，只在网页回复；不是 QQ 电话。麦克风不会持续监听；可选增量预览，临时文字不会发送给模型。',
+          'Click to speak, then finish to transcribe, respond and read aloud. Saved to this conversation; replies stay in the browser. Not a native platform call or always-on microphone. Optional incremental previews are provisional; only the final transcript is sent.',
         )}
       </p>
+      <label>
+        {tr('转写方式', 'Transcription')}{' '}
+        <select
+          value={previewService}
+          disabled={phase !== 'idle'}
+          onChange={(e) => setPreviewService(e.target.value)}
+        >
+          <option value="">
+            {tr('整句识别（当前设置）', 'Whole sentence (current settings)')}
+          </option>
+          {previewServices.map((service) => (
+            <option key={service.id} value={service.id}>
+              {service.name} · {tr('增量预览', 'incremental preview')}
+            </option>
+          ))}
+        </select>
+      </label>
+      {previewService && (
+        <label>
+          <input
+            type="checkbox"
+            checked={autoEnd}
+            disabled={phase !== 'idle'}
+            onChange={(e) => setAutoEnd(e.target.checked)}
+          />
+          {tr(
+            '停顿后自动结束（仍可手动结束）',
+            'Finish after silence (manual finish remains available)',
+          )}
+        </label>
+      )}
+      {partial && (
+        <p aria-label={tr('临时转写', 'Provisional transcript')}>
+          {tr('临时：', 'Provisional: ')}
+          {partial}
+        </p>
+      )}
+      {previewInfo && <small>{previewInfo}</small>}
       <p role="status">{labels[phase] || phase}</p>
       <button onClick={() => void assistantFirst()} disabled={phase !== 'idle'}>
         {tr('让模型先说', 'Assistant speaks first')}

@@ -50,3 +50,12 @@ export function migrateLegacyVoice(c: MediaConnection) {
   )
     c.capabilities = { readAloud: { protocol: 'wav-ndjson-v1', target: mediaCapabilityTarget(c) } };
 }
+
+export function supportsTranscriptionPreview(c: MediaConnection) {
+  return (
+    c.kind === 'transcription' &&
+    c.protocol === 'openai-transcription' &&
+    c.capabilities?.transcriptionPreview?.protocol === 'audio-snapshot-v1' &&
+    c.capabilities.transcriptionPreview.target === mediaCapabilityTarget(c)
+  );
+}

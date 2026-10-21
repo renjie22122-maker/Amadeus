@@ -33,6 +33,7 @@ export interface MediaConnection {
   estimatedUsd: number | null;
   capabilities?: {
     readAloud?: { protocol: 'wav-ndjson-v1'; target: string };
+    transcriptionPreview?: { protocol: 'audio-snapshot-v1'; target: string };
     references?: {
       target: string;
       maxPerField?: number;

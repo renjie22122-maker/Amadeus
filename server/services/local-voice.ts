@@ -55,6 +55,10 @@ export function localVoiceConnections(root: string): MediaConnection[] {
       c.capabilities = {
         readAloud: { protocol: 'wav-ndjson-v1', target: mediaCapabilityTarget(c) },
       };
+    else if (c.model === 'whisper')
+      c.capabilities = {
+        transcriptionPreview: { protocol: 'audio-snapshot-v1', target: mediaCapabilityTarget(c) },
+      };
   return connections;
 }
 
@@ -64,7 +68,10 @@ export function configureLocalVoice(config: Configuration, root: string) {
   const media = settings.media || { connections: [], transcriptionId: '', autoApproveMaxUsd: null };
   media.connections = [
     ...media.connections.filter((old) => !connections.some((c) => c.id === old.id)),
-    ...connections,
+    ...connections.map((c) => {
+      const old = media.connections.find((existing) => existing.id === c.id);
+      return old ? { ...c, enabled: old.enabled, defaults: { ...c.defaults, ...old.defaults } } : c;
+    }),
   ];
   // Preserve an existing microphone choice. Adding local speech must not silently replace it.
   media.transcriptionId ||= connections[0].id;

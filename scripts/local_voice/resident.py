@@ -56,7 +56,8 @@ class ResidentWorker:
     def admit(self, config, model, path, speech, probe):
         self.validate(config)
         with self.guard:
-            compatible = (self.available() and speech and self.key[:7] == (config.get('ttsPython', sys.executable), model, path, config.get('cosySource'), config.get('torchRuntimePath'), config.get('cpuThreads', 2), config.get('gpuIndex', 0)))
+            python = config.get('ttsPython' if speech else 'whisperPython' if model == 'whisper' else 'asrPython', sys.executable)
+            compatible = (self.available() and self.key[:7] == (python, model, path, config.get('cosySource'), config.get('torchRuntimePath'), config.get('cpuThreads', 2), config.get('gpuIndex', 0)))
             if compatible:
                 # Cold allocation threshold still applies when upgrading a CPU worker.
                 policy = {**config, 'minFreeMiB': config.get('warmReserveMiB', 1024)} if self.key[-1] == 'cuda' else config

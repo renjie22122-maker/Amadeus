@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   supportsReadAloud,
+  supportsTranscriptionPreview,
   speechStreamEndpoints,
   mediaReferenceBudget,
 } from '../../shared/media-capabilities.js';
@@ -23,6 +24,101 @@ const generation = z.object({
 export function mediaRoutes(app: FastifyInstance, runtime: Runtime) {
   const { store, media } = runtime;
   app.get('/api/media/services', async () => media.connections());
+  const previews = new Set<string>();
+  app.post<{ Params: { id: string } }>(
+    '/api/conversations/:id/transcription-preview',
+    async (req, reply) => {
+      store.get('conversation', req.params.id);
+      const a = z
+        .object({ serviceId: z.string(), sequence: z.coerce.number().int().min(0).max(10000) })
+        .parse(req.query);
+      const connection = media.connection(a.serviceId);
+      assert(
+        supportsTranscriptionPreview(connection),
+        'STT_PREVIEW_UNAVAILABLE',
+        'Select a prepared incremental transcription service.',
+        409,
+      );
+      const base = new URL(connection.baseUrl);
+      assert(
+        (base.protocol === 'https:' ||
+          (base.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(base.hostname))) &&
+          !base.username &&
+          !base.password &&
+          !base.search &&
+          !base.hash,
+        'STT_TARGET',
+        'Preview requires HTTPS or loopback HTTP.',
+      );
+      assert(!previews.has(req.params.id), 'STT_BUSY', 'A preview is already running.', 429);
+      previews.add(req.params.id);
+      const abort = new AbortController();
+      const close = () => abort.abort();
+      reply.raw.once('close', close);
+      try {
+        const file = await req.file();
+        assert(
+          file && /^(audio\/|video\/webm)/.test(file.mimetype),
+          'AUDIO_REQUIRED',
+          'Upload audio.',
+        );
+        const bytes = await file.toBuffer();
+        assert(
+          !file.file.truncated && bytes.length > 0 && bytes.length <= 8 * 1024 * 1024,
+          'AUDIO_SIZE',
+          'Preview audio must be 1 byte to 8 MiB.',
+        );
+        const form = new FormData();
+        form.append('model', connection.model);
+        form.append(
+          'file',
+          new Blob([new Uint8Array(bytes)], { type: file.mimetype }),
+          'preview.audio',
+        );
+        if (typeof connection.defaults.language === 'string')
+          form.append('language', connection.defaults.language);
+        const began = Date.now();
+        const response = await fetch(
+          connection.baseUrl.replace(/\/$/, '') + '/audio/transcriptions',
+          {
+            method: 'POST',
+            body: form,
+            headers: { Authorization: 'Bearer ' + connection.apiKey },
+            redirect: 'error',
+            signal: AbortSignal.any([abort.signal, AbortSignal.timeout(150000)]),
+          },
+        );
+        assert(
+          response.ok,
+          'STT_PREVIEW_FAILED',
+          `Transcription unavailable (${response.status}).`,
+          response.status === 429 ? 429 : 503,
+        );
+        const data = JSON.parse((await boundedBytes(response, 1024 * 1024)).toString());
+        const result = z
+          .object({
+            text: z.string().max(20000),
+            language: z.string().optional(),
+            device: z.string().optional(),
+            hasSpeech: z.boolean().optional(),
+            speechEnd: z.number().nullable().optional(),
+            audioSeconds: z.number().optional(),
+            timings: z.record(z.string(), z.unknown()).optional(),
+          })
+          .parse(data);
+        return {
+          ...result,
+          sequence: a.sequence,
+          elapsedMs: Date.now() - began,
+          provisional: true,
+        };
+      } finally {
+        previews.delete(req.params.id);
+        reply.raw.off('close', close);
+      }
+    },
+  );
+
   app.post<{ Params: { id: string } }>('/api/conversations/:id/read-aloud', async (req, reply) => {
     const c = store.get<Conversation>('conversation', req.params.id);
     assert(

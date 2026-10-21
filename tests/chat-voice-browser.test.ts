@@ -51,10 +51,16 @@ test(
           mimeType = 'audio/webm';
           onstop: any;
           ondataavailable: any;
+          timer: any;
           start() {
             this.state = 'recording';
+            this.timer = setInterval(
+              () => this.ondataavailable?.({ data: new Blob(['fixture']) }),
+              500,
+            );
           }
           stop() {
+            clearInterval(this.timer);
             this.state = 'inactive';
             this.ondataavailable?.({ data: new Blob(['fixture']) });
             this.onstop?.();
@@ -85,6 +91,17 @@ test(
       service.capabilities = {
         readAloud: { protocol: 'wav-ndjson-v1', target: mediaCapabilityTarget(service) },
       };
+      const stt: any = {
+        id: 'stt',
+        kind: 'transcription',
+        protocol: 'openai-transcription',
+        baseUrl: 'http://127.0.0.1:9999/v1',
+        model: 'whisper',
+        name: 'Whisper',
+      };
+      stt.capabilities = {
+        transcriptionPreview: { protocol: 'audio-snapshot-v1', target: mediaCapabilityTarget(stt) },
+      };
       const sent: string[] = [];
       const wav = Buffer.alloc(44 + 1600);
       wav.write('RIFF');
@@ -109,7 +126,7 @@ test(
       await page.route('**/api/chat-connections/voice-route/voice-turn/voice-run', (r) =>
         r.fulfill({ json: { status: 'completed', text: 'A normal reply.' } }),
       );
-      await page.route('**/api/media/services', (r) => r.fulfill({ json: [service] }));
+      await page.route('**/api/media/services', (r) => r.fulfill({ json: [service, stt] }));
       await page.route('**/api/conversations/voice-chat/transcribe', (r) =>
         r.fulfill({ json: { id: 'stt' } }),
       );
@@ -126,6 +143,19 @@ test(
             '\n',
         }),
       );
+      await page.route('**/api/conversations/voice-chat/transcription-preview?*', (r) => {
+        const sequence = Number(new URL(r.request().url()).searchParams.get('sequence'));
+        return r.fulfill({
+          json: {
+            sequence,
+            text: sequence === 10000 ? 'Final corrected sentence.' : 'Temporary words',
+            hasSpeech: true,
+            audioSeconds: 2,
+            speechEnd: 2,
+            elapsedMs: 50,
+          },
+        });
+      });
       await page.goto('http://127.0.0.1:' + (app.server.address() as any).port);
       await page.getByRole('button', { name: 'Chat connections', exact: true }).click();
       await page.getByRole('button', { name: 'Browser voice', exact: true }).click();
@@ -145,6 +175,13 @@ test(
       await page.getByText('Ready', { exact: true }).waitFor();
       assert.equal(sent[1], 'Hello from microphone.');
       assert((await page.evaluate(() => (window as any).micStops)) >= 1);
+      await page.getByRole('combobox').last().selectOption('stt');
+      await page.getByRole('button', { name: 'Speak', exact: true }).click();
+      await page.getByLabel('Provisional transcript', { exact: true }).waitFor();
+      assert.equal(sent.length, 2, 'a preview must not dispatch a model turn');
+      await page.getByRole('button', { name: 'Finish speaking', exact: true }).click();
+      await page.getByText('Ready', { exact: true }).waitFor();
+      assert.equal(sent[2], 'Final corrected sentence.');
       await page.getByRole('button', { name: 'Hang up', exact: true }).click();
       assert.equal(
         await page.getByRole('region', { name: 'Browser voice chat', exact: true }).count(),

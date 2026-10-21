@@ -261,7 +261,7 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                             request.write_text(json.dumps(job), encoding="utf-8")
                             with (directory / "worker.log").open("ab") as logs:
                                 try:
-                                    returncode = run_worker([python, "-X", "utf8", str(Path(__file__).with_name("worker.py")), str(request)], stdout=logs, stderr=logs, env=env, timeout=max(.1, deadline - time.monotonic()), check=False, resident=resident if speech else None, **({"on_tick": pump} if streaming else {}))
+                                    returncode = run_worker([python, "-X", "utf8", str(Path(__file__).with_name("worker.py")), str(request)], stdout=logs, stderr=logs, env=env, timeout=max(.1, deadline - time.monotonic()), check=False, resident=resident, **({"on_tick": pump} if streaming else {}))
                                 finally:
                                     if speech and config_path:
                                         trace_file = Path(job["result"]).with_suffix(".trace.json")

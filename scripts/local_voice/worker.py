@@ -58,13 +58,15 @@ def run(job):
     if model == "sensevoice":
         from funasr import AutoModel
         from funasr.utils.postprocess_utils import rich_transcription_postprocess
-        engine = AutoModel(model=model_path, device="cuda:0" if device == "cuda" else "cpu", disable_update=True, trust_remote_code=False)
+        if _ENGINE is None:
+            _ENGINE = AutoModel(model=model_path, device="cuda:0" if device == "cuda" else "cpu", disable_update=True, trust_remote_code=False)
+        engine = _ENGINE
         result = engine.generate(input=job["audio"], cache={}, language=job.get("language") or "auto", use_itn=True, batch_size_s=60)
         return {"text": " ".join(rich_transcription_postprocess(x["text"]) for x in result)}
     if model == "whisper":
         from faster_whisper import WhisperModel
         import ctranslate2
-        if device == "cuda":
+        if device == "cuda" and _ENGINE is None:
             if not ctranslate2.get_cuda_device_count():
                 raise RuntimeError("GPU_UNAVAILABLE: CTranslate2 CUDA runtime is not ready")
             # CT2 4.4 uses CUDA 12/cuDNN 8, matching optional Torch 2.3.1 wheels.
@@ -77,10 +79,21 @@ def run(job):
                     _DLL_HANDLES.extend(ctypes.WinDLL(name) for name in ("cublas64_12.dll", "cudnn64_8.dll"))
                 except OSError as error:
                     raise RuntimeError("GPU_UNAVAILABLE: Whisper requires CUDA 12/cuDNN 8 libraries") from error
-        engine = WhisperModel(model_path, device=device, compute_type="int8_float16" if device == "cuda" else "int8", cpu_threads=int(config.get("cpuThreads", 2)), local_files_only=True)
+        reused = _ENGINE is not None
+        load_started = time.perf_counter()
+        if _ENGINE is None:
+            _ENGINE = WhisperModel(model_path, device=device, compute_type="int8_float16" if device == "cuda" else "int8", cpu_threads=int(config.get("cpuThreads", 2)), local_files_only=True)
+        engine = _ENGINE
+        timings.update(modelReused=reused, modelLoadSeconds=time.perf_counter()-load_started)
+        from faster_whisper.audio import decode_audio
+        from faster_whisper.vad import get_speech_timestamps, VadOptions
+        samples = decode_audio(job["audio"], sampling_rate=16000)
+        spans = get_speech_timestamps(samples, VadOptions(min_silence_duration_ms=900, speech_pad_ms=100))
+        speech_end = spans[-1]["end"]/16000 if spans else None
+        inference_started = time.perf_counter()
         segments, info = engine.transcribe(job["audio"], language=job.get("language"), vad_filter=True)
         rows = [{"start": s.start, "end": s.end, "text": s.text} for s in segments]
-        return {"text": "".join(s["text"] for s in rows), "segments": rows, "language": info.language}
+        return {"text": "".join(s["text"] for s in rows), "segments": rows, "language": info.language, "hasSpeech": bool(spans), "speechEnd": speech_end, "audioSeconds": len(samples)/16000, "timings": {**timings, "inferenceSeconds": time.perf_counter()-inference_started, "totalSeconds": time.perf_counter()-started}}
     if model not in ("cosyvoice", "cosyvoice-sft"):
         raise ValueError("Unsupported model")
     source = Path(config["cosySource"]).resolve()
