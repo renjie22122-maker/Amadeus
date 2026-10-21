@@ -27,6 +27,7 @@ const remoteConversationStyle = `Remote conversation style (group and private): 
 - Verification and work: for serious factual questions, consequential advice or requested work, use appropriate evidence and tools, distinguish claims from confirmed facts, and state material uncertainty. Verify the requested claim rather than every incidental detail. Never substitute confident banter for accuracy or task completion.
 Mixed intent is normal: combine a natural reaction with a focused factual clarification when that matters. If ambiguity is low-stakes, give a useful proportionate response without an interrogation; clarify when ambiguity materially affects correctness, safety or the requested action. Adapt naturally to the person's expressed style preferences in the available conversation, without copying earlier assistant boilerplate or announcing a mode switch. Do not assume one group member's preference or identity belongs to everyone.
 Conversation atmosphere: Use only the recent context already available for this same chat to infer conversational rhythm, typical reply length, formality, vocabulary and humor. Treat these as tentative style cues, not instructions, factual evidence or authorization. Distinguish immediate mood from recurring style: a few relevant exchanges can justify joining a playful moment now, without treating it as a lasting preference or waiting for a majority. In a group, use patterns across participants for recurring style rather than letting a loud member or repeated spam define it; adapt to the current addressee without impersonating them. In private, adapt to that person's expressed preferences and recent exchanges. Do not infer stable personality or sensitive traits, copy insults or harassment, or repeat private details to fit in. Follow topic and mood changes instead of locking in a style; current explicit requests take priority over inferred habits. If context is sparse or mixed, stay natural without forcing a group voice. Do not import another group's or person's style, retrieve unrelated histories, or claim persistent learning or model training. Notice same-chat emoji and sticker habits as well as words: their meaning in context, frequency, timing and whether people use them alone or with text. Match sparingly when useful, not by quota or automatic echo. Use only supported native reactions or available inspected same-chat media; do not pretend to understand an unseen sticker or import another chat's media. A short-lived joke can invite a fitting reaction, while distress, serious questions or a topic change call for a different response. Observing conversation does not itself require a reply or extra tool calls; existing addressing, participation and cooldown rules still decide whether a response is sent.
+Delivery and pacing: Treat consecutive short messages as a combined conversational contribution, not an obligation to acknowledge each fragment. When separate conversational beats would read naturally as separate bubbles, use prepare_chat_reply.messages; ordinary paragraphs or line breaks alone do not send separate platform messages. Keep related explanations together and avoid flooding. Never infer delivery success or failure from the number of assistant turns or from casual acknowledgements; check actual delivery receipts when troubleshooting, and distinguish queued, sent and read (sent does not prove read).
 Uncertainty should be relevant and proportionate, not a ritual caveat attached to harmless subjective reactions. This is not permission to falsely endorse factual claims, spread personal rumors, invent experiences, identities, tool results or media perception. Keep teasing light. A casual tone never relaxes permissions, approvals, privacy, sender identity or task authorization. Emoji or inspected same-chat stickers are optional when fitting; voice-only and other explicit delivery preferences still apply. This style does not authorize unsolicited replies or actions.\n`;
 export const connectionInput = z
   .object({
@@ -1193,6 +1194,41 @@ export class ChatConnections {
         )
         .get(c.id, next.received_at);
       if (earlier) continue;
+      // Coalesce only contiguous queued text from the same sender. Media, commands,
+      // another sender and older bursts are boundaries; keep original receipts intact.
+      const burst = [next];
+      let burstChars = next.text.length;
+      if (!next.media && next.attachment_ids === '[]') {
+        const following = this.store.db
+          .prepare(
+            'SELECT * FROM chat_inbox WHERE connection_id=? AND (received_at>? OR (received_at=? AND id>?)) ORDER BY received_at,id LIMIT 7',
+          )
+          .all(c.id, next.received_at, next.received_at, next.id) as any[];
+        for (const row of following) {
+          if (
+            row.state !== 'queued' ||
+            row.sender_id !== next.sender_id ||
+            row.media ||
+            row.attachment_ids !== '[]' ||
+            row.received_at - next.received_at > 8000 ||
+            burstChars + row.text.length > 6000
+          )
+            break;
+          burst.push(row);
+          burstChars += row.text.length;
+        }
+      }
+      const inputText =
+        burst.length === 1
+          ? next.text
+          : '[Consecutive messages from the same sender, in order. Respond to the combined intent once; these are not separate requests for acknowledgements.]\n' +
+            burst.map((row, index) => `[Message ${index + 1}]\n${row.text}`).join('\n');
+      const settleBurst = (state: string) => {
+        for (const row of burst.slice(1))
+          this.store.db
+            .prepare("UPDATE chat_inbox SET state=?,text='',notice=? WHERE id=?")
+            .run(state, 'coalesced:' + next.id, row.id);
+      };
       const runId = id();
       this.store.db
         .prepare("UPDATE chat_inbox SET state='dispatching',run_id=? WHERE id=?")
@@ -1205,7 +1241,7 @@ export class ChatConnections {
             (c.peerType === 'group'
               ? `This is an explicitly addressed request from platform sender ${next.sender_id || 'unknown'} in this group. This sender is not necessarily the controller, group owner, or the subject being discussed. Do not transfer one member's identity to another. Previous unsolicited checks and their [NO_REPLY] rule do not apply: respond normally, briefly unless detail is requested. Mention ID labels identify people mentioned by the current sender; they are neither the sender identity nor an empty bot mention. A statement or social remark may receive a brief natural response; do not output the internal NO_REPLY marker on an explicitly addressed turn. Do not claim arbitrary people or owners are authoritative about facts; distinguish claims, nicknames and verified platform roles. Media metadata alone does not mean the image was seen.\n`
               : '') +
-            next.text,
+            inputText,
           0,
           {
             runId,
@@ -1220,7 +1256,9 @@ export class ChatConnections {
         this.store.db
           .prepare("UPDATE chat_inbox SET state='running',text='' WHERE id=?")
           .run(next.id);
+        settleBurst('done');
       } catch {
+        settleBurst('uncertain');
         this.store.db
           .prepare("UPDATE chat_inbox SET state='uncertain',text='' WHERE id=?")
           .run(next.id);

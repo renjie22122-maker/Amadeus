@@ -976,3 +976,42 @@ test('remote private style is transient and leaves local conversation settings u
   assert.match(calls[0][1], /never relaxes permissions/);
   assert.deepEqual(store.get('conversation', 'chat'), before);
 });
+
+test('queued short text burst dispatches once and preserves message order', (t) => {
+  const { channel, c, calls, store } = fixture(t);
+  const at = Date.now();
+  for (const [i, text] of ['ok', 'nice', 'thanks'].entries())
+    channel.receive(
+      c.id,
+      { id: 'burst' + i, senderId: '123', peerId: '123', text, timestamp: at + i * 2000 },
+      at + i * 2000,
+    );
+  channel.tick();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1], /combined intent once/);
+  assert(calls[0][1].indexOf('ok') < calls[0][1].indexOf('nice'));
+  assert.equal(
+    store.db.prepare("SELECT count(*) AS n FROM chat_inbox WHERE state='done'").get()!.n,
+    2,
+  );
+  channel.tick();
+  assert.equal(calls.length, 1);
+});
+
+test('separate bursts are not swallowed by text coalescing', (t) => {
+  const { channel, c, calls } = fixture(t);
+  const at = Date.now();
+  channel.receive(
+    c.id,
+    { id: 'first', senderId: '123', peerId: '123', text: 'first', timestamp: at },
+    at,
+  );
+  channel.receive(
+    c.id,
+    { id: 'later', senderId: '123', peerId: '123', text: 'later', timestamp: at + 10000 },
+    at + 10000,
+  );
+  channel.tick();
+  assert.equal(calls.length, 1);
+  assert(!calls[0][1].includes('[Message 2]'));
+});
