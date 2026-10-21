@@ -1,3 +1,4 @@
+import { onebotSendError, ChatSendRejected } from '../server/services/chat-send-error.js';
 import Fastify from 'fastify';
 import { chatConnectionRoutes } from '../server/http/chat-connections.js';
 import { ScheduledWorkService } from '../server/services/scheduled-work.js';
@@ -1301,4 +1302,63 @@ test('uncertain delivery records bounded cause without provider content or autom
   const diagnostic = store.get<any>('chat-delivery-failure', c.id);
   assert.equal(diagnostic.category, 'timeout');
   assert.equal(JSON.stringify(diagnostic).includes('secret-token'), false);
+});
+
+test('explicit network rejection retries at most five times and persists failed state', async (t) => {
+  const { store, channel, c } = fixture(t);
+  store.db
+    .prepare('INSERT INTO chat_outbox(id,connection_id,state,text,created_at) VALUES(?,?,?,?,?)')
+    .run('network', c.id, 'pending', 'test', 1);
+  const transport: any = new ChatTransports(channel);
+  transport.current = () => true;
+  let calls = 0;
+  transport.send = async () => {
+    calls++;
+    throw onebotSendError({
+      status: 'failed',
+      retcode: 1200,
+      message: 'EventRet: {"result":1006514,"errMsg":"private content"}',
+    });
+  };
+  await transport.deliver(c, {});
+  await transport.deliver(c, {});
+  assert.equal(calls, 1, 'backoff is persisted');
+  for (let i = 0; i < 5; i++) {
+    store.db.prepare('UPDATE chat_outbox SET retry_at=0').run();
+    await transport.deliver(c, {});
+  }
+  await transport.deliver(c, {});
+  assert.equal(calls, 6, 'one initial attempt plus five retries');
+  assert.equal(store.db.prepare('SELECT state FROM chat_outbox').get()!.state, 'failed');
+  const failure = store.get<any>('chat-delivery-failure', c.id);
+  assert.equal(failure.platformCode, 1006514);
+  assert.equal(failure.outcome, 'rejected');
+  assert.equal(JSON.stringify(failure).includes('private content'), false);
+});
+test('unknown OneBot errors remain uncertain; confirmed recovery sends the queued text once', async (t) => {
+  assert(
+    !(
+      onebotSendError({ status: 'failed', retcode: 1200, message: 'operation timeout' }) instanceof
+      ChatSendRejected
+    ),
+  );
+  const { store, channel, c } = fixture(t);
+  store.db
+    .prepare('INSERT INTO chat_outbox(id,connection_id,state,text,created_at) VALUES(?,?,?,?,?)')
+    .run('recover', c.id, 'pending', 'hello', 1);
+  const transport: any = new ChatTransports(channel);
+  transport.current = () => true;
+  let calls = 0;
+  transport.send = async () => {
+    calls++;
+    if (calls === 1) throw new ChatSendRejected(1200, 1006514, true);
+    return { message_id: 'received' };
+  };
+  await transport.deliver(c, {});
+  store.db.prepare('UPDATE chat_outbox SET retry_at=0').run();
+  await transport.deliver(c, {});
+  await transport.deliver(c, {});
+  assert.equal(calls, 2);
+  assert.equal(store.db.prepare('SELECT state FROM chat_outbox').get()!.state, 'sent');
+  assert.equal(store.get<any>('chat-transport-state', c.id).status, 'connected');
 });

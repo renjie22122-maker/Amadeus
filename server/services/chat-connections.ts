@@ -84,6 +84,8 @@ export class ChatConnections {
       ['chat_inbox', 'attachment_ids', "TEXT NOT NULL DEFAULT '[]'"],
       ['chat_outbox', 'reference', 'TEXT'],
       ['chat_outbox', 'reply_plan', 'TEXT'],
+      ['chat_outbox', 'attempts', 'INTEGER NOT NULL DEFAULT 0'],
+      ['chat_outbox', 'retry_at', 'INTEGER NOT NULL DEFAULT 0'],
     ] as const) {
       if (
         !(store.db.prepare('PRAGMA table_info(' + table + ')').all() as any[]).some(
@@ -954,7 +956,7 @@ export class ChatConnections {
       // A late send may finish after cleanup was requested. Revisit receipts every tick.
       this.store.db
         .prepare(
-          "UPDATE chat_outbox SET state='cancelled',text='' WHERE connection_id=? AND state='pending' AND id LIKE ?",
+          "UPDATE chat_outbox SET state='cancelled',text='' WHERE connection_id=? AND state IN ('pending','failed') AND id LIKE ?",
         )
         .run(c.id, pattern);
       // Preserve the unknown delivery outcome without letting a dead review block the channel.
@@ -968,7 +970,7 @@ export class ChatConnections {
         // A failed expiry notice is obsolete once the local review is resolved too.
         this.store.db
           .prepare(
-            "UPDATE chat_outbox SET state=CASE WHEN state='uncertain' THEN 'uncertain-closed' ELSE 'cancelled' END,text='' WHERE connection_id=? AND state IN ('pending','uncertain') AND id LIKE ?",
+            "UPDATE chat_outbox SET state=CASE WHEN state='uncertain' THEN 'uncertain-closed' ELSE 'cancelled' END,text='' WHERE connection_id=? AND state IN ('pending','uncertain','failed') AND id LIKE ?",
           )
           .run(c.id, 'approval-expired:' + t.code + ':%');
       }

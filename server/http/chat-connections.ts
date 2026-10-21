@@ -93,7 +93,7 @@ export function chatConnectionRoutes(app: FastifyInstance, channels: ChatConnect
     channels.get(req.params.id);
     return channels.store.db
       .prepare(
-        "SELECT id,state,text,created_at FROM chat_outbox WHERE connection_id=? AND state='uncertain' ORDER BY created_at LIMIT 20",
+        "SELECT id,state,text,created_at FROM chat_outbox WHERE connection_id=? AND state IN ('uncertain','failed') ORDER BY created_at LIMIT 20",
       )
       .all(req.params.id);
   });
@@ -105,9 +105,9 @@ export function chatConnectionRoutes(app: FastifyInstance, channels: ChatConnect
       .parse(req.body);
     channels.store.db
       .prepare(
-        "UPDATE chat_outbox SET state=? WHERE id=? AND connection_id=? AND state='uncertain'",
+        "UPDATE chat_outbox SET state=?,attempts=0,retry_at=0 WHERE id=? AND connection_id=? AND state IN ('uncertain','failed')",
       )
-      .run(body.decision === 'retry' ? 'pending' : 'sent', body.id, req.params.id);
+      .run(body.decision === 'retry' ? 'pending' : 'cancelled', body.id, req.params.id);
     return { ok: true };
   });
 }

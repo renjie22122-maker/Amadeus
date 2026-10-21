@@ -1,3 +1,4 @@
+import { ChatSendRejected, onebotSendError, chatSendRetry } from './chat-send-error.js';
 import { forwardPage } from './chat-rich.js';
 import {
   installDeliveryReceipts,
@@ -1348,7 +1349,7 @@ export class ChatTransports {
                 : result.retcode === 0 && result.status === 'ok'
             )
               ? resolve(result.data)
-              : reject(Error('OneBot rejected send'));
+              : reject(onebotSendError(result));
           },
           reject: () => {
             clearTimeout(timer);
@@ -1413,7 +1414,7 @@ export class ChatTransports {
         "SELECT * FROM chat_outbox WHERE connection_id=? AND state NOT IN ('sent','cancelled','uncertain-closed') ORDER BY created_at,rowid LIMIT 1",
       )
       .get(c.id) as any;
-    if (!row || row.state !== 'pending') return;
+    if (!row || row.state !== 'pending' || row.retry_at > Date.now()) return;
     const ticketCode =
       /^approval(?:-allow|-deny|-scope|-remember|-details)?:[a-f0-9-]{36}:([a-f0-9]{24}):/.exec(
         row.id,
@@ -1459,28 +1460,49 @@ export class ChatTransports {
         this.channels.store.db
           .prepare("UPDATE chat_outbox SET state='sent',text='' WHERE id=?")
           .run(row.id);
+      this.status(c, 'connected');
     } catch (error) {
-      // Store only a bounded category; provider errors can include secrets or message content.
+      const rejected = error instanceof ChatSendRejected;
+      const attempt = Number(row.attempts || 0) + 1;
+      const delay = rejected && error.retryable ? chatSendRetry(attempt) : undefined;
+      const state = rejected ? (delay === undefined ? 'failed' : 'pending') : 'uncertain';
       const message = error instanceof Error ? error.message : '';
-      const category = /timeout|timed out/i.test(message)
-        ? 'timeout'
-        : /disconnect|aborted/i.test(message)
-          ? 'disconnected'
-          : /rejected/i.test(message)
-            ? 'platform-rejected'
+      const category = rejected
+        ? error.retryable
+          ? 'platform-network'
+          : 'platform-rejected'
+        : /timeout|timed out/i.test(message)
+          ? 'timeout'
+          : /disconnect|aborted/i.test(message)
+            ? 'disconnected'
             : 'unconfirmed';
       this.channels.store.put('chat-delivery-failure', {
         id: c.id,
         deliveryId: row.id,
         category,
         at: Date.now(),
-        outcome: 'unconfirmed',
+        outcome: rejected ? 'rejected' : 'unconfirmed',
+        code: rejected ? error.code : undefined,
+        platformCode: rejected ? error.platformCode : undefined,
+        attempts: attempt,
+        retryAt: delay === undefined ? undefined : Date.now() + delay,
       });
       if (!this.closed)
         this.channels.store.db
-          .prepare("UPDATE chat_outbox SET state='uncertain' WHERE id=?")
-          .run(row.id);
-      throw Error('Delivery uncertain');
+          .prepare('UPDATE chat_outbox SET state=?,attempts=?,retry_at=? WHERE id=?')
+          .run(state, attempt, delay === undefined ? 0 : Date.now() + delay, row.id);
+      this.status(
+        c,
+        state === 'pending'
+          ? 'delivery-retrying'
+          : state === 'failed'
+            ? 'delivery-failed'
+            : 'delivery-uncertain',
+        rejected
+          ? `Platform rejected delivery (${error.code ?? 'unknown'}/${error.platformCode ?? 'unknown'}). ${delay === undefined ? 'Automatic retry stopped; review locally.' : 'Bounded retry scheduled (maximum 5 retries).'}`
+          : 'Delivery could not be confirmed. Check the remote chat before manually resending.',
+      );
+      if (!rejected) throw Error('Delivery uncertain');
     } finally {
       if (row.reference) this.mediaActive--;
     }

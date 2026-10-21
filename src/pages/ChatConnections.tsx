@@ -241,7 +241,7 @@ export function ChatConnectionsPage({
                 {tr('删除', 'Remove')}
               </button>
             </div>
-            {c.deliveries.some((d: any) => d.state === 'uncertain') && (
+            {c.deliveries.some((d: any) => ['uncertain', 'failed'].includes(d.state)) && (
               <button
                 onClick={() =>
                   void act(async () =>
@@ -252,7 +252,7 @@ export function ChatConnectionsPage({
                   )
                 }
               >
-                {tr('核对未确认的发送', 'Review uncertain deliveries')}
+                {tr('核对失败／未确认的发送', 'Review failed / uncertain deliveries')}
               </button>
             )}
           </article>
@@ -260,7 +260,7 @@ export function ChatConnectionsPage({
       </div>
       {deliveries && (
         <div className="chat-connection-card">
-          <h2>{tr('发送结果不确定', 'Uncertain deliveries')}</h2>
+          <h2>{tr('发送失败或结果不确定', 'Failed or uncertain deliveries')}</h2>
           <p>
             {tr(
               '请先检查手机，重发可能产生重复消息。',
