@@ -1282,7 +1282,7 @@ test('background jobs are scoped, cancelled and recovered as unknown without rep
 for (const decision of ['approve', 'deny', 'cancel', 'changed'] as const)
   test(
     'deferred approval permits independent work and respects ' + decision,
-    { timeout: 15000 },
+    { timeout: 75000 },
     async () => {
       let calls = 0,
         jobId = '';
@@ -1326,7 +1326,37 @@ for (const decision of ['approve', 'deny', 'cancel', 'changed'] as const)
       const { access, readFile } = await import('node:fs/promises');
       try {
         const run = f.runtime.start('chat', 'Do independent work during command approval');
-        await until(() =>
+        // This verifies ordering/authorization, not a 3-second latency target. Windows CI
+        // also probes the command backend and writes SQLite under shared runner load.
+        const waitForPhase = async (phase: string, ready: () => boolean) => {
+          try {
+            await until(() => {
+              if (ready()) return true;
+              const status = f.store.get<any>('run', run.id).status;
+              assert(
+                !['failed', 'interrupted', 'cancelled'].includes(status),
+                `Run ended unexpectedly during ${phase}: ${status}`,
+              );
+              return false;
+            }, 30000);
+          } catch (error) {
+            const state = {
+              phase,
+              runStatus: f.store.get<any>('run', run.id).status,
+              modelCalls: calls,
+              jobStatus: jobId ? f.runtime.background.get('chat', jobId).status : 'not-created',
+              events: f.store
+                .events('chat')
+                .slice(-8)
+                .map((e) => ({ type: e.type, callId: e.data.callId })),
+            };
+            throw new Error(
+              `Approval fixture did not reach expected phase: ${JSON.stringify(state)}`,
+              { cause: error },
+            );
+          }
+        };
+        await waitForPhase('independent work before approval', () =>
           f.store
             .events('chat')
             .some((e) => e.type === 'tool.completed' && e.data.callId === 'other'),
@@ -1366,7 +1396,10 @@ for (const decision of ['approve', 'deny', 'cancel', 'changed'] as const)
             decision === 'approve' || decision === 'changed',
           );
         }
-        await until(() => f.store.get<any>('run', run.id).status === 'completed');
+        await waitForPhase(
+          'completion after decision',
+          () => f.store.get<any>('run', run.id).status === 'completed',
+        );
         const job = f.runtime.background.get('chat', jobId);
         assert.equal(
           job.status,
@@ -1686,7 +1719,10 @@ test('cognitive control warns in the real loop and allows a changed approach to 
   try {
     const run = f.runtime.start('chat', 'Inspect the directory without modifying files.');
     // Five model/tool steps exercise behavior, not a three-second performance contract.
-    await until(() => ['completed', 'failed'].includes(f.store.get<any>('run', run.id).status), 10000);
+    await until(
+      () => ['completed', 'failed'].includes(f.store.get<any>('run', run.id).status),
+      10000,
+    );
     assert.equal(f.store.get<any>('run', run.id).status, 'completed');
     const interventions = f.store.events('chat').filter((e) => e.type === 'cognitive.intervention');
     assert.equal(interventions.length, 1);
