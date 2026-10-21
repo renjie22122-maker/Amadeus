@@ -106,7 +106,7 @@ class SharedTokenizerConcurrency(unittest.TestCase):
    def encode(self,texts,**kw):return self.tokenizer.encode(' '.join(texts))
    def predict(self,pairs,**kw):self.tokenizer(pairs);return [0.5]*len(pairs)
   with tempfile.TemporaryDirectory() as tmp:
-   env={'LOCK':lock,'graph_tokenizer_lock':lock,'graph_tokenizer':SharedTokenizer(),'DIAGNOSTICS':h.RequestDiagnostics(Path(tmp)),'model':lambda _:Model(),'embedding_windows':h.embedding_windows,'torch':SimpleNamespace(nn=SimpleNamespace(Sigmoid=lambda:None))}
+   env={'time':time,'execute_inference':lambda kind,value,fn:fn(),'LOCK':lock,'graph_tokenizer_lock':lock,'graph_tokenizer':SharedTokenizer(),'DIAGNOSTICS':h.RequestDiagnostics(Path(tmp)),'model':lambda _:Model(),'embedding_windows':h.embedding_windows,'torch':SimpleNamespace(nn=SimpleNamespace(Sigmoid=lambda:None))}
    for name in ('embeddings','rerank'):
     fn=next(x for x in tree.body if isinstance(x,ast.FunctionDef) and x.name==name)
     fn.body=[x for x in fn.body if not isinstance(x,ast.Import)]
@@ -281,7 +281,7 @@ class AutomaticGraphRecovery(unittest.TestCase):
   jobs={'job':{'status':'unknown'}};attempts=[]
   def attempt(key,data,resume):
    attempts.append(resume);jobs[key]['status']='unknown'
-  env={'JOB_LOCK':threading.RLock(),'ACTIVE_JOBS':set(),'JOBS':jobs,
+  env={'RESOURCES':SimpleNamespace(state=lambda:{'admitGraph':True}),'JOB_LOCK':threading.RLock(),'ACTIVE_JOBS':set(),'JOBS':jobs,
        'run_job_attempt':attempt,'GRAPH_EMBEDDINGS':SimpleNamespace(idle=lambda:True),
        'asyncio':SimpleNamespace(run_coroutine_threadsafe=lambda *a:SimpleNamespace(result=lambda **kw:True)),
        'retryable_job':lambda data:None,'LOOP':None,'save_jobs':lambda:None,

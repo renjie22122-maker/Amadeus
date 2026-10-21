@@ -5,9 +5,11 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from rag_resources import ResourcePolicy, probe_resources
 from rag_request_helpers import RequestDiagnostics, embedding_windows, light_document_complete, light_resume_plan, light_batch_progress, GraphEmbeddingRunner, light_retryable_timeout
 
 CODE_HASH = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+RESOURCE_HASH = hashlib.sha256(Path(__file__).with_name("rag_resources.py").read_bytes()).hexdigest()
 HELPER_HASH = hashlib.sha256(Path(__file__).with_name("rag_request_helpers.py").read_bytes()).hexdigest()
 ROOT = Path(os.environ.get("AGENTDEMO_DATA_DIR", str(Path(__file__).resolve().parent.parent / ".data"))) / "retrieval-service"
 ROOT.mkdir(parents=True, exist_ok=True)
@@ -19,6 +21,7 @@ TOKEN = CONFIG["token"]
 if len(TOKEN) < 32:
     raise RuntimeError("A private service token of at least 32 characters is required")
 LOCK = threading.RLock()
+RESOURCES = ResourcePolicy(CONFIG.get("resources"))
 JOURNAL = ROOT / "jobs.json"
 JOBS = json.loads(JOURNAL.read_text(encoding="utf-8")) if JOURNAL.exists() else {}
 for job in JOBS.values():
@@ -35,12 +38,74 @@ POOL = ThreadPoolExecutor(max_workers=1)
 LOOP = asyncio.new_event_loop()
 threading.Thread(target=LOOP.run_forever, daemon=True).start()
 
+def place_model(kind, value, device):
+    # Caller owns LOCK: no model can move while a microbatch is executing.
+    target = value.model if kind == "rerank" else value
+    current = str(next(target.parameters()).device)
+    if not current.startswith(device):
+        with DIAGNOSTICS.stage("modelTransfer"):
+            target.to(device)
+        if device == "cpu":
+            import torch
+            if torch.cuda.is_available(): torch.cuda.empty_cache()
+    return value
+
+
+def release_models():
+    # Keep host weights/tokenizers for reuse, release only CUDA allocations.
+    if not LOCK.acquire(blocking=False): return
+    try:
+        for kind, value in MODELS.items(): place_model(kind, value, "cpu")
+    finally: LOCK.release()
+
+
+def monitor_resources():
+    while True:
+        try:
+            RESOURCES.observe(probe_resources())
+            if RESOURCES.should_release(): release_models()
+        except Exception:
+            RESOURCES.observe({"available":False, "reason":"probe_failed"})
+        time.sleep(5)
+
+
+def inference_device(kind, value):
+    state = RESOURCES.state()
+    device = "cuda" if state["gpuAllowed"] else "cpu"
+    if device == "cuda":
+        import torch
+        target = value.model if kind == "rerank" else value
+        weights = sum(p.numel()*p.element_size() for p in target.parameters()) if str(next(target.parameters()).device) == "cpu" else 0
+        free, _ = torch.cuda.mem_get_info()
+        if free < weights + (RESOURCES.min_free + 1024)*1024*1024:
+            device = "cpu"
+            state = {**state, "reason":"allocation_headroom"}
+    value = place_model(kind, value, device)
+    RESOURCES.used()
+    DIAGNOSTICS.add(actualDevice=device, resourceReason=state["reason"])
+    return value
+
+
+def execute_inference(kind, value, function):
+    import torch
+    try:
+        inference_device(kind, value)
+        return function()
+    except torch.cuda.OutOfMemoryError:
+        # Another process can allocate between sampling and inference. Re-run only
+        # this pure microbatch on CPU, never replay graph extraction or documents.
+        place_model(kind, value, "cpu")
+        RESOURCES.observe(probe_resources())
+        DIAGNOSTICS.add(actualDevice="cpu", resourceReason="cuda_out_of_memory")
+        return function()
+
+
 def model(kind):
     with DIAGNOSTICS.locked(LOCK, "modelLoad"):
         if kind not in MODELS:
             from sentence_transformers import SentenceTransformer, CrossEncoder
             import torch
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = "cpu"  # Loading must not reserve VRAM before resource admission.
             options = dict(device=device, cache_folder=str(ROOT / "models"), trust_remote_code=False)
             if kind == "rerank":
                 MODELS[kind] = CrossEncoder(CONFIG.get("rerankPath") or CONFIG["rerankModel"], max_length=8192, local_files_only=bool(CONFIG.get("rerankPath")), **options)
@@ -64,7 +129,8 @@ def embeddings(texts, purpose="passage", cancel_event=None):
     for start in range(0,len(windows),8):
         with DIAGNOSTICS.locked(LOCK, "embeddingInference"):
             if cancel_event and cancel_event.is_set(): raise TimeoutError("Graph embedding cancelled")
-            batches.append(encoder.encode(windows[start:start+8], normalize_embeddings=True, batch_size=8))
+            batches.append(execute_inference("embedding", encoder, lambda: encoder.encode(windows[start:start+8], normalize_embeddings=True, batch_size=8)))
+        if cancel_event: time.sleep(0.01)  # Offer queued foreground requests the lock between graph microbatches.
     if cancel_event and cancel_event.is_set(): raise TimeoutError("Graph embedding cancelled")
     DIAGNOSTICS.check()
     values=np.concatenate(batches,axis=0)
@@ -95,7 +161,7 @@ def rerank(data):
     scores=[]
     for start in range(0,len(pairs),4):
         with DIAGNOSTICS.locked(LOCK, "rerankInference"):
-            scores.extend(scorer.predict(pairs[start:start+4], batch_size=4, activation_fn=torch.nn.Sigmoid()))
+            scores.extend(execute_inference("rerank", scorer, lambda: scorer.predict(pairs[start:start+4], batch_size=4, activation_fn=torch.nn.Sigmoid())))
     return sorted([dict(index=i, score=float(s)) for i, s in enumerate(scores)], key=lambda r: -r["score"])
 
 def ensure_vector_snapshot(identity, expected, present, count_rows, upload):
@@ -457,6 +523,16 @@ def run_job(key, data, resume=False):
                 JOBS[key].update(status="unknown", recoveryBlocked="native_embedding_still_running"); save_jobs()
             return
         while True:
+            # Wait before admission, outside every inference/extraction deadline.
+            # Persist the same job/input digest; do not retry or resubmit documents.
+            while not RESOURCES.state()["admitGraph"]:
+                release_models()
+                with JOB_LOCK:
+                    JOBS[key].update(status="queued", resourceWait=RESOURCES.state()["reason"],
+                                     observedAt=int(time.time()*1000)); save_jobs()
+                time.sleep(5)
+            with JOB_LOCK:
+                JOBS[key].pop("resourceWait", None); save_jobs()
             run_job_attempt(key, data, resume)
             with JOB_LOCK:
                 job = dict(JOBS[key])
@@ -507,7 +583,7 @@ class Handler(BaseHTTPRequestHandler):
             return False
     def do_GET(self):
         if self.path == "/health":
-            return self.send(200, {"application":"Amadeus Local RAG", "ready":list(MODELS), "protocol":1, "codeHash":CODE_HASH, "helperHash":HELPER_HASH})
+            return self.send(200, {"application":"Amadeus Local RAG", "ready":list(MODELS), "protocol":1, "codeHash":CODE_HASH, "helperHash":HELPER_HASH, "resourceHash":RESOURCE_HASH, "resources":RESOURCES.state()})
         self.send(404, {"error":"Not found"})
     def do_POST(self):
         auth = self.headers.get("Authorization","").removeprefix("Bearer ") or self.headers.get("X-API-Key","")
@@ -519,6 +595,9 @@ class Handler(BaseHTTPRequestHandler):
         known_paths={"/v1/embeddings","/embeddings","/rerank","/vectors/search","/vectors/search-batch","/lightrag/query/data","/lightrag/documents/texts","/lightrag/documents/status","/lightrag/documents/resume"}
         DIAGNOSTICS.begin(self.path if self.path in known_paths else "unknown",self.headers.get("X-Amadeus-Request-Id",""),budget)
         outcome="failed"
+        foreground = self.path in ("/v1/embeddings", "/embeddings", "/rerank", "/vectors/search", "/vectors/search-batch", "/lightrag/query/data")
+        if foreground:
+            with RESOURCES.lock: RESOURCES.foreground += 1
         try:
             self.connection.settimeout(min(60,budget/1000))
             size = int(self.headers.get("Content-Length","0"))
@@ -609,6 +688,8 @@ class Handler(BaseHTTPRequestHandler):
             if not self.send(504 if isinstance(error,TimeoutError) else 422, {"error":type(error).__name__, "message":"Request failed; inspect local service diagnostics and resource limits."}):
                 outcome="client_disconnected"
         finally:
+            if foreground:
+                with RESOURCES.lock: RESOURCES.foreground -= 1
             DIAGNOSTICS.finish(outcome)
 
 if __name__ == "__main__":
@@ -617,6 +698,9 @@ if __name__ == "__main__":
     if args.vector_worker:
         request=json.load(sys.stdin)
         print(json.dumps(cached_vector_batch(request) if request.get("batch") else vector_search(request))); sys.exit(0)
+    import torch
+    torch.set_num_threads(max(1, min(4, int(CONFIG.get("resources", {}).get("cpuThreads", 4)))))
+    threading.Thread(target=monitor_resources, daemon=True).start()
     if args.warmup:
         model("embedding"); model("rerank")
     print("Amadeus local RAG listening on 127.0.0.1:8811",flush=True)
