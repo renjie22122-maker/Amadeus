@@ -49,3 +49,32 @@ test(
     }
   },
 );
+test(
+  'bridge restart stops only the matched root descendants',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const source = readFileSync(new URL('./Run-Bot.ps1', import.meta.url), 'utf8');
+    const fn = source.slice(
+      source.indexOf('function Restart-Bridge'),
+      source.indexOf('function Ensure-Service'),
+    );
+    const script = `$ErrorActionPreference='Stop'
+ $global:stopped=@()
+ $global:rows=@(
+ [pscustomobject]@{ProcessId=10;ParentProcessId=1;ExecutablePath='bridge.exe';CommandLine='bot-id';CreationDate='one'},
+ [pscustomobject]@{ProcessId=11;ParentProcessId=10;ExecutablePath='QQ.exe';CommandLine='child';CreationDate='two'},
+ [pscustomobject]@{ProcessId=20;ParentProcessId=1;ExecutablePath='QQ.exe';CommandLine='personal';CreationDate='three'})
+ function Get-CimInstance {param($ClassName,$Filter);if($Filter){$id=[int]($Filter -replace 'ProcessId=','');$global:rows|Where-Object ProcessId -eq $id}else{$global:rows}}
+ function Stop-Process {param($Id,$ErrorAction);$global:stopped+=$Id}
+ function Start-Sleep {}
+ ${fn}
+ Restart-Bridge ([pscustomobject]@{executable='bridge.exe';processArgument='bot-id'})
+ if(($global:stopped -join ',') -ne '11,10'){throw 'Wrong process tree stopped'}
+ `;
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
+      encoding: 'utf8',
+      timeout: 15000,
+    });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+  },
+);

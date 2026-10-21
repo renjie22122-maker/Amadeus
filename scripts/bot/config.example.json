@@ -7,7 +7,9 @@
   "logDirectory": "C:/YOUR/private-bot/logs",
   "agentPage": "http://127.0.0.1:8810",
   "bridgePage": "http://127.0.0.1:6099",
-  "agent": { "healthUrl": "http://127.0.0.1:8810/api/health" },
+  "agent": {
+    "healthUrl": "http://127.0.0.1:8810/api/health"
+  },
   "bridge": {
     "executable": "C:/YOUR/NapCat/NapCatWinBootMain.exe",
     "arguments": "\"C:/YOUR/QQ/QQ.exe\" \"C:/YOUR/NapCat/NapCatWinBootHook.dll\" YOUR_BOT_ACCOUNT",
@@ -33,5 +35,9 @@
     "statusFile": "C:/YOUR/private-bot/status.json",
     "ledgerFile": "C:/YOUR/private-bot/notice-ledger.json",
     "lockFile": "C:/YOUR/private-bot/watcher.pid"
+  },
+  "bridgeHealth": {
+    "enabled": false,
+    "autoReconnect": false
   }
 }

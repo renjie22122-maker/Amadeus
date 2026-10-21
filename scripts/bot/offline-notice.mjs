@@ -1,3 +1,6 @@
+import { BridgeHealth } from './bridge-health.mjs';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   readFileSync,
   writeFileSync,
@@ -46,8 +49,14 @@ const atomic = (path, data) => {
   writeFileSync(temp, JSON.stringify(data), { mode: 0o600 });
   renameSync(temp, path);
 };
+let bridgeHealthState = 'not-probed';
 const status = (state) =>
-  atomic(c.statusFile, { state, healthFailures: engine.failures, at: new Date().toISOString() });
+  atomic(c.statusFile, {
+    state,
+    bridgeHealth: bridgeHealthState,
+    healthFailures: engine.failures,
+    at: new Date().toISOString(),
+  });
 let saved = {};
 try {
   saved = JSON.parse(readFileSync(c.ledgerFile, 'utf8'));
@@ -86,6 +95,97 @@ const engine = new OfflineNotice(
   },
   saved,
 );
+const bridgeStateFile = c.statusFile + '.bridge-health.json';
+let bridgeSaved = {};
+try {
+  bridgeSaved = JSON.parse(readFileSync(bridgeStateFile, 'utf8'));
+} catch (error) {
+  if (error.code !== 'ENOENT') throw new Error('Invalid bridge health ledger');
+}
+const bridgeHealth = new BridgeHealth(c.accountId, bridgeSaved);
+const pendingProbes = new Map();
+let lastProbe = 0,
+  probing = false;
+function probe(action) {
+  return new Promise((resolve, reject) => {
+    const echo = 'bridge-health-' + action + '-' + Date.now();
+    const timer = setTimeout(() => {
+      pendingProbes.delete(echo);
+      reject(new Error('Probe timeout'));
+    }, 8000);
+    pendingProbes.set(echo, (response) => {
+      clearTimeout(timer);
+      pendingProbes.delete(echo);
+      if (response.status !== 'ok' || response.retcode !== 0) reject(new Error('Probe rejected'));
+      else resolve(response.data);
+    });
+    try {
+      ws.send(JSON.stringify({ action, params: { no_cache: true }, echo }));
+    } catch (error) {
+      clearTimeout(timer);
+      pendingProbes.delete(echo);
+      reject(error);
+    }
+  });
+}
+async function inspectBridge() {
+  if (
+    !all.bridgeHealth?.enabled ||
+    probing ||
+    ws?.readyState !== 1 ||
+    Date.now() - lastProbe < 60000
+  )
+    return;
+  probing = true;
+  lastProbe = Date.now();
+  try {
+    const [platform, login, friends] = await Promise.all([
+      probe('get_status'),
+      probe('get_login_info'),
+      probe('get_friend_list'),
+    ]);
+    const result = bridgeHealth.observe({
+      online: platform?.online,
+      accountId: login?.user_id,
+      friends: Array.isArray(friends) ? friends.length : undefined,
+    });
+    bridgeHealthState = result.state;
+    atomic(bridgeStateFile, bridgeHealth.snapshot());
+    if (result.restart && all.bridgeHealth.autoReconnect === true) {
+      // Persist the attempt before launching; restart never grants chat permissions.
+      bridgeHealth.markRestart();
+      atomic(bridgeStateFile, bridgeHealth.snapshot());
+      bridgeHealthState = 'reconnecting';
+      await new Promise((resolve, reject) =>
+        execFile(
+          all.powershell,
+          [
+            '-NoProfile',
+            '-WindowStyle',
+            'Hidden',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            fileURLToPath(new URL('./Run-Bot.ps1', import.meta.url)),
+            '-Config',
+            resolveConfig,
+            '-Mode',
+            'bridge',
+            '-RestartBridge',
+          ],
+          { windowsHide: true, timeout: 30000 },
+          (error) => (error ? reject(error) : resolve()),
+        ),
+      );
+    }
+  } catch {
+    bridgeHealthState = 'probe-or-reconnect-failed';
+    bridgeHealth.failures = 0;
+  } finally {
+    probing = false;
+  }
+}
+const resolveConfig = resolve(file);
 function token() {
   if (c.tokenEnv) {
     const v = process.env[c.tokenEnv];
@@ -115,6 +215,12 @@ function connect() {
       try {
         if (typeof e.data !== 'string' || e.data.length > 262144) return;
         const m = JSON.parse(e.data);
+        if (pendingProbes.has(m.echo)) {
+          pendingProbes.get(m.echo)(m);
+          return;
+        }
+        if (m.post_type === 'message' && String(m.self_id) === String(c.accountId))
+          bridgeHealth.lastMessage = Date.now();
         if (String(m.echo || '').startsWith('offline-notice-')) {
           status(m.status === 'ok' ? 'notice-delivered' : 'notice-send-failed');
           return;
@@ -137,6 +243,7 @@ async function poll() {
   if (stopping) return;
   try {
     await engine.poll();
+    await inspectBridge();
     status(
       ws?.readyState === 1
         ? engine.failures >= c.failureThreshold
