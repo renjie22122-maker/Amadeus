@@ -1,3 +1,5 @@
+import { currentChat } from './chat-interaction.js';
+import { remoteConversationStyle } from './chat-style.js';
 import { Store, id } from '../storage/store.js';
 import { terminal } from '../core/lifecycle.js';
 import type { Conversation } from '../../shared/types.js';
@@ -20,6 +22,7 @@ export const scheduleFields = z.object({
   notifications: z.enum(['all', 'meaningful', 'failures', 'off']).optional(),
 });
 export interface ScheduledWork {
+  remoteDelivery?: { connectionId: string; revision: number; senderId: string };
   id: string;
   conversationId: string;
   name?: string;
@@ -181,15 +184,58 @@ export class ScheduledWorkService {
           });
         }
         if (this.runtime.active(chatId)) continue;
+        let remotePrefix = '';
+        if (task.remoteDelivery) {
+          if (task.destination === 'new-chat' || chatId !== task.conversationId)
+            throw Error('Remote follow-ups must stay in their original chat.');
+          const route = task.remoteDelivery;
+          const connection = this.store.get<any>('chat-connection', route.connectionId);
+          if (
+            !connection.enabled ||
+            connection.revision !== route.revision ||
+            connection.conversationId !== chatId ||
+            connection.senderId !== route.senderId
+          )
+            throw Error('Remote connection changed or paused; review the follow-up locally.');
+          this.store.db
+            .prepare(
+              "INSERT OR IGNORE INTO chat_inbox(id,connection_id,received_at,state,text,run_id,notice,sender_id) VALUES(?,?,?,'dispatching','',?,'scheduled',?)",
+            )
+            .run('scheduled:' + runId, connection.id, now, runId, route.senderId);
+          try {
+            currentChat(this.store, chatId, runId);
+          } catch (error) {
+            this.store.db
+              .prepare("UPDATE chat_inbox SET state='cancelled' WHERE id=?")
+              .run('scheduled:' + runId);
+            throw error;
+          }
+          this.store.put('chat-scheduled-run', {
+            id: runId,
+            notifications: task.notifications || 'meaningful',
+          });
+          remotePrefix =
+            remoteConversationStyle +
+            `[Scheduled remote follow-up in the original ${connection.peerType || 'private'} chat. Use inspect_chat to inspect this route, prepare_chat_reply for ordered messages or mediaOnly. Do not change recipients. Respect the authorized purpose and quiet hours in the task. Report unchanged if there is nothing useful to send.]\n`;
+        }
         this.runtime.start(
           chatId,
-          task.prompt +
+          remotePrefix +
+            task.prompt +
             '\n\n[Scheduled task] Before finishing, use report_scheduled_result to report unchanged, update, or complete with a short summary. Choose complete only when the requested monitoring/follow-up is finished; it stops future runs. Missing reports still notify. Existing permissions apply.',
           0,
           { runId, scheduledTrigger: { id: task.id, name: task.name || task.prompt.slice(0, 80) } },
         );
+        if (task.remoteDelivery)
+          this.store.db
+            .prepare("UPDATE chat_inbox SET state='running' WHERE id=?")
+            .run('scheduled:' + runId);
         this.store.put('scheduled-work', { ...task, status: 'running' });
       } catch (e: any) {
+        if (task.remoteDelivery && task.runId && !this.store.maybeRunHeader(task.runId))
+          this.store.db
+            .prepare("UPDATE chat_inbox SET state='cancelled' WHERE id=?")
+            .run('scheduled:' + task.runId);
         const error = String(e.message || e);
         this.record(task, 'needs_attention', now, error);
         this.store.put('scheduled-work', {

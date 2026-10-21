@@ -52,6 +52,19 @@ export function chatCapabilities(c: ChatConnection) {
     quotedReply: ['onebot11', 'onebot12'].includes(c.transport),
     nativeFaces: c.transport === 'onebot11',
     images: true,
+    scheduledFollowups: { supported: true, controllerApproval: true, destination: 'same-chat' },
+    browserVoice: {
+      supported: true,
+      location: 'authenticated Chat Connections page',
+      mode: 'alternating speech turns',
+      nativePhoneCall: false,
+    },
+    voiceCalls: {
+      outbound: false,
+      inbound: false,
+      reason:
+        'This adapter implements voice messages, not native real-time call signaling or audio transport.',
+    },
     retractOwnMessages: ['onebot11', 'onebot12', 'telegram'].includes(c.transport),
     note: 'Bridge features require backend support. Unsupported actions fail explicitly; image stickers use the media upload path, not a universal native sticker format.',
   };

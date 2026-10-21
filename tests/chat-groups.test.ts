@@ -162,7 +162,7 @@ test('group requires prefix; allowed worker cannot stop or approve for controlle
   channels.receive(c.id, { ...m, id: 'stop', text: '/amadeus /stop' });
   assert.equal(calls.length, 0);
   channels.receive(c.id, { ...m, id: 'task', text: '/amadeus find information' });
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
   assert(calls[0][1].includes('Platform sender ID: 124'));
 });
@@ -398,7 +398,7 @@ test('passive group context is bounded, deduplicated and shared by members only 
   assert.equal(channels.groups.text(c).includes('message 0"'), false);
   assert.equal(channels.groups.text({ ...c, id: 'other' }).includes('message 49'), false);
   assert.equal(channels.groups.text(c, now + 86400100).includes('message 49'), false);
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(calls.length, 0);
   channels.receive(c.id, {
     id: 'direct',
@@ -409,7 +409,7 @@ test('passive group context is bounded, deduplicated and shared by members only 
     addressed: true,
     timestamp: now,
   });
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
   assert(calls[0][1].includes('message 49'));
   assert(calls[0][1].includes('Platform sender ID: 121'));
@@ -514,7 +514,7 @@ test('silent proactive result is not delivered even after status notice changes'
     .run('in', c.id, Date.now(), 'running', '', 'r', 'waiting_user');
   (store as any).maybeRunHeader = () => ({ id: 'r', status: 'completed' });
   (store as any).eventsForRun = () => [{ data: { final: true, text: '[NO_REPLY]' } }];
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get()!.n, 0);
 });
 test('shared socket sends a follower queue even when owner has no messages, then fairly rotates', async (t) => {
@@ -588,7 +588,7 @@ test('model output is converted before delivery while local event and approval t
   const event = { data: { final: true, text: '## 标题\n\n**正文**' } };
   (store as any).maybeRunHeader = () => ({ id: 'r', status: 'completed' });
   (store as any).eventsForRun = () => [event];
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(store.db.prepare('SELECT text FROM chat_outbox').get()!.text, '标题\n\n正文');
   assert.equal(event.data.text, '## 标题\n\n**正文**');
   channels.reply(c, 'approval', 'Review exact payload: **literal** /approve abc');
@@ -968,7 +968,7 @@ test('bare native mention returns member help without a model call or controller
   const m = groupMessage(c, [{ type: 'at', data: { qq: c.accountId } }]);
   assert.equal(m.textOrigin, 'mention-only');
   assert.equal(channels.receive(c.id, m), 'done');
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(calls.length, 0);
   const row = store.db.prepare('SELECT text,reply_plan FROM chat_outbox').get()!;
   assert(String(row.text).includes('聊天帮助'));
@@ -996,7 +996,7 @@ test('help is available without mention, with role-specific commands; addressed 
     'real-question',
   );
   assert.equal(channels.receive(c.id, normal), 'queued');
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
 });
 
@@ -1025,7 +1025,7 @@ test('direct group replies cannot leak NO_REPLY and natively mention the actual 
       { type: 'text', data: { text: 'hello' } },
     ]),
   );
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   const runId = calls[0][3].runId;
   store.put('run', {
     id: runId,
@@ -1034,7 +1034,7 @@ test('direct group replies cannot leak NO_REPLY and natively mention the actual 
     createdAt: Date.now(),
   });
   store.event(c.conversationId, runId, 'assistant.message', { text: '[NO_REPLY]', final: true });
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   const out: any = store.db
     .prepare('SELECT text,reply_plan FROM chat_outbox WHERE connection_id=?')
     .get(c.id);
@@ -1055,7 +1055,7 @@ test('new explicit request supersedes an unfinished unsolicited response without
       { type: 'text', data: { text: 'hello' } },
     ]),
   );
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   const runId = calls[0][3].runId,
     startedAt = Date.now() - 1000;
   store.put('chat-proactive-run', { id: runId, createdAt: startedAt });
@@ -1070,7 +1070,7 @@ test('new explicit request supersedes an unfinished unsolicited response without
     text: 'outdated unsolicited image commentary',
     final: true,
   });
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get()!.n, 0);
   channels.receive(
     c.id,
@@ -1083,7 +1083,7 @@ test('new explicit request supersedes an unfinished unsolicited response without
       'next',
     ),
   );
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(calls.length, 2);
 });
 
@@ -1103,7 +1103,7 @@ test('bot mention plus a person and text preserves the target and dispatches nor
   assert(m.text.includes('[Mention ID: 125]'));
   assert(m.text.includes('would like a coffee'));
   assert.equal(channels.receive(c.id, m), 'queued');
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
   assert(calls[0][1].includes('would like a coffee'));
   assert.equal(store.db.prepare('SELECT count(*) n FROM chat_outbox').get()!.n, 0);
@@ -1284,7 +1284,7 @@ test('remote group banter guidance preserves sender and authorization boundaries
       { type: 'text', data: { text: 'nice joke' } },
     ]),
   );
-  channels.tick();
+  channels.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
   assert.match(calls[0][1], /Remote conversation style/);
   assert.match(calls[0][1], /not a fixed persona/);

@@ -1,3 +1,7 @@
+import Fastify from 'fastify';
+import { chatConnectionRoutes } from '../server/http/chat-connections.js';
+import { ScheduledWorkService } from '../server/services/scheduled-work.js';
+import { installScheduledTools } from '../server/tools/scheduled-tools.js';
 import { authorizeGroupMedia, mediaFingerprint } from '../server/services/chat-media-grant.js';
 import {
   trackChatTranscription,
@@ -240,7 +244,7 @@ test('inbox rejects outsiders and replay; binds only explicit media to the new r
   assert.throws(() => channel.receive(c.id, { ...m, senderId: '999' }), /Unbound/);
   assert.equal(channel.receive(c.id, m), 'queued');
   assert.equal(channel.receive(c.id, m), 'duplicate');
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0][3].attachmentIds, []);
   assert.equal(store.db.prepare('SELECT count(*) AS n FROM chat_inbox').get()!.n, 1);
@@ -265,14 +269,14 @@ test('pending media prevents later text overtaking; stop cancels both without st
     { id: 'later', senderId: '123', peerId: '123', text: 'describe it', timestamp: now },
     now + 1,
   );
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(calls.length, 0);
   channel.receive(
     c.id,
     { id: 'stop', senderId: '123', peerId: '123', text: '/stop', timestamp: now },
     now + 2,
   );
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(calls.length, 0);
   assert.equal(
     store.db.prepare("SELECT count(*) AS n FROM chat_inbox WHERE state='cancelled'").get()!.n,
@@ -298,7 +302,7 @@ test('changed local permissions pause remote access and recipients cannot be reb
       }),
     /scope or model changed/,
   );
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(channel.get(c.id).enabled, false);
 });
 test('runtime keeps local draft attachments separate from remote and scheduled messages', (t) => {
@@ -349,7 +353,7 @@ test('remote approvals are bound, single-use and invalidated by changed payloads
     payload: { action: 'write_file', path: 'report.txt' },
   };
   store.put('input', q);
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   const notices = store.db
     .prepare('SELECT text FROM chat_outbox')
     .all()
@@ -420,8 +424,8 @@ test('only registered outputs from remote runs are queued, without duplicate med
         outputs: [{ id: '0', name: 'voice.wav' }],
       },
     });
-  channel.tick();
-  channel.tick();
+  channel.tick(Date.now() + 20000);
+  channel.tick(Date.now() + 20000);
   const rows = store.db.prepare('SELECT reference FROM chat_outbox ORDER BY reference').all();
   assert.deepEqual(
     rows.map((x) => x.reference),
@@ -517,7 +521,7 @@ test('imported media is owned by its inbox and filenames cannot escape attachmen
 test('reauthorization remains visible; explicit pause clears its notice reason', (t) => {
   const { store, channel, c } = fixture(t);
   store.put('conversation', { id: 'chat', profileId: 'model', permission: 'auto' });
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(channel.get(c.id).enabled, false);
   assert.equal(channel.overview()[0].status.status, 'reauthorize');
   channel.pause(c.id);
@@ -594,21 +598,21 @@ test('expired review cancels queued fragments, cleans only its receipts, and ren
     payload: { command: 'test', backend: 'test' },
   };
   store.put('input', q);
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   const ticket = store.db.prepare('SELECT * FROM chat_approval').get() as any;
   assert(ticket.expires_at - Date.now() <= remoteReviewPolicy(c).ttlMs);
   const row = store.db.prepare('SELECT * FROM chat_outbox LIMIT 1').get() as any;
   deliveryReceipt(store, c, row, 'approval-platform-id');
   store.db.prepare("UPDATE chat_outbox SET state='sent' WHERE id=?").run(row.id);
   store.db.prepare('UPDATE chat_approval SET expires_at=?').run(Date.now() - 1);
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(store.db.prepare('SELECT state FROM chat_delivery').get()!.state, 'cleanup-pending');
   assert.equal(store.get<any>('input', q.id).status, 'pending');
   assert.equal(calls.filter((x) => x[0] === 'answer').length, 0);
   const expiry = store.db
     .prepare("SELECT count(*) n FROM chat_outbox WHERE id LIKE 'approval-expired:%'")
     .get()!.n;
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(
     store.db.prepare("SELECT count(*) n FROM chat_outbox WHERE id LIKE 'approval-expired:%'").get()!
       .n,
@@ -890,8 +894,8 @@ function completedRemoteReply(t: any, plan: any, final = 'local final') {
 }
 test('explicit chat messages replace final text, preserve order and are queued once', (t) => {
   const { store, channel } = completedRemoteReply(t, { messages: ['first', 'second', 'third'] });
-  channel.tick();
-  channel.tick();
+  channel.tick(Date.now() + 20000);
+  channel.tick(Date.now() + 20000);
   const rows = store.db.prepare('SELECT text FROM chat_outbox ORDER BY created_at,rowid').all();
   assert.deepEqual(
     rows.map((r) => r.text),
@@ -913,8 +917,8 @@ test('media-only reply suppresses final emoji and duplicate explicit media refer
       outputs: [{ id: '0', name: 'voice.wav' }],
     },
   });
-  channel.tick();
-  channel.tick();
+  channel.tick(Date.now() + 20000);
+  channel.tick(Date.now() + 20000);
   const rows = store.db.prepare('SELECT text,reference FROM chat_outbox').all();
   assert.equal(rows.length, 1);
   assert.equal(rows[0].reference, 'media:voice:0');
@@ -925,20 +929,20 @@ test('media-only pending generation sends no placeholder and reports a late fail
   store.event('chat', 'delivery-run', 'media.updated', {
     job: { id: 'voice', runId: 'delivery-run', kind: 'speech', status: 'running', outputs: [] },
   });
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal((store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get() as any).n, 0);
   store.event('chat', 'delivery-run', 'media.updated', {
     job: { id: 'voice', runId: 'delivery-run', kind: 'speech', status: 'failed', outputs: [] },
   });
-  channel.tick();
-  channel.tick();
+  channel.tick(Date.now() + 20000);
+  channel.tick(Date.now() + 20000);
   const rows = store.db.prepare('SELECT text FROM chat_outbox').all();
   assert.equal(rows.length, 1);
   assert.match(String(rows[0].text), /未成功/);
 });
 test('media-only without a deliverable reports failure rather than silently dropping the request', (t) => {
   const { store, channel } = completedRemoteReply(t, { mediaOnly: true }, '🔊');
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   const rows = store.db.prepare('SELECT text FROM chat_outbox').all();
   assert.equal(rows.length, 1);
   assert.match(String(rows[0].text), /未能生成/);
@@ -949,7 +953,7 @@ test('changed chat revision invalidates an old multi-message delivery plan', (t)
     { revision: -1, messages: ['stale reply'] },
     'current reply',
   );
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.deepEqual(
     store.db
       .prepare('SELECT text FROM chat_outbox')
@@ -969,7 +973,7 @@ test('remote private style is transient and leaves local conversation settings u
     text: 'hello!',
     timestamp: Date.now(),
   });
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
   assert.match(calls[0][1], /Remote conversation style/);
   assert.match(calls[0][1], /serious factual questions/);
@@ -986,7 +990,7 @@ test('queued short text burst dispatches once and preserves message order', (t) 
       { id: 'burst' + i, senderId: '123', peerId: '123', text, timestamp: at + i * 2000 },
       at + i * 2000,
     );
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
   assert.match(calls[0][1], /combined intent once/);
   assert(calls[0][1].indexOf('ok') < calls[0][1].indexOf('nice'));
@@ -994,7 +998,7 @@ test('queued short text burst dispatches once and preserves message order', (t) 
     store.db.prepare("SELECT count(*) AS n FROM chat_inbox WHERE state='done'").get()!.n,
     2,
   );
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
 });
 
@@ -1011,7 +1015,187 @@ test('separate bursts are not swallowed by text coalescing', (t) => {
     { id: 'later', senderId: '123', peerId: '123', text: 'later', timestamp: at + 10000 },
     at + 10000,
   );
-  channel.tick();
+  channel.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
   assert(!calls[0][1].includes('[Message 2]'));
+});
+
+test('remote quiet window waits two seconds after last text with five second cap', (t) => {
+  const { channel, c, calls } = fixture(t);
+  const at = Date.now();
+  const send = (id: string, offset: number) =>
+    channel.receive(
+      c.id,
+      { id, senderId: '123', peerId: '123', text: id, timestamp: at + offset },
+      at + offset,
+    );
+  send('a', 0);
+  channel.tick(at);
+  assert.equal(calls.length, 0);
+  send('b', 1500);
+  channel.tick(at + 2000);
+  assert.equal(calls.length, 0);
+  send('c', 3000);
+  channel.tick(at + 3500);
+  assert.equal(calls.length, 0);
+  send('d', 4500);
+  channel.tick(at + 4999);
+  assert.equal(calls.length, 0);
+  channel.tick(at + 5000);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1], /Message 4/);
+});
+
+test('single remote message waits briefly and status commands bypass the window', (t) => {
+  const { channel, c, calls, store } = fixture(t);
+  const at = Date.now();
+  channel.receive(
+    c.id,
+    { id: 'single', senderId: '123', peerId: '123', text: 'hello', timestamp: at },
+    at,
+  );
+  channel.tick(at + 1999);
+  assert.equal(calls.length, 0);
+  channel.receive(
+    c.id,
+    { id: 'status-now', senderId: '123', peerId: '123', text: '/status', timestamp: at },
+    at,
+  );
+  assert(store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get()!.n);
+  channel.tick(at + 2000);
+  assert.equal(calls.length, 1);
+});
+
+for (const outcome of ['update', 'unchanged'])
+  test('remote scheduled ' + outcome + ' respects notification and route', (t) => {
+    const { channel, c, store, runtime, calls } = fixture(t);
+    new ChatTransports(channel);
+    runtime.start = (chat: string, prompt: string, _n: number, options: any) => {
+      calls.push([chat, prompt, 0, options]);
+      store.put('run', { id: options.runId, conversationId: chat, status: 'running' });
+    };
+    store.put('scheduled-work', {
+      id: 'followup',
+      conversationId: 'chat',
+      prompt: 'check in',
+      dueAt: 0,
+      enabled: true,
+      status: 'waiting',
+      notifications: 'meaningful',
+      remoteDelivery: { connectionId: c.id, revision: c.revision, senderId: c.senderId },
+    });
+    const scheduler = new ScheduledWorkService(store, runtime);
+    scheduler.tick();
+    assert.equal(calls.length, 1);
+    const runId = calls[0][3].runId;
+    assert.equal(
+      store.db.prepare('SELECT connection_id FROM chat_inbox WHERE run_id=?').get(runId)!
+        .connection_id,
+      c.id,
+    );
+    store.put('run', { id: runId, conversationId: 'chat', status: 'completed' });
+    store.event('chat', runId, 'assistant.message', { final: true, text: 'followup reply' });
+    store.event('chat', runId, 'file.attached', {
+      attachment: { id: 'followup', name: 'report.txt' },
+    });
+    store.put('schedule-report', { id: runId, outcome, summary: 'done' });
+    channel.tick();
+    channel.tick();
+    assert.equal(
+      store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get()!.n,
+      outcome === 'update' ? 2 : 0,
+    );
+  });
+
+test('changed or paused route cannot receive scheduled launches', (t) => {
+  const { channel, c, store, runtime, calls } = fixture(t);
+  new ChatTransports(channel);
+  store.put('scheduled-work', {
+    id: 'followup',
+    conversationId: 'chat',
+    prompt: 'check in',
+    dueAt: 0,
+    enabled: true,
+    status: 'waiting',
+    remoteDelivery: { connectionId: c.id, revision: c.revision - 1, senderId: c.senderId },
+  });
+  new ScheduledWorkService(store, runtime).tick();
+  assert.equal(calls.length, 0);
+  assert.equal(store.get<any>('scheduled-work', 'followup').status, 'needs_attention');
+});
+
+test('remote schedule needs controller and bounds, and snapshots route only after approval', async (t) => {
+  const { channel, c, store, runtime } = fixture(t);
+  new ChatTransports(channel);
+  store.db
+    .prepare(
+      "INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id,sender_id) VALUES('schedule-source',?,?,'running','', 'schedule-run',?)",
+    )
+    .run(c.id, Date.now(), '999');
+  const defs: any[] = [];
+  installScheduledTools({ add: (d: any) => defs.push(d) } as any);
+  const tool = defs.find((d) => d.name === 'schedule_followup');
+  let approvals = 0;
+  const ctx: any = {
+    store,
+    run: { id: 'schedule-run' },
+    conversation: store.get('conversation', 'chat'),
+    config: runtime.config,
+    inputs: {
+      request: async () => {
+        approvals++;
+      },
+    },
+    signal: new AbortController().signal,
+  };
+  await assert.rejects(() => tool.run({ prompt: 'hi', dueAt: Date.now() }, ctx), /controller/);
+  store.db.prepare("UPDATE chat_inbox SET sender_id=? WHERE id='schedule-source'").run(c.senderId);
+  await assert.rejects(
+    () => tool.run({ prompt: 'hi', dueAt: Date.now(), intervalMs: 60000 }, ctx),
+    /15 minutes/,
+  );
+  await tool.run({ prompt: 'hi', dueAt: Date.now(), intervalMs: 900000, maxRuns: 2 }, ctx);
+  assert.equal(approvals, 1);
+  assert.deepEqual(store.list<any>('scheduled-work')[0].remoteDelivery, {
+    connectionId: c.id,
+    revision: c.revision,
+    senderId: c.senderId,
+  });
+});
+
+test('browser voice is scoped, excludes drafts, and never creates platform outbox work', async (t) => {
+  const { channel, c, store, runtime, calls } = fixture(t);
+  const app = Fastify();
+  t.after(() => app.close());
+  runtime.start = (chat: string, prompt: string, _n: number, options: any) => {
+    calls.push([chat, prompt, options]);
+    store.put('run', { id: options.runId, conversationId: chat, status: 'running' });
+  };
+  chatConnectionRoutes(app, channel);
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/chat-connections/' + c.id + '/voice-turn',
+    payload: { text: 'hello' },
+  });
+  assert.equal(response.statusCode, 200);
+  const { runId } = response.json();
+  assert.deepEqual(calls[0][2].attachmentIds, []);
+  assert.equal(store.db.prepare('SELECT count(*) AS n FROM chat_inbox').get()!.n, 0);
+  channel.tick();
+  assert.equal(store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get()!.n, 0);
+  store.event('chat', runId, 'assistant.message', { final: true, text: 'hello back' });
+  const poll = await app.inject('/api/chat-connections/' + c.id + '/voice-turn/' + runId);
+  assert.equal(poll.json().text, 'hello back');
+  const other = { ...c, id: 'other', peerId: '999', senderId: '999' };
+  store.put('chat-connection', other);
+  const denied = await app.inject('/api/chat-connections/other/voice-turn/' + runId);
+  assert.notEqual(denied.statusCode, 200);
+  runtime.active = () => ({ id: 'busy' });
+  const busy = await app.inject({
+    method: 'POST',
+    url: '/api/chat-connections/' + c.id + '/voice-turn',
+    payload: { text: 'again' },
+  });
+  assert.notEqual(busy.statusCode, 200);
+  assert.equal(calls.length, 1);
 });

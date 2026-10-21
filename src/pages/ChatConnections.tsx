@@ -1,3 +1,4 @@
+import { BrowserVoiceChat } from '../components/BrowserVoiceChat';
 import '../chat-connections.css';
 import { useEffect, useState } from 'react';
 import { MessageCircle, Pause, Plus, Trash2, ExternalLink } from 'lucide-react';
@@ -48,6 +49,7 @@ export function ChatConnectionsPage({
     [busy, setBusy] = useState(false),
     [deliveries, setDeliveries] = useState<{ id: string; rows: any[] } | null>(null);
   const [mediaServices, setMediaServices] = useState<any[]>([]);
+  const [voiceChat, setVoiceChat] = useState<ChatConnection | null>(null);
   const tr = (cn: string, en: string) => (zh ? cn : en);
   const refresh = async () => {
     const r = await api('/chat-connections');
@@ -122,6 +124,15 @@ export function ChatConnectionsPage({
           )}
         </div>
       )}
+      {voiceChat && (
+        <BrowserVoiceChat
+          key={voiceChat.id}
+          connection={voiceChat}
+          zh={zh}
+          close={() => setVoiceChat(null)}
+          openConversation={openConversation}
+        />
+      )}
       <div className="chat-connection-grid">
         {items.map((c) => (
           <article className="chat-connection-card" key={c.id}>
@@ -170,6 +181,9 @@ export function ChatConnectionsPage({
                 : tr('本机审批', 'Local approvals')}
             </p>
             <div className="chat-connection-actions">
+              <button disabled={!c.enabled} onClick={() => setVoiceChat(c)}>
+                {tr('网页语音', 'Browser voice')}
+              </button>
               <button onClick={() => openConversation(c.conversationId)}>
                 {tr('打开会话', 'Open chat')}
               </button>
