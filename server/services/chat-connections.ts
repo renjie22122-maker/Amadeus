@@ -1048,6 +1048,7 @@ export class ChatConnections {
           }
           if (
             !proactive &&
+            !plan?.mediaOnly &&
             c.peerType === 'group' &&
             ['onebot11', 'onebot12'].includes(c.transport) &&
             row.sender_id &&
@@ -1067,25 +1068,57 @@ export class ChatConnections {
                 .prepare(
                   'INSERT OR IGNORE INTO chat_outbox(id,connection_id,state,text,created_at,reference) VALUES(?,?,?,?,?,?)',
                 )
-                .run(
-                  c.id + ':' + reference + ':' + run.id,
-                  c.id,
-                  'pending',
-                  '',
-                  Date.now(),
-                  reference,
+                .run(c.id + ':' + reference, c.id, 'pending', '', Date.now(), reference);
+          if (!silent) {
+            const jobs = new Map<string, any>();
+            for (const event of this.store.eventsForRun(run.id, ['media.updated'])) {
+              const job = event.data.job;
+              if (
+                job?.runId === run.id &&
+                job.kind !== 'transcription' &&
+                job.purpose !== 'read-aloud'
+              )
+                jobs.set(job.id, job);
+            }
+            const deliverable =
+              !!plan?.references?.length ||
+              this.store
+                .eventsForRun(run.id, ['file.attached'])
+                .some((e) => e.data.attachment?.id) ||
+              [...jobs.values()].some(
+                (j) =>
+                  ['submitting', 'queued', 'running'].includes(j.status) ||
+                  (j.status === 'completed' && j.outputs?.length),
+              );
+            if (plan?.mediaOnly && deliverable) {
+              const pendingJobs = [...jobs.values()]
+                .filter((j) => ['submitting', 'queued', 'running'].includes(j.status))
+                .map((j) => j.id);
+              if (pendingJobs.length)
+                this.store.put('chat-media-only-run', {
+                  id: run.id,
+                  connectionId: c.id,
+                  jobIds: pendingJobs,
+                });
+            } else {
+              const texts: string[] = plan?.mediaOnly
+                ? ['未能生成可发送的媒体，请稍后重试。']
+                : plan?.messages || [
+                    noReply
+                      ? '收到你的消息了，但这次未生成有效答复。请重新提问或说明希望我回应的内容。'
+                      : result?.data.text
+                        ? chatPlainText(result.data.text)
+                        : `Task ${run.status}. Inspect the local conversation for details.`,
+                  ];
+              for (const [index, message] of texts.entries())
+                this.reply(
+                  c,
+                  row.id + ':message:' + index,
+                  chatPlainText(message),
+                  index === 0 && !plan?.mediaOnly ? plan : undefined,
                 );
-          if (!silent)
-            this.reply(
-              c,
-              row.id,
-              noReply
-                ? '收到你的消息了，但这次未生成有效答复。请重新提问或说明希望我回应的内容。'
-                : result?.data.text
-                  ? chatPlainText(result.data.text)
-                  : `Task ${run.status}. Inspect the local conversation for details.`,
-              plan,
-            );
+            }
+          }
           this.store.db
             .prepare("UPDATE chat_inbox SET state='done',text='' WHERE id=?")
             .run(row.id);
@@ -1158,7 +1191,7 @@ export class ChatConnections {
       try {
         this.runtime.start(
           c.conversationId,
-          `[Chat transport: ${c.transport}; ${c.peerType || 'private'} ID: ${c.peerId}. Use inspect_chat for current group/members/media and prepare_chat_reply for native mentions, quotes or stickers. Never infer real identity from display names.]\n` +
+          `[Chat transport: ${c.transport}; ${c.peerType || 'private'} ID: ${c.peerId}. Use inspect_chat for current group/members/media and prepare_chat_reply for native mentions, quotes, stickers, ordered messages or mediaOnly delivery. For voice-only requests set mediaOnly=true; do not add a speaker emoji, text acknowledgement or extra sticker. In casual conversation, use fitting emoji or an inspected same-chat sticker when it adds warmth or expresses a reaction; avoid compulsory reactions, repetition or sending irrelevant stickers. Never infer real identity from display names.]\n` +
             (c.peerType === 'group'
               ? `This is an explicitly addressed request from platform sender ${next.sender_id || 'unknown'} in this group. This sender is not necessarily the controller, group owner, or the subject being discussed. Do not transfer one member's identity to another. Previous unsolicited checks and their [NO_REPLY] rule do not apply: respond normally, briefly unless detail is requested. Mention ID labels identify people mentioned by the current sender; they are neither the sender identity nor an empty bot mention. A statement or social remark may receive a brief natural response; do not output the internal NO_REPLY marker on an explicitly addressed turn. Do not claim arbitrary people or owners are authoritative about facts; distinguish claims, nicknames and verified platform roles. Media metadata alone does not mean the image was seen.\n`
               : '') +
@@ -1203,6 +1236,20 @@ export class ChatConnections {
       .all(c.id, last) as any[];
     for (const event of events) {
       const data = JSON.parse(event.data);
+      if (
+        event.type === 'media.updated' &&
+        ['completed', 'failed', 'cancelled', 'unknown'].includes(data.job?.status)
+      ) {
+        const mode = this.store.maybe<any>('chat-media-only-run', event.run_id);
+        if (mode?.connectionId === c.id && mode.jobIds.includes(data.job.id)) {
+          if (data.job.status !== 'completed' || !data.job.outputs?.length)
+            this.reply(c, 'media-only-failed:' + data.job.id, '媒体生成未成功完成，请稍后重试。');
+          const remaining = mode.jobIds.filter((id: string) => id !== data.job.id);
+          if (remaining.length)
+            this.store.put('chat-media-only-run', { ...mode, jobIds: remaining });
+          else this.store.remove('chat-media-only-run', event.run_id);
+        }
+      }
       let files: { reference: string; name: string }[] = [];
       if (event.type === 'file.attached' && data.attachment?.id)
         files = [{ reference: 'attachment:' + data.attachment.id, name: data.attachment.name }];

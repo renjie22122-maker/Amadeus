@@ -3,6 +3,8 @@ import type { ChatConnections } from './chat-connections.js';
 import type { ChatConnection } from '../../shared/chat-connections.js';
 import { assert } from '../core/errors.js';
 export interface ChatReplyPlan {
+  messages?: string[];
+  mediaOnly?: boolean;
   mentions?: string[];
   replyTo?: string;
   faces?: string[];
@@ -55,6 +57,22 @@ export function chatCapabilities(c: ChatConnection) {
   };
 }
 export function validateReplyPlan(store: Store, c: ChatConnection, plan: ChatReplyPlan) {
+  assert(
+    !plan.messages ||
+      (Array.isArray(plan.messages) &&
+        plan.messages.length > 0 &&
+        plan.messages.length <= 8 &&
+        plan.messages.every(
+          (x) => typeof x === 'string' && x.trim().length > 0 && x.length <= 4000,
+        )),
+    'CHAT_REPLY_MESSAGES',
+    'Use one to eight nonempty text messages, at most 4000 characters each.',
+  );
+  assert(
+    !plan.mediaOnly || !plan.messages?.length,
+    'CHAT_REPLY_MODE',
+    'Media-only delivery cannot also specify text messages.',
+  );
   const caps = chatCapabilities(c);
   assert(
     !plan.mentions?.length || caps.mentions,

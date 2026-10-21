@@ -865,3 +865,96 @@ test('local group media settings snapshot service authority without granting rem
     /isolated group/,
   );
 });
+
+function completedRemoteReply(t: any, plan: any, final = 'local final') {
+  const f = fixture(t);
+  f.store.put('run', {
+    id: 'delivery-run',
+    conversationId: 'chat',
+    status: 'completed',
+    createdAt: Date.now(),
+  });
+  f.store.db
+    .prepare(
+      'INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id) VALUES(?,?,?,?,?,?)',
+    )
+    .run('delivery-inbox', f.c.id, Date.now(), 'running', '', 'delivery-run');
+  f.store.put('chat-reply-plan', {
+    id: 'delivery-run',
+    connectionId: f.c.id,
+    revision: f.c.revision,
+    ...plan,
+  });
+  f.store.event('chat', 'delivery-run', 'assistant.message', { final: true, text: final });
+  return f;
+}
+test('explicit chat messages replace final text, preserve order and are queued once', (t) => {
+  const { store, channel } = completedRemoteReply(t, { messages: ['first', 'second', 'third'] });
+  channel.tick();
+  channel.tick();
+  const rows = store.db.prepare('SELECT text FROM chat_outbox ORDER BY created_at,rowid').all();
+  assert.deepEqual(
+    rows.map((r) => r.text),
+    ['first', 'second', 'third'],
+  );
+});
+test('media-only reply suppresses final emoji and duplicate explicit media references', (t) => {
+  const { store, channel } = completedRemoteReply(
+    t,
+    { mediaOnly: true, references: ['media:voice:0'] },
+    '🔊',
+  );
+  store.event('chat', 'delivery-run', 'media.updated', {
+    job: {
+      id: 'voice',
+      runId: 'delivery-run',
+      kind: 'speech',
+      status: 'completed',
+      outputs: [{ id: '0', name: 'voice.wav' }],
+    },
+  });
+  channel.tick();
+  channel.tick();
+  const rows = store.db.prepare('SELECT text,reference FROM chat_outbox').all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].reference, 'media:voice:0');
+  assert(!rows.some((r) => r.text === '🔊'));
+});
+test('media-only pending generation sends no placeholder and reports a late failure once', (t) => {
+  const { store, channel } = completedRemoteReply(t, { mediaOnly: true }, '🔊');
+  store.event('chat', 'delivery-run', 'media.updated', {
+    job: { id: 'voice', runId: 'delivery-run', kind: 'speech', status: 'running', outputs: [] },
+  });
+  channel.tick();
+  assert.equal((store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get() as any).n, 0);
+  store.event('chat', 'delivery-run', 'media.updated', {
+    job: { id: 'voice', runId: 'delivery-run', kind: 'speech', status: 'failed', outputs: [] },
+  });
+  channel.tick();
+  channel.tick();
+  const rows = store.db.prepare('SELECT text FROM chat_outbox').all();
+  assert.equal(rows.length, 1);
+  assert.match(String(rows[0].text), /未成功/);
+});
+test('media-only without a deliverable reports failure rather than silently dropping the request', (t) => {
+  const { store, channel } = completedRemoteReply(t, { mediaOnly: true }, '🔊');
+  channel.tick();
+  const rows = store.db.prepare('SELECT text FROM chat_outbox').all();
+  assert.equal(rows.length, 1);
+  assert.match(String(rows[0].text), /未能生成/);
+});
+test('changed chat revision invalidates an old multi-message delivery plan', (t) => {
+  const { store, channel } = completedRemoteReply(
+    t,
+    { revision: -1, messages: ['stale reply'] },
+    'current reply',
+  );
+  channel.tick();
+  assert.deepEqual(
+    store.db
+      .prepare('SELECT text FROM chat_outbox')
+      .all()
+      .map((r) => r.text),
+    ['current reply'],
+  );
+});

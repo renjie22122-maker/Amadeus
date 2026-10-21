@@ -177,8 +177,10 @@ export function installChatTools(registry: ToolRegistry) {
     name: 'prepare_chat_reply',
     effect: 'coordinate',
     description:
-      'Set native mentions, quote, QQ face IDs or same-chat media/sticker references for the final reply to this chat. Replaces prior plan, does not send immediately. No @all or arbitrary recipients. Use ordinary text/Unicode emoji when native features are unavailable. Inspect an image before choosing it as a sticker. Final answer supplies text; do not emit raw CQ codes.',
+      'Prepare delivery to the current chat: optional ordered messages for multiple separate text bubbles, mediaOnly for voice/image/video without extra text or emoji, plus native mentions, quote, QQ face IDs or same-chat media/sticker references. Replaces prior plan, does not send immediately. No @all or arbitrary recipients. Use ordinary text/Unicode emoji when native features are unavailable. Inspect an image before choosing it as a sticker. By default the final answer supplies text. Explicit messages replace that text; mediaOnly suppresses it including speaker emoji placeholders. Media generation still requires generate_media and existing permissions. When casual conversation benefits from a reaction, feel free to use a fitting inspected same-chat sticker or native face; do not force stickers or generate/search for one every turn. Do not emit raw CQ codes.',
     schema: z.object({
+      messages: z.array(z.string().trim().min(1).max(4000)).min(1).max(8).optional(),
+      mediaOnly: z.boolean().default(false),
       mentions: z.array(z.string().min(1).max(160)).max(5).default([]),
       replyTo: z.string().min(1).max(256).optional(),
       faces: z
