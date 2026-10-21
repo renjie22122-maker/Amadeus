@@ -1258,6 +1258,8 @@ for (const resolution of ['expired', 'answered']) {
     );
     insert.run(head, c.id, 'uncertain', 'summary', 1);
     insert.run(`approval-allow:${inputId}:${code}:0`, c.id, 'pending', '/approve secret', 2);
+    if (resolution === 'answered')
+      insert.run(`approval-expired:${code}:0`, c.id, 'uncertain', 'obsolete expiry', 2);
     insert.run('later', c.id, 'pending', 'later reply', 3);
     (channel as any).cleanApprovals(c);
     assert.equal(

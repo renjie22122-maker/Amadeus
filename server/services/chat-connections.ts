@@ -964,6 +964,14 @@ export class ChatConnections {
           "UPDATE chat_outbox SET state='uncertain-closed',text='' WHERE connection_id=? AND state='uncertain' AND id LIKE ?",
         )
         .run(c.id, pattern);
+      if (t.used || q?.status !== 'pending') {
+        // A failed expiry notice is obsolete once the local review is resolved too.
+        this.store.db
+          .prepare(
+            "UPDATE chat_outbox SET state=CASE WHEN state='uncertain' THEN 'uncertain-closed' ELSE 'cancelled' END,text='' WHERE connection_id=? AND state IN ('pending','uncertain') AND id LIKE ?",
+          )
+          .run(c.id, 'approval-expired:' + t.code + ':%');
+      }
       if (remoteReviewPolicy(c).cleanup)
         this.store.db
           .prepare(
