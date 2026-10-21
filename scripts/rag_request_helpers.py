@@ -170,3 +170,57 @@ async def light_batch_progress(rag, texts, sources):
             state = row.get("status")
             counts["failed" if state == "failed" else "processing" if state in ("processing", "parsing", "analyzing") else "pending"] += 1
     return counts
+
+
+class GraphEmbeddingRunner:
+    """Track native work beyond async cancellation; do not overlap retry with it."""
+    def __init__(self, diagnostics, budget_ms=300000):
+        self.diagnostics, self.budget_ms = diagnostics, budget_ms
+        self.active = set()
+        self.lock = threading.Lock()
+
+    def idle(self):
+        with self.lock: return not self.active
+
+    async def run(self, function, texts):
+        import asyncio
+        cancel = threading.Event()
+        with self.lock:
+            if any(event.is_set() for event in self.active):
+                raise TimeoutError("Cancelled graph embedding is still draining")
+            self.active.add(cancel)
+        def work():
+            self.diagnostics.begin('graphEmbedding', budget_ms=self.budget_ms)
+            outcome = 'ok'
+            try:
+                self.diagnostics.add(texts=len(texts))
+                return function(texts, cancel_event=cancel)
+            except Exception:
+                outcome = 'failed'
+                raise
+            finally:
+                self.diagnostics.finish(outcome)
+                with self.lock: self.active.discard(cancel)
+        task = asyncio.create_task(asyncio.to_thread(work))
+        # Observe errors even when the awaiting LightRAG coroutine was cancelled.
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+        try: return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancel.set()
+            raise
+
+
+async def light_retryable_timeout(rag, texts, sources):
+    """Only known embedding timeouts, with verified original inputs, may auto-resume."""
+    plan = await light_resume_plan(rag, texts, sources)
+    if not plan['pending']: return False
+    for key in plan['pending']:
+        row = await rag.doc_status.get_by_id(key)
+        message = row.get('error_msg', '')
+        if row.get('status') != 'failed' or not any(marker in message for marker in (
+            'Embedding func: Worker execution timeout',
+            'Graph embedding cancelled',
+            'Model queue deadline exceeded',
+            'Request deadline exceeded',
+        )): return False
+    return True

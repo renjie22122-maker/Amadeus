@@ -106,7 +106,7 @@ class SharedTokenizerConcurrency(unittest.TestCase):
    def encode(self,texts,**kw):return self.tokenizer.encode(' '.join(texts))
    def predict(self,pairs,**kw):self.tokenizer(pairs);return [0.5]*len(pairs)
   with tempfile.TemporaryDirectory() as tmp:
-   env={'LOCK':lock,'DIAGNOSTICS':h.RequestDiagnostics(Path(tmp)),'model':lambda _:Model(),'embedding_windows':h.embedding_windows,'torch':SimpleNamespace(nn=SimpleNamespace(Sigmoid=lambda:None))}
+   env={'LOCK':lock,'graph_tokenizer_lock':lock,'graph_tokenizer':SharedTokenizer(),'DIAGNOSTICS':h.RequestDiagnostics(Path(tmp)),'model':lambda _:Model(),'embedding_windows':h.embedding_windows,'torch':SimpleNamespace(nn=SimpleNamespace(Sigmoid=lambda:None))}
    for name in ('embeddings','rerank'):
     fn=next(x for x in tree.body if isinstance(x,ast.FunctionDef) and x.name==name)
     fn.body=[x for x in fn.body if not isinstance(x,ast.Import)]
@@ -158,7 +158,7 @@ class RecoveryEndpoint(unittest.TestCase):
   jobs={key:{'status':'unknown'}};submitted=[]
   tree=ast.parse((root/'scripts/retrieval_service.py').read_text(encoding='utf-8'));handler=next(x for x in tree.body if isinstance(x,ast.ClassDef) and x.name=='Handler')
   with tempfile.TemporaryDirectory() as tmp:
-   env={'BaseHTTPRequestHandler':BaseHTTPRequestHandler,'json':json,'hmac':hmac,'hashlib':hashlib,'TOKEN':'x'*32,'DIAGNOSTICS':h.RequestDiagnostics(Path(tmp)),'JOBS':jobs,'JOB_LOCK':threading.RLock(),'save_jobs':lambda:None,'POOL':SimpleNamespace(submit=lambda *a:submitted.append(a)),'run_job':lambda:None}
+   env={'BaseHTTPRequestHandler':BaseHTTPRequestHandler,'json':json,'hmac':hmac,'hashlib':hashlib,'TOKEN':'x'*32,'DIAGNOSTICS':h.RequestDiagnostics(Path(tmp)),'JOBS':jobs,'ACTIVE_JOBS':set(),'JOB_LOCK':threading.RLock(),'save_jobs':lambda:None,'POOL':SimpleNamespace(submit=lambda *a:submitted.append(a)),'run_job':lambda:None}
    exec(compile(ast.Module(body=[handler],type_ignores=[]),'actual-handler','exec'),env)
    def request(body):
     raw=json.dumps(body).encode();obj=object.__new__(env['Handler']);obj.path='/lightrag/documents/resume';obj.headers={'Authorization':'Bearer '+'x'*32,'Content-Length':str(len(raw))};obj.rfile=io.BytesIO(raw);obj.connection=SimpleNamespace(settimeout=lambda _:None);out=[];obj.send=lambda status,data:out.append((status,data)) or True;obj.do_POST();return out[-1]
@@ -248,5 +248,83 @@ class DanglingBatchDuplicate(unittest.IsolatedAsyncioTestCase):
    self.assertFalse(await h.light_document_complete(rag,'duplicate','same'))
    states.row={'status':'processed','metadata':{'is_duplicate':True}}
    self.assertFalse(await h.light_document_complete(rag,'duplicate','same'))
+
+
+
+class GraphWorkerLifecycle(unittest.IsolatedAsyncioTestCase):
+ async def test_cancel_keeps_native_worker_tracked_until_it_drains(self):
+  import asyncio
+  with tempfile.TemporaryDirectory() as tmp:
+   runner=h.GraphEmbeddingRunner(h.RequestDiagnostics(Path(tmp)))
+   started=threading.Event();release=threading.Event();cancelled=[]
+   def work(texts,cancel_event=None):
+    started.set();release.wait(2);cancelled.append(cancel_event.is_set());return [],0
+   task=asyncio.create_task(runner.run(work,['sample']))
+   while not started.is_set():await asyncio.sleep(.001)
+   task.cancel()
+   with self.assertRaises(asyncio.CancelledError):await task
+   self.assertFalse(runner.idle())
+   with self.assertRaises(TimeoutError):await runner.run(work,['another'])
+   release.set()
+   for _ in range(100):
+    if runner.idle():break
+    await asyncio.sleep(.005)
+   self.assertTrue(runner.idle());self.assertEqual(cancelled,[True])
+   log=json.loads((Path(tmp)/'requests.jsonl').read_text())
+   self.assertEqual(log['path'],'graphEmbedding');self.assertNotIn('sample',str(log))
+
+class AutomaticGraphRecovery(unittest.TestCase):
+ def test_retry_limit_and_native_work_block(self):
+  from types import SimpleNamespace
+  tree=ast.parse((root/'scripts/retrieval_service.py').read_text(encoding='utf8'))
+  fn=next(x for x in tree.body if isinstance(x,ast.FunctionDef) and x.name=='run_job')
+  jobs={'job':{'status':'unknown'}};attempts=[]
+  def attempt(key,data,resume):
+   attempts.append(resume);jobs[key]['status']='unknown'
+  env={'JOB_LOCK':threading.RLock(),'ACTIVE_JOBS':set(),'JOBS':jobs,
+       'run_job_attempt':attempt,'GRAPH_EMBEDDINGS':SimpleNamespace(idle=lambda:True),
+       'asyncio':SimpleNamespace(run_coroutine_threadsafe=lambda *a:SimpleNamespace(result=lambda **kw:True)),
+       'retryable_job':lambda data:None,'LOOP':None,'save_jobs':lambda:None,
+       'time':SimpleNamespace(time=lambda:1,sleep=lambda _:None)}
+  exec(compile(ast.Module(body=[fn],type_ignores=[]),'actual-run-job','exec'),env)
+  env['run_job']('job',{})
+  self.assertEqual(attempts,[False]+[True]*5);self.assertEqual(jobs['job']['automaticRetries'],5)
+  jobs['job']={'status':'unknown'};attempts.clear();env['GRAPH_EMBEDDINGS'].idle=lambda:False
+  env['run_job']('job',{})
+  self.assertEqual(attempts,[]);self.assertEqual(jobs['job']['recoveryBlocked'],'native_embedding_still_running')
+  self.assertFalse(env['ACTIVE_JOBS'])
+
+
+
+class RetryEligibility(unittest.IsolatedAsyncioTestCase):
+ async def test_unknown_and_nontransient_errors_do_not_auto_retry(self):
+  from types import SimpleNamespace
+  from unittest.mock import patch
+  class Status:
+   row={'status':'failed','error_msg':'Embedding func: Worker execution timeout after 60s'}
+   async def get_by_id(self,k):return self.row
+  status=Status();rag=SimpleNamespace(doc_status=status)
+  async def plan(*a):return {'completed':['done'],'pending':['failed']}
+  with patch.object(h,'light_resume_plan',plan):
+   self.assertTrue(await h.light_retryable_timeout(rag,[],[]))
+   for row in ({'status':'failed','error_msg':'Invalid API key'},
+               {'status':'failed','error_msg':'disk corruption'},
+               {'status':'processing','error_msg':'Embedding func: Worker execution timeout'}):
+    status.row=row;self.assertFalse(await h.light_retryable_timeout(rag,[],[]))
+
+class GraphTokenizerIsolation(unittest.TestCase):
+ def test_chunk_tokenizer_does_not_wait_for_model_inference_lock(self):
+  from types import SimpleNamespace
+  tree=ast.parse((root/'scripts/retrieval_service.py').read_text(encoding='utf8'))
+  create=next(x for x in tree.body if isinstance(x,ast.AsyncFunctionDef) and x.name=='create_rag')
+  cls=next(x for x in create.body if isinstance(x,ast.ClassDef) and x.name=='LocalTokenizer')
+  lock=threading.Lock();lock.acquire()
+  env={'LOCK':lock,'graph_tokenizer_lock':threading.Lock(),
+       'graph_tokenizer':SimpleNamespace(encode=lambda t,**k:list(t),decode=lambda t,**k:''.join(t))}
+  exec(compile(ast.Module(body=[cls],type_ignores=[]),'actual-tokenizer','exec'),env)
+  result=[];thread=threading.Thread(target=lambda:result.append(env['LocalTokenizer']().encode('safe')),daemon=True)
+  try:
+   thread.start();thread.join(.5);self.assertEqual(result,[list('safe')])
+  finally:lock.release();thread.join(1)
 
 if __name__=='__main__':unittest.main()

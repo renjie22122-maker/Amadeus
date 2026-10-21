@@ -5,13 +5,15 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
-from rag_request_helpers import RequestDiagnostics, embedding_windows, light_document_complete, light_resume_plan, light_batch_progress
+from rag_request_helpers import RequestDiagnostics, embedding_windows, light_document_complete, light_resume_plan, light_batch_progress, GraphEmbeddingRunner, light_retryable_timeout
 
 CODE_HASH = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 HELPER_HASH = hashlib.sha256(Path(__file__).with_name("rag_request_helpers.py").read_bytes()).hexdigest()
 ROOT = Path(os.environ.get("AGENTDEMO_DATA_DIR", str(Path(__file__).resolve().parent.parent / ".data"))) / "retrieval-service"
 ROOT.mkdir(parents=True, exist_ok=True)
 DIAGNOSTICS = RequestDiagnostics(ROOT)
+GRAPH_EMBEDDINGS = GraphEmbeddingRunner(DIAGNOSTICS)
+ACTIVE_JOBS = set()
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 TOKEN = CONFIG["token"]
 if len(TOKEN) < 32:
@@ -51,8 +53,9 @@ def model(kind):
                     raise ValueError("Local model dimensions do not match the selected E5 identity")
         return MODELS[kind]
 
-def embeddings(texts, purpose="passage"):
+def embeddings(texts, purpose="passage", cancel_event=None):
     import numpy as np
+    if cancel_event and cancel_event.is_set(): raise TimeoutError("Graph embedding cancelled")
     encoder = model("embedding")
     with DIAGNOSTICS.locked(LOCK, "tokenize"):
         windows, groups, tokens, stats = embedding_windows(encoder, texts, purpose)
@@ -60,7 +63,10 @@ def embeddings(texts, purpose="passage"):
     batches=[]
     for start in range(0,len(windows),8):
         with DIAGNOSTICS.locked(LOCK, "embeddingInference"):
+            if cancel_event and cancel_event.is_set(): raise TimeoutError("Graph embedding cancelled")
             batches.append(encoder.encode(windows[start:start+8], normalize_embeddings=True, batch_size=8))
+    if cancel_event and cancel_event.is_set(): raise TimeoutError("Graph embedding cancelled")
+    DIAGNOSTICS.check()
     values=np.concatenate(batches,axis=0)
     out = []
     for group in groups:
@@ -332,15 +338,20 @@ async def create_rag(scope):
         if choice.get("finish_reason") != "stop" or not isinstance(choice["message"].get("content"),str):
             raise ValueError("Extraction did not return a complete text response")
         return choice["message"]["content"]
+    # Chunking runs synchronously on the event loop. Its tokenizer must not
+    # wait for the inference lock held by GPU/CPU model execution.
+    import copy
+    with LOCK: graph_tokenizer = copy.deepcopy(model("embedding").tokenizer)
+    graph_tokenizer_lock = threading.RLock()
     class LocalTokenizer:
         def encode(self, text):
-            with LOCK: return model("embedding").tokenizer.encode(text, add_special_tokens=False, verbose=False)
+            with graph_tokenizer_lock: return graph_tokenizer.encode(text, add_special_tokens=False, verbose=False)
         def decode(self, tokens):
-            with LOCK: return model("embedding").tokenizer.decode(tokens, skip_special_tokens=True)
+            with graph_tokenizer_lock: return graph_tokenizer.decode(tokens, skip_special_tokens=True)
         def __deepcopy__(self, memo): return self
     async def embed(texts, **kwargs):
         import numpy as np
-        values, _ = await asyncio.to_thread(embeddings, texts)
+        values, _ = await GRAPH_EMBEDDINGS.run(embeddings, texts)
         return np.asarray(values)
     rag = LightRAG(working_dir=str(ROOT / "lightrag" / hashlib.sha256((scope + CONFIG["embeddingModel"]).encode()).hexdigest()),
         workspace=hashlib.sha256((scope + CONFIG["embeddingModel"]).encode()).hexdigest(),
@@ -348,7 +359,8 @@ async def create_rag(scope):
         tokenizer=Tokenizer("local-e5", LocalTokenizer()),
         kv_storage="JsonKVStorage", vector_storage="NanoVectorDBStorage", graph_storage="NetworkXStorage",
         doc_status_storage="JsonDocStatusStorage", chunk_token_size=400, chunk_overlap_token_size=40,
-        llm_model_max_async=2, max_parallel_insert=1, default_llm_timeout=780)
+        llm_model_max_async=2, max_parallel_insert=1, default_llm_timeout=780,
+        embedding_func_max_async=1, embedding_batch_num=8, default_embedding_timeout=360)
     await rag.initialize_storages()
     await initialize_pipeline_status()
     RAGS[rag_key] = rag
@@ -396,9 +408,9 @@ async def light_resume(data):
     if result["status"] != "completed": raise ValueError("Recovery remains incomplete; inspect before another retry")
     return {**result, "preservedCompleted":len(plan["completed"]), "resumed":len(plan["pending"])}
 
-def run_job(key, data, resume=False):
+def run_job_attempt(key, data, resume=False):
     with JOB_LOCK:
-        JOBS[key] = {"status":"processing"}; save_jobs()
+        JOBS[key] = {**JOBS.get(key,{}), "status":"processing"}; save_jobs()
     future = asyncio.run_coroutine_threadsafe(light_resume(data) if resume else light_insert(data), LOOP)
     deadline = time.monotonic() + 1800
     try:
@@ -413,10 +425,10 @@ def run_job(key, data, resume=False):
                 try:
                     progress = probe.result(timeout=2)
                     with JOB_LOCK:
-                        JOBS[key] = {**progress, "status":"processing", "observedAt":int(time.time()*1000)}; save_jobs()
+                        JOBS[key] = {**JOBS.get(key,{}), **progress, "status":"processing", "observedAt":int(time.time()*1000)}; save_jobs()
                 except Exception: probe.cancel()
         with JOB_LOCK:
-            JOBS[key] = {"status":"completed", **result, "observedAt":int(time.time()*1000)}; save_jobs()
+            JOBS[key] = {**JOBS.get(key,{}), "status":"completed", **result, "observedAt":int(time.time()*1000)}; save_jobs()
     except Exception as error:
         future.cancel()
         with JOB_LOCK:
@@ -429,6 +441,57 @@ def run_job(key, data, resume=False):
             with JOB_LOCK:
                 JOBS[key].update(progress, observedAt=int(time.time()*1000)); save_jobs()
         except Exception: probe.cancel()
+
+async def retryable_job(data):
+    rag = await rag_for(data["scope"])
+    return await light_retryable_timeout(rag, data["texts"], data["file_sources"])
+
+
+def run_job(key, data, resume=False):
+    with JOB_LOCK:
+        if key in ACTIVE_JOBS: return
+        ACTIVE_JOBS.add(key)
+    try:
+        if not GRAPH_EMBEDDINGS.idle():
+            with JOB_LOCK:
+                JOBS[key].update(status="unknown", recoveryBlocked="native_embedding_still_running"); save_jobs()
+            return
+        while True:
+            run_job_attempt(key, data, resume)
+            with JOB_LOCK:
+                job = dict(JOBS[key])
+            if job["status"] == "completed": return
+            if job.get("automaticRetries", 0) >= 5:
+                with JOB_LOCK:
+                    JOBS[key]["recoveryBlocked"] = "retry_limit"; save_jobs()
+                return
+            if job.get("recoveryStartedAt") and time.time()*1000-job["recoveryStartedAt"] >= 3600000:
+                with JOB_LOCK:
+                    JOBS[key]["recoveryBlocked"] = "recovery_time_limit"; save_jobs()
+                return
+            # Native GPU/CPU calls cannot be killed by cancelling asyncio.to_thread.
+            # If they have not drained, leave an inspected recovery instead of replaying.
+            if not GRAPH_EMBEDDINGS.idle():
+                with JOB_LOCK:
+                    JOBS[key]["recoveryBlocked"] = "native_embedding_still_running"; save_jobs()
+                return
+            probe = asyncio.run_coroutine_threadsafe(retryable_job(data), LOOP)
+            try: retry = probe.result(timeout=10)
+            except Exception:
+                probe.cancel()
+                return
+            if not retry: return
+            attempt = job.get("automaticRetries", 0) + 1
+            delay = min(5 * 2 ** (attempt-1), 60)
+            with JOB_LOCK:
+                JOBS[key].update(status="queued", automaticRetries=attempt,
+                    recoveryStartedAt=job.get("recoveryStartedAt") or int(time.time()*1000),
+                    retryAt=int((time.time()+delay)*1000)); save_jobs()
+            time.sleep(delay)
+            resume = True
+    finally:
+        with JOB_LOCK: ACTIVE_JOBS.discard(key)
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
@@ -521,7 +584,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(sources,list) or len(sources)!=len(texts) or not all(isinstance(s,str) and s.startswith("amadeus-") and len(s)<200 for s in sources): raise ValueError("Invalid recovery sources")
                 with JOB_LOCK:
                     if key not in JOBS: raise ValueError("Unknown original job")
-                    if JOBS[key]["status"] == "unknown":
+                    if JOBS[key]["status"] == "unknown" and key not in ACTIVE_JOBS:
                         if any(j["status"] in ("queued","processing") for j in JOBS.values()): raise ValueError("Wait for active ingestion before recovery")
                         JOBS[key] = {"status":"queued", "recovery":True}; save_jobs()
                         POOL.submit(run_job,key,original,True)
