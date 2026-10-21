@@ -957,6 +957,13 @@ export class ChatConnections {
           "UPDATE chat_outbox SET state='cancelled',text='' WHERE connection_id=? AND state='pending' AND id LIKE ?",
         )
         .run(c.id, pattern);
+      // Preserve the unknown delivery outcome without letting a dead review block the channel.
+      // Never replay it: the platform may already have received it.
+      this.store.db
+        .prepare(
+          "UPDATE chat_outbox SET state='uncertain-closed',text='' WHERE connection_id=? AND state='uncertain' AND id LIKE ?",
+        )
+        .run(c.id, pattern);
       if (remoteReviewPolicy(c).cleanup)
         this.store.db
           .prepare(

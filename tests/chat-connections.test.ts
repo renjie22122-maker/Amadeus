@@ -1199,3 +1199,104 @@ test('browser voice is scoped, excludes drafts, and never creates platform outbo
   assert.notEqual(busy.statusCode, 200);
   assert.equal(calls.length, 1);
 });
+
+for (const messages of [
+  undefined,
+  ['Short reaction.', 'A separate follow-up.'],
+  ['One thought.\n\nIts explanation belongs here.'],
+])
+  test(
+    'remote bubble boundaries are explicit, not inferred from paragraphs: ' +
+      JSON.stringify(messages),
+    (t) => {
+      const final = 'First paragraph.\n\nSecond paragraph.';
+      const { store, channel } = completedRemoteReply(t, messages ? { messages } : {}, final);
+      channel.tick(Date.now() + 20000);
+      channel.tick(Date.now() + 20000);
+      const rows = store.db.prepare('SELECT text FROM chat_outbox ORDER BY created_at,rowid').all();
+      assert.deepEqual(
+        rows.map((row) => row.text),
+        messages || [final],
+      );
+      assert.equal(
+        store.eventsForRun('delivery-run', ['assistant.message']).at(-1)?.data.text,
+        final,
+      );
+    },
+  );
+
+for (const resolution of ['expired', 'answered']) {
+  test(`closed ${resolution} approval releases uncertain queue head without replay or approval`, async (t) => {
+    const { store, channel, c, calls } = fixture(t);
+    c.remoteApprovals = true;
+    store.put('chat-connection', c);
+    const inputId = id(),
+      code = 'abcdef012345678901234567';
+    store.put('input', {
+      id: inputId,
+      kind: 'approval',
+      status: resolution === 'answered' ? 'answered' : 'pending',
+    });
+    store.db
+      .prepare(
+        'INSERT INTO chat_approval(code,connection_id,input_id,run_id,expires_at,used,revision,digest) VALUES(?,?,?,?,?,?,?,?)',
+      )
+      .run(
+        code,
+        c.id,
+        inputId,
+        'run',
+        resolution === 'expired' ? Date.now() - 1 : Date.now() + 60000,
+        0,
+        c.revision,
+        'digest',
+      );
+    store.put('chat-approval-lifecycle', { id: code, connectionId: c.id, inputId, remote: true });
+    const head = `approval:${inputId}:${code}:0`;
+    const insert = store.db.prepare(
+      'INSERT INTO chat_outbox(id,connection_id,state,text,created_at) VALUES(?,?,?,?,?)',
+    );
+    insert.run(head, c.id, 'uncertain', 'summary', 1);
+    insert.run(`approval-allow:${inputId}:${code}:0`, c.id, 'pending', '/approve secret', 2);
+    insert.run('later', c.id, 'pending', 'later reply', 3);
+    (channel as any).cleanApprovals(c);
+    assert.equal(
+      store.db.prepare('SELECT state FROM chat_outbox WHERE id=?').get(head)!.state,
+      'uncertain-closed',
+    );
+    const transport: any = new ChatTransports(channel);
+    transport.current = () => true;
+    const sent: string[] = [];
+    transport.send = async (_c: any, _s: any, row: any) => {
+      sent.push(row.text);
+      return { message_id: 'receipt' };
+    };
+    await transport.deliver(c, {});
+    assert.deepEqual(sent, ['later reply']);
+    assert.equal(calls.length, 0);
+    assert.equal(store.db.prepare('SELECT used FROM chat_approval').get()!.used, 0);
+    assert.equal(
+      store.get<any>('input', inputId).status,
+      resolution === 'answered' ? 'answered' : 'pending',
+    );
+  });
+}
+test('uncertain delivery records bounded cause without provider content or automatic replay', async (t) => {
+  const { store, channel, c } = fixture(t);
+  store.db
+    .prepare('INSERT INTO chat_outbox(id,connection_id,state,text,created_at) VALUES(?,?,?,?,?)')
+    .run('test-send', c.id, 'pending', 'hello', 1);
+  const transport: any = new ChatTransports(channel);
+  transport.current = () => true;
+  let attempts = 0;
+  transport.send = async () => {
+    attempts++;
+    throw Error('OneBot send timeout secret-token-and-content');
+  };
+  await assert.rejects(() => transport.deliver(c, {}), /Delivery uncertain/);
+  await transport.deliver(c, {});
+  assert.equal(attempts, 1);
+  const diagnostic = store.get<any>('chat-delivery-failure', c.id);
+  assert.equal(diagnostic.category, 'timeout');
+  assert.equal(JSON.stringify(diagnostic).includes('secret-token'), false);
+});

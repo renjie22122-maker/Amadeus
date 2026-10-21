@@ -620,7 +620,7 @@ export class ChatTransports {
         ((
           this.channels.store.db
             .prepare(
-              "SELECT state FROM chat_outbox WHERE connection_id=? AND state NOT IN ('sent','cancelled') ORDER BY created_at,rowid LIMIT 1",
+              "SELECT state FROM chat_outbox WHERE connection_id=? AND state NOT IN ('sent','cancelled','uncertain-closed') ORDER BY created_at,rowid LIMIT 1",
             )
             .get(c.id) as any
         )?.state === 'pending' ||
@@ -1410,7 +1410,7 @@ export class ChatTransports {
     // Stop at an uncertain delivery to preserve the ordering of multipart responses.
     const row = this.channels.store.db
       .prepare(
-        "SELECT * FROM chat_outbox WHERE connection_id=? AND state NOT IN ('sent','cancelled') ORDER BY created_at,rowid LIMIT 1",
+        "SELECT * FROM chat_outbox WHERE connection_id=? AND state NOT IN ('sent','cancelled','uncertain-closed') ORDER BY created_at,rowid LIMIT 1",
       )
       .get(c.id) as any;
     if (!row || row.state !== 'pending') return;
@@ -1459,7 +1459,23 @@ export class ChatTransports {
         this.channels.store.db
           .prepare("UPDATE chat_outbox SET state='sent',text='' WHERE id=?")
           .run(row.id);
-    } catch {
+    } catch (error) {
+      // Store only a bounded category; provider errors can include secrets or message content.
+      const message = error instanceof Error ? error.message : '';
+      const category = /timeout|timed out/i.test(message)
+        ? 'timeout'
+        : /disconnect|aborted/i.test(message)
+          ? 'disconnected'
+          : /rejected/i.test(message)
+            ? 'platform-rejected'
+            : 'unconfirmed';
+      this.channels.store.put('chat-delivery-failure', {
+        id: c.id,
+        deliveryId: row.id,
+        category,
+        at: Date.now(),
+        outcome: 'unconfirmed',
+      });
       if (!this.closed)
         this.channels.store.db
           .prepare("UPDATE chat_outbox SET state='uncertain' WHERE id=?")

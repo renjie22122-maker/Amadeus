@@ -177,9 +177,16 @@ export function installChatTools(registry: ToolRegistry) {
     name: 'prepare_chat_reply',
     effect: 'coordinate',
     description:
-      'Prepare delivery to the current chat: optional ordered messages for multiple separate text bubbles, mediaOnly for voice/image/video without extra text or emoji, plus native mentions, quote, QQ face IDs or same-chat media/sticker references. Replaces prior plan, does not send immediately. No @all or arbitrary recipients. Use ordinary text/Unicode emoji when native features are unavailable. Inspect an image before choosing it as a sticker. By default the final answer supplies text. Explicit messages replace that text; mediaOnly suppresses it including speaker emoji placeholders. Media generation still requires generate_media and existing permissions. When casual conversation benefits from a reaction, feel free to use a fitting inspected same-chat sticker or native face; do not force stickers or generate/search for one every turn. Do not emit raw CQ codes.',
+      'Prepare delivery to the current chat: optional ordered messages for natural conversational beats (available proactively in casual chat, not only on explicit requests to split), mediaOnly for voice/image/video without extra text or emoji, plus native mentions, quote, QQ face IDs or same-chat media/sticker references. Replaces prior plan, does not send immediately. No @all or arbitrary recipients. Use ordinary text/Unicode emoji when native features are unavailable. Inspect an image before choosing it as a sticker. By default the final answer supplies text. Explicit messages replace that text; mediaOnly suppresses it including speaker emoji placeholders. Media generation still requires generate_media and existing permissions. When casual conversation benefits from a reaction, feel free to use a fitting inspected same-chat sticker or native face; do not force stickers or generate/search for one every turn. Do not emit raw CQ codes.',
     schema: z.object({
-      messages: z.array(z.string().trim().min(1).max(4000)).min(1).max(8).optional(),
+      messages: z
+        .array(z.string().trim().min(1).max(4000))
+        .min(1)
+        .max(8)
+        .optional()
+        .describe(
+          'One entry per intended platform bubble, in order. Choose by conversational meaning, not line breaks. Omit for one coherent final answer; do not force multiple bubbles. These entries replace the final answer on the platform.',
+        ),
       mediaOnly: z.boolean().default(false),
       mentions: z.array(z.string().min(1).max(160)).max(5).default([]),
       replyTo: z.string().min(1).max(256).optional(),
@@ -213,7 +220,14 @@ export function installChatTools(registry: ToolRegistry) {
         revision: c.revision,
         ...a,
       });
-      return text({ prepared: true, target: c.peerId });
+      return text({
+        prepared: true,
+        target: c.peerId,
+        delivery: 'queued-after-run-completes',
+        textSource: a.mediaOnly ? 'none' : a.messages ? 'messages' : 'final-answer',
+        plannedTextBubbles: a.mediaOnly ? 0 : (a.messages?.length ?? 1),
+        finalTextWillBeSent: !a.mediaOnly && !a.messages,
+      });
     },
   });
 }
