@@ -91,7 +91,7 @@ test('all-mode starts optional services even when main HTTP is already ready',
     const script = `function Invoke-RestMethod {[pscustomobject]@{ready=$true;application='Amadeus'}}
 & '${quote(join(dir,'run.ps1'))}' -Config '${quote(join(dir,'config.json'))}' -Mode all
 if(-not(Test-Path -LiteralPath '${quote(join(dir,'called.txt'))}')){throw 'Optional service startup was skipped'}`;
-    const r = spawnSync('powershell.exe',['-NoProfile','-Command',script],{encoding:'utf8',timeout:15000});
+    const r = spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command',script],{encoding:'utf8',timeout:15000});
     assert.equal(r.status,0,r.stdout+r.stderr);
   } finally {rmSync(dir,{recursive:true,force:true});}
 });
