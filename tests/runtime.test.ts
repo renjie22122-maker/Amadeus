@@ -1103,7 +1103,7 @@ test('a saturated conversation tree cannot block another conversation or leak it
     f.store.put('conversation', { ...f.store.get<any>('conversation', 'chat'), id });
   try {
     const root = f.runtime.start('chat', 'hold-root');
-    await until(() => seen.length === 1);
+    await until(() => seen.length === 1, 15000);
     const child = f.runtime.start('child', 'child-only', 0, {
       parentRunId: root.id,
       depth: 1,
@@ -1115,14 +1115,14 @@ test('a saturated conversation tree cannot block another conversation or leak it
       fresh: true,
     });
     const other = f.runtime.start('other', 'independent-only');
-    await until(() => f.store.get<any>('run', other.id).status === 'completed');
+    await until(() => f.store.get<any>('run', other.id).status === 'completed', 15000);
     assert.equal(f.store.get<any>('run', child.id).status, 'queued');
     assert.equal(f.store.get<any>('run', grandchild.id).status, 'queued');
     assert.equal(seen.length, 2);
     assert(seen[1].includes('independent-only'));
     assert(!seen[1].includes('hold-root'));
     release();
-    await until(() => f.store.get<any>('run', grandchild.id).status === 'completed');
+    await until(() => f.store.get<any>('run', grandchild.id).status === 'completed', 15000);
     // Child completion can legitimately wake the parent for a final summary.
     const childIndex = seen.findIndex((text) => text.includes('child-only'));
     const grandchildIndex = seen.findIndex((text) => text.includes('grandchild-only'));
@@ -1137,7 +1137,7 @@ test('a saturated conversation tree cannot block another conversation or leak it
 
 test(
   'background command permits independent tools, wakes on steering, and finishes without polling',
-  { timeout: 15000 },
+  { timeout: 60000 },
   async () => {
     let calls = 0,
       jobId = '',
@@ -1157,7 +1157,7 @@ test(
                   `" -e "console.log(123);const fs=require('node:fs');const t=setInterval(()=>{if(fs.existsSync('release-command')){clearInterval(t);console.log(456)}},50)"`,
                 folder: 0,
                 background: true,
-                timeoutSeconds: 20,
+                timeoutSeconds: 45,
                 reason: 'bounded background test',
               },
             },
@@ -1212,15 +1212,15 @@ test(
           f.store
             .events('chat')
             .some((e) => e.type === 'tool.started' && e.data.callId === 'wait-bg'),
-        10000,
+        15000,
       );
       await new Promise((r) => setTimeout(r, 100));
       const before = calls;
       await new Promise((r) => setTimeout(r, 150));
       assert.equal(calls, before);
       f.runtime.steer('chat', 'status please');
-      await until(() => calls >= 4);
-      await until(() => f.store.get<any>('run', run.id).status === 'completed', 7000);
+      await until(() => calls >= 4, 15000);
+      await until(() => f.store.get<any>('run', run.id).status === 'completed', 15000);
       assert(workedWhileRunning);
       assert.equal(f.runtime.background.get('chat', jobId).status, 'completed');
       assert.equal(f.store.unknownEffects('chat').length, 0);
@@ -1241,12 +1241,12 @@ test('background jobs are scoped, cancelled and recovered as unknown without rep
   const f = await setup({ complete: async () => result('done') });
   try {
     const run = f.runtime.start('chat', 'fixture');
-    await until(() => f.store.get<any>('run', run.id).status === 'completed');
+    await until(() => f.store.get<any>('run', run.id).status === 'completed', 15000);
     const job = f.runtime.background.start(
       run,
       '"' + process.execPath + '" -e "console.log(123);setInterval(()=>{},1000)"',
       f.dir,
-      10,
+      30,
       { ...f.config.get(), commandBackend: 'approval-host' as const },
       new AbortController().signal,
       '123',
@@ -1255,10 +1255,10 @@ test('background jobs are scoped, cancelled and recovered as unknown without rep
       'chat',
       job.id,
       new AbortController().signal,
-      3,
+      15,
       true,
     );
-    assert(ready.readyObserved);
+    assert(ready.readyObserved, JSON.stringify(ready));
     assert.equal(ready.status, 'running');
     assert.throws(() => f.runtime.background.get('foreign', job.id), /another conversation/);
     const cancelled = await f.runtime.background.cancel('chat', job.id);

@@ -14,7 +14,7 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node --import tsx --test --test-concurrency=2 tests/*.test.ts && node --test scripts/bot/*.test.mjs",
+    "test": "node scripts/run-tests.mjs",
     "build:server": "node scripts/build-server.mjs",
     "check:docs": "node scripts/check-docs.mjs",
     "eval:preflight": "node evals/benchmark/preflight.mjs"

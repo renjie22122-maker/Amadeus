@@ -74,3 +74,9 @@ Full suite: 437 tests, 435 passed, 2 desktop integration tests skipped. Type che
 ### Streaming large media
 
 438 tests: 436 passed, 2 desktop tests skipped. A 32 MiB fixture verifies upload, suffix-range playback, scoped disk import and exact export beyond the previous cap. Damaged exports never publish; interrupted/cancelled copies clean up and pre-existing destinations survive. Type checking and Edge playback checks pass.
+
+## Runtime test scheduling
+
+Since 2026-10-23, `pnpm test` runs the real-process runtime suite alone, then all other TypeScript test files with concurrency 2, then the bot launcher tests. The runner discovers test files rather than maintaining an allowlist and stops on any failed phase. Runtime's own parallel-conversation tests still exercise concurrency.
+
+Windows run 39798050028 failed three runtime coordination/readiness tests during a period when neighboring tests also slowed substantially; Ubuntu passed. The logs do not identify the host resource responsible. Startup/readiness waits now have bounded integration-test budgets and readiness failures include the observed job state. These budgets do not change production timeouts or relax cancellation, isolation, steering, or no-polling assertions.

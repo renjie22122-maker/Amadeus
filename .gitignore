@@ -51,3 +51,4 @@ build/
 !/scripts/rag_request_helpers.py
 
 !/scripts/rag_resources.py
+!/scripts/run-tests.mjs
