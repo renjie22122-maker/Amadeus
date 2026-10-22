@@ -44,10 +44,10 @@ try{
     if($RestartBridge){Restart-Bridge $c.bridge}
     Ensure-Service $c.bridge
     if($Mode -eq 'all'){
-        if(-not(Ready $c.agent)){
-            & $c.powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $c.agentRoot 'Start-Amadeus.ps1') -NoBrowser
-            if($LASTEXITCODE -ne 0){throw 'Amadeus launcher failed'}
-        }
+        # The idempotent app launcher also starts configured optional services.
+        # Main HTTP readiness alone does not mean voice/RAG are available.
+        & $c.powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $c.agentRoot 'Start-Amadeus.ps1') -NoBrowser
+        if($LASTEXITCODE -ne 0){throw 'Amadeus launcher failed'}
     }
 }finally{if($held){$mutex.ReleaseMutex()};$mutex.Dispose()}
 if($RestartBridge){exit 0}
