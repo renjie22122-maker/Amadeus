@@ -1,3 +1,4 @@
+import { windowsSecrets } from '../server/services/credential-storage.js';
 import { ChatFriendReview } from '../server/services/chat-friend-review.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,6 +39,13 @@ const group = (transport: ChatConnection['transport'] = 'onebot11'): ChatConnect
   revision: 1,
 });
 function setup(t: any) {
+  // Group permission/identity tests use fixture credentials. OS encryption is
+  // exercised separately in credential-storage.test.ts, not per group setup.
+  t.mock.method(windowsSecrets, 'seal', (value: string) => 'fixture:' + value);
+  t.mock.method(windowsSecrets, 'open', (value: string) => {
+    assert(value.startsWith('fixture:'));
+    return value.slice('fixture:'.length);
+  });
   const directory = mkdtempSync(join(tmpdir(), 'chat-groups-')),
     store = new Store(join(directory, 'test.db'));
   const calls: any[] = [];

@@ -10,7 +10,9 @@ const files = (directory, suffix) =>
 // Real-process runtime fixtures must not compete with unrelated file suites.
 // Concurrency inside Runtime is still tested, including independent conversations.
 const runtime = 'tests/runtime.test.ts';
+const credentials = 'tests/credential-storage.test.ts';
 const suites = [
+  ['OS credential protection', ['--import', 'tsx', '--test', credentials]],
   ['runtime', ['--import', 'tsx', '--test', '--test-concurrency=1', runtime]],
   [
     'other tests',
@@ -19,7 +21,7 @@ const suites = [
       'tsx',
       '--test',
       '--test-concurrency=2',
-      ...files('tests', '.test.ts').filter((file) => file !== runtime),
+      ...files('tests', '.test.ts').filter((file) => file !== runtime && file !== credentials),
     ],
   ],
   ['bot launcher tests', ['--test', ...files('scripts/bot', '.test.mjs')]],
