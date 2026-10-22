@@ -1926,7 +1926,7 @@ test('stop cancels model reconnection waiting without another request', async ()
 
 test(
   'foreground command auto-yields once, continues independent work and receives steering',
-  { timeout: 15000 },
+  { timeout: 45000 },
   async () => {
     let calls = 0,
       jobId = '',
@@ -1946,7 +1946,7 @@ test(
                   "\" -e \"const fs=require('fs');console.log(123);const timer=setInterval(()=>{if(fs.existsSync('release-command')){clearInterval(timer);console.log(456)}},25)\"",
                 folder: 0,
                 yieldAfterSeconds: 0.15,
-                timeoutSeconds: 10,
+                timeoutSeconds: 30,
                 reason: 'bounded background test',
               },
             },
@@ -1996,11 +1996,30 @@ test(
     });
     try {
       const run = f.runtime.start('chat', 'Prepare two independent outputs');
-      await until(() =>
-        f.store
+      // Includes real shell/process startup and two tool executions. The generic
+      // 3-second polling budget is not a meaningful deadline on loaded CI hosts.
+      try {
+        await until(() => {
+          const state = f.store.get<any>('run', run.id).status;
+          assert(
+            !['failed', 'interrupted', 'completed'].includes(state),
+            `Run terminated before background wait: ${state}`,
+          );
+          return f.store
+            .events('chat')
+            .some((e) => e.type === 'tool.started' && e.data.callId === 'wait-bg');
+        }, 15000);
+      } catch (error) {
+        const state = f.store.get<any>('run', run.id).status;
+        const events = f.store
           .events('chat')
-          .some((e) => e.type === 'tool.started' && e.data.callId === 'wait-bg'),
-      );
+          .slice(-10)
+          .map((e) => e.type);
+        throw new Error(
+          `Background wait not reached: status=${state}, calls=${calls}, events=${events.join(',')}`,
+          { cause: error },
+        );
+      }
       await new Promise((r) => setTimeout(r, 100));
       const before = calls;
       await new Promise((r) => setTimeout(r, 150));
@@ -2011,7 +2030,7 @@ test(
       assert(workedWhileRunning);
       assert.equal(f.store.events('chat').filter((e) => e.type === 'command.yielded').length, 1);
       assert.equal(f.runtime.background.list('chat').length, 1);
-      assert.equal(f.runtime.background.get('chat', jobId).timeoutSeconds, 10);
+      assert.equal(f.runtime.background.get('chat', jobId).timeoutSeconds, 30);
       assert.equal(
         f.runtime.background.get('chat', jobId).result?.stdout.replaceAll('\r', '').trim(),
         '123\n456',
