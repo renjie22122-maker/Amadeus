@@ -481,3 +481,36 @@ test('output truncation reduces the next batch without advancing unfinished sour
     f.store.close();
   }
 });
+
+test('learning saves cited topic summaries independently of durable memory items', async () => {
+  const { store, config, eid } = await fixture();
+  const learning = new MemoryLearning(
+    store,
+    config,
+    () =>
+      ({
+        complete: async () => ({
+          ...response([]),
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({
+              items: [],
+              historyTopics: [
+                {
+                  title: 'Writing style',
+                  summary: 'The user asked for concise answers.',
+                  evidence: [{ eventId: eid, quote: 'I prefer concise answers.' }],
+                },
+              ],
+            }),
+          },
+        }),
+      }) as any,
+  );
+  await learning.tick();
+  const summaries = store.list<any>('history-digest');
+  assert.ok(summaries.some((s) => s.method === 'model' && s.topics[0].title === 'Writing style'));
+  assert.equal(store.list('memory').length, 0);
+  await learning.close();
+  store.close();
+});
