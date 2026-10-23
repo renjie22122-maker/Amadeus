@@ -154,3 +154,11 @@ The single run control toggles process segments **in their original timeline pos
 During preview, a read-only poll every two seconds reports the shared voice service device (GPU/CPU), device selection or unavailable telemetry, with its selection/fallback reason. This is service-level telemetry, not per-request attribution. Idle responses discard the previous device; polling stops after preview and never starts synthesis.
 
 Read-aloud regressions use independent synthetic WAV fixtures to check text forwarding, audio bytes/order, duplicate rejection and cancellation. Failure/cancellation stops this request’s scheduled sources; GPU-to-CPU retry removes un-emitted failed-attempt chunks. These checks establish transport/playback isolation, not linguistic correctness or absence of reference-text repetition by a model. No character voice is used in these tests.
+
+## Mermaid previews
+
+Mermaid fences support native flowcharts, sequence/class/entity/state diagrams, mindmaps, Gantt and pie charts. A serialized renderer prevents global configuration races. SVG text labels avoid HTML-label loss when displayed as images; previews follow the application theme.
+
+Controls offer 50%–200% zoom, flowchart direction/spacing, content/window fit and SVG download. Source/copy always preserves the original. Only after parsing fails, a bounded copy-transport repair handles trailing backslashes, escaped angle brackets and leading whitespace entities, with a visible notice. It never invents nodes or edges. Parse errors expose their message, subsequent streamed source retries, and failures do not block other diagrams. Strict security and size/edge limits remain enforced.
+
+Real-browser regression covers eight diagram families, Chinese multiline flowcharts, concurrent rendering, error recovery, zoom, source switching and download links.

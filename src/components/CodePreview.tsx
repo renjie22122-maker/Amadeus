@@ -1,3 +1,5 @@
+import { renderDiagram } from '../diagram-renderer';
+import { diagramError } from '../diagram-source';
 import { previewHeight } from '../preview-height';
 import { chartDocument } from '../chart-spec';
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -23,7 +25,11 @@ export function CodePreview({
   const [contentHeight, setContentHeight] = useState(440);
   const [ready, setReady] = useState('');
   const [diagram, setDiagram] = useState('');
-  const [error, setError] = useState(false);
+  const [error, setError] = useState('');
+  const [repaired, setRepaired] = useState(false);
+  const [zoom, setZoom] = useState(100);
+  const [direction, setDirection] = useState('auto');
+  const [spacing, setSpacing] = useState(50);
   const [copied, setCopied] = useState(false);
   const [results, setResults] = useState<(PreviewResult & { id: string; added: boolean })[]>([]);
   const [active, setActive] = useState(0);
@@ -36,7 +42,7 @@ export function CodePreview({
   const token = useMemo(() => crypto.randomUUID(), [ready, version]);
   const [theme, setTheme] = useState(document.documentElement.dataset.theme);
   useEffect(() => {
-    if (language !== 'chart') return;
+    if (!['chart', 'mermaid'].includes(language)) return;
     const observer = new MutationObserver(() => setTheme(document.documentElement.dataset.theme));
     observer.observe(document.documentElement, {
       attributes: true,
@@ -105,31 +111,27 @@ export function CodePreview({
     if (!isDiagram || !ready) return;
     let cancelled = false;
     setDiagram('');
-    setError(false);
-    if (ready.length > 50000) {
-      setError(true);
-      return;
-    }
-    void import('mermaid')
-      .then(async ({ default: mermaid }) => {
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'strict',
-          maxTextSize: 50000,
-          maxEdges: 500,
-          suppressErrorRendering: true,
-          theme: 'default',
-        });
-        const { svg } = await mermaid.render('diagram-' + crypto.randomUUID(), ready);
-        if (!cancelled) setDiagram('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
+    setError('');
+    setRepaired(false);
+    void renderDiagram(ready, {
+      dark: theme !== 'light',
+      direction,
+      spacing,
+      cancelled: () => cancelled,
+    })
+      .then((result) => {
+        if (!cancelled && result) {
+          setDiagram(result.url);
+          setRepaired(result.repaired);
+        }
       })
-      .catch(() => {
-        if (!cancelled) setError(true);
+      .catch((e) => {
+        if (!cancelled) setError(diagramError(e));
       });
     return () => {
       cancelled = true;
     };
-  }, [isDiagram, ready, version]);
+  }, [isDiagram, ready, version, theme, direction, spacing]);
   useEffect(() => {
     setContentHeight(440);
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -218,6 +220,50 @@ export function CodePreview({
                 : 'HTML'}
         </span>
         <div className="preview-utilities">
+          {isDiagram && (
+            <>
+              <select
+                aria-label={label('Diagram zoom', '图表缩放')}
+                value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+              >
+                {[50, 75, 100, 125, 150, 200].map((n) => (
+                  <option key={n} value={n}>
+                    {n}%
+                  </option>
+                ))}
+              </select>
+              {/^(?:flowchart|graph)\s/m.test(ready) && (
+                <>
+                  <select
+                    aria-label={label('Diagram direction', '图表方向')}
+                    value={direction}
+                    onChange={(e) => setDirection(e.target.value)}
+                  >
+                    <option value="auto">{label('Original direction', '原始方向')}</option>
+                    <option value="TD">↓</option>
+                    <option value="LR">→</option>
+                    <option value="RL">←</option>
+                    <option value="BT">↑</option>
+                  </select>
+                  <select
+                    aria-label={label('Node spacing', '节点间距')}
+                    value={spacing}
+                    onChange={(e) => setSpacing(Number(e.target.value))}
+                  >
+                    <option value={30}>{label('Compact layout', '紧凑布局')}</option>
+                    <option value={50}>{label('Standard layout', '标准布局')}</option>
+                    <option value={90}>{label('Spacious layout', '宽松布局')}</option>
+                  </select>
+                </>
+              )}
+              {diagram && (
+                <a href={diagram} download="diagram.svg">
+                  {label('Download SVG', '下载 SVG')}
+                </a>
+              )}
+            </>
+          )}
           <select
             aria-label={label('Preview height', '预览高度')}
             value={size}
@@ -266,14 +312,23 @@ export function CodePreview({
         <div className="preview-pane" hidden={mode !== 'preview'}>
           {isDiagram ? (
             error ? (
-              <p role="status">
-                {label(
-                  'Cannot render this diagram. Check its source.',
-                  '暂时无法绘制图表，请检查代码。',
-                )}
-              </p>
+              <div className="diagram-error" role="status">
+                <p>
+                  {source !== ready
+                    ? label('Waiting for complete diagram…', '等待完整图表…')
+                    : label(
+                        'Diagram could not render. Original code is preserved.',
+                        '图表无法绘制，原始代码已保留。',
+                      )}
+                </p>
+                <pre>{error}</pre>
+                <button onClick={() => setMode('code')}>
+                  {label('View source', '查看原始代码')}
+                </button>
+              </div>
             ) : diagram ? (
               <img
+                style={{ width: zoom + '%', height: 'auto', maxWidth: 'none', maxHeight: 'none' }}
                 className="diagram-image"
                 src={diagram}
                 alt={label('Diagram', '关系图')}
@@ -319,6 +374,14 @@ export function CodePreview({
           <pre>{code || <code>{source}</code>}</pre>
         </div>
       </div>
+      {isDiagram && repaired && (
+        <small className="muted">
+          {label(
+            'Preview repaired copy/paste escaping; original code is unchanged.',
+            '预览已修复复制产生的转义符；原始代码未修改。',
+          )}
+        </small>
+      )}
       {size === 'auto' && contentHeight >= 2400 && (
         <small className="muted">
           {label(
