@@ -1,3 +1,4 @@
+import { mediaCostLabel } from '../../shared/media-billing';
 import { ModelPreview } from './ModelPreview';
 import { useState } from 'react';
 import { api } from '../api';
@@ -37,9 +38,7 @@ export function MediaGallery({ conversationId, jobs, zh, onText }: any) {
               {j.kind} · {j.model}
             </strong>
             <span>{j.status}</span>
-            <small>
-              {j.estimatedUsd == null ? (zh ? '费用未知' : 'Cost unknown') : '~$' + j.estimatedUsd}
-            </small>
+            <small>{mediaCostLabel(j, zh)}</small>
           </summary>
           {j.prompt && <p>{j.prompt}</p>}
           {j.error && <p role="alert">{j.error}</p>}

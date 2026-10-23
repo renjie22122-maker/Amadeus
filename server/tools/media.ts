@@ -1,3 +1,4 @@
+import { mediaNeedsBudgetApproval, mediaReviewContext } from '../../shared/media-approval.js';
 import { authorizeGroupMedia } from '../services/chat-media-grant.js';
 import { trackChatTranscription, observeChatTranscript } from '../services/chat-transcription.js';
 import { createHash } from 'node:crypto';
@@ -89,8 +90,8 @@ export function installMedia(registry: ToolRegistry) {
               sha256: output.metadata.sha256,
             },
             estimatedUsd: service.estimatedUsd,
-            forceHuman:
-              limit == null || service.estimatedUsd == null || service.estimatedUsd > limit,
+            serviceContext: mediaReviewContext(service, limit),
+            forceHuman: mediaNeedsBudgetApproval(service.estimatedUsd, limit),
           },
           c.signal,
         );
@@ -179,8 +180,8 @@ export function installMedia(registry: ToolRegistry) {
               referenceAttachments: a.references,
             },
             estimatedUsd: service.estimatedUsd,
-            forceHuman:
-              limit == null || service.estimatedUsd == null || service.estimatedUsd > limit,
+            serviceContext: mediaReviewContext(service, limit),
+            forceHuman: mediaNeedsBudgetApproval(service.estimatedUsd, limit),
           },
           c.signal,
         );

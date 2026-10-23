@@ -15,6 +15,8 @@ export interface Usage {
   input: number;
   output: number;
   cached: number;
+  /** Provider-reported cache misses, when explicitly supplied. */
+  uncached?: number;
   reasoning?: number;
   measured: boolean;
 }
@@ -276,9 +278,11 @@ export interface Memory {
   halfLifeTurns?: number;
   recallScope?: 'auto' | 'conversation' | 'scope';
   applicability?: 'conversation' | 'scope' | 'uncertain';
+  stability?: 'stable' | 'evolving' | 'temporary';
+  observedAt?: number;
   topic?: string;
   automatic?: boolean;
-  kind?: 'preference' | 'decision' | 'episode' | 'experience';
+  kind?: 'preference' | 'fact' | 'goal' | 'decision' | 'episode' | 'experience';
   status?: 'candidate' | 'inactive' | 'active' | 'superseded' | 'disputed' | 'forgotten';
   recordedAt?: number;
   validFrom?: number;

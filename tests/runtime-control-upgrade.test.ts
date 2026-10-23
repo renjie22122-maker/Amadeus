@@ -282,7 +282,10 @@ test('DeepSeek canonical schemas preserve array semantics and telemetry matches 
     'provider-managed-or-unknown',
   );
   assert.deepEqual(cacheStableTools(profile, a), cacheStableTools(p, b));
-  assert.deepEqual(cacheStableTools({ ...profile, baseUrl: 'http://localhost:9000/v1' }, a), cacheStableTools(p, b));
+  assert.deepEqual(
+    cacheStableTools({ ...profile, baseUrl: 'http://localhost:9000/v1' }, a),
+    cacheStableTools(p, b),
+  );
   assert.equal(a[0].name, 'z');
   assert.equal('cache_control' in request(a), false);
   assert.deepEqual(
@@ -292,7 +295,7 @@ test('DeepSeek canonical schemas preserve array semantics and telemetry matches 
       prompt_cache_miss_tokens: 20,
       completion_tokens: 5,
     }),
-    { input: 100, cached: 80, output: 5, reasoning: undefined, measured: true },
+    { input: 100, cached: 80, uncached: 20, output: 5, reasoning: undefined, measured: true },
   );
 });
 

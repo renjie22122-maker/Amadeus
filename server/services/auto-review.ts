@@ -5,6 +5,7 @@ import {
   reviewEvidence,
   recentExecutionEvidence,
   commandScopeSignals,
+  selectReviewMessages,
 } from './review-evidence.js';
 import { approvalRisk } from '../../shared/approval-risk.js';
 import { executionSettings } from '../../shared/execution.js';
@@ -106,15 +107,13 @@ export class AutoReview {
       reviewSignal = AbortSignal.any([signal, AbortSignal.timeout(profile.timeoutMs)]);
       const allMessages = this.store
         .events(run.conversationId)
-        .filter((e) => e.type === 'user.message')
+        .filter((e) => e.type === 'user.message' && !e.data.scheduledTrigger)
         .map((e, index) => ({
           id: index,
+          currentRun: e.runId === run.id,
           text: String(e.data.content || e.data.text || '').slice(0, 5000),
         }));
-      const messages =
-        allMessages.length > 8
-          ? [...allMessages.slice(0, 2), ...allMessages.slice(-6)]
-          : allMessages;
+      const messages = selectReviewMessages(allMessages, payload);
       const risk = approvalRisk(payload);
       const commandSignals = commandScopeSignals(String(payload.command || ''));
       record.commandSignals = commandSignals;
@@ -136,7 +135,17 @@ export class AutoReview {
         const content = reviewContent({
           humanMessages: messages,
           humanDecisions: humanDecisions(),
-          request: payload,
+          request:
+            original.id === run.profileId || !payload.fileChanges
+              ? payload
+              : {
+                  ...payload,
+                  fileChanges: payload.fileChanges.map(({ before, after, ...metadata }: any) => ({
+                    ...metadata,
+                    contentWithheld: true,
+                    reason: 'Separate reviewer profile: newly read source content is not shared.',
+                  })),
+                },
           sandbox: settings.commandBackend,
           network:
             settings.commandBackend === 'approval-host'
@@ -222,10 +231,53 @@ export class AutoReview {
             : null;
         phase = 'validate-response';
         if (result.message.calls?.length) throw Error('Reviewer may not call tools.');
-        const parsed = decideAssessment(
-          JSON.parse(result.message.content.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '')),
-          messages.map((message) => message.id),
-        );
+        const parse = (text: string) =>
+          decideAssessment(
+            JSON.parse(text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '')),
+            messages.map((message) => message.id),
+          );
+        let parsed;
+        try {
+          parsed = parse(result.message.content);
+        } catch {
+          // Repair invalid formatting once; never retry a valid negative assessment.
+          record.formatRepairAttempts = 1;
+          const repaired = await boundedReview(
+            this.provider(profile).complete({
+              profile,
+              tools: [],
+              signal: activeSignal,
+              onText: () => {},
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    REVIEW_PROMPT +
+                    '\nYour previous response did not validate. Return only the exact JSON assessment schema with enum strings and numeric humanMessages IDs. Do not return decision/allow fields. Reassess the same evidence; uncertainty must remain uncertainty.',
+                },
+                { role: 'user', content },
+              ],
+            }),
+            activeSignal,
+          );
+          record.repairUsage = repaired.usage;
+          if (!flight.joined)
+            record.usage = {
+              ...result.usage,
+              input: result.usage.input + repaired.usage.input,
+              output: result.usage.output + repaired.usage.output,
+              cached: result.usage.cached + repaired.usage.cached,
+              measured: result.usage.measured && repaired.usage.measured,
+            };
+          if (record.estimatedUsd != null && repaired.usage.measured)
+            record.estimatedUsd +=
+              (Math.max(0, repaired.usage.input - repaired.usage.cached) * prices.input! +
+                repaired.usage.output * prices.output! +
+                repaired.usage.cached * prices.cached!) /
+              1e6;
+          if (repaired.message.calls?.length) throw Error('Reviewer may not call tools.');
+          parsed = parse(repaired.message.content);
+        }
         Object.assign(record, parsed);
         if (
           files &&

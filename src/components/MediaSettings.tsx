@@ -160,6 +160,57 @@ export function MediaSettings({ value, setValue, zh }: any) {
           </div>
           <details>
             <summary>
+              {zh ? '费用响应映射（可选，按服务文档填写）' : 'Billing response mapping (optional)'}
+            </summary>
+            <p>
+              {zh
+                ? '仅填写明确以 USD 计价的响应字段。用量乘单价属于估算；没有费用字段不代表免费。不会额外查询账户账单。'
+                : 'Use documented USD fields only. Units × rate is an estimate; missing cost is not free. No account billing requests are made.'}
+            </p>
+            <label>
+              {zh ? '服务费用字段路径' : 'USD amount field path'}
+              <input
+                value={c.billing?.amountPath ?? ''}
+                placeholder="billing.amount_usd"
+                onChange={(e) =>
+                  change(c.id, {
+                    billing: { ...c.billing, amountPath: e.target.value || undefined },
+                  })
+                }
+              />
+            </label>
+            <label>
+              {zh ? '计费用量字段路径' : 'Billable units field path'}
+              <input
+                value={c.billing?.unitsPath ?? ''}
+                placeholder="usage.seconds"
+                onChange={(e) =>
+                  change(c.id, {
+                    billing: { ...c.billing, unitsPath: e.target.value || undefined },
+                  })
+                }
+              />
+            </label>
+            <label>
+              {zh ? '每单位 USD' : 'USD per unit'}
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={c.billing?.usdPerUnit ?? ''}
+                onChange={(e) =>
+                  change(c.id, {
+                    billing: {
+                      ...c.billing,
+                      usdPerUnit: e.target.value === '' ? undefined : Number(e.target.value),
+                    },
+                  })
+                }
+              />
+            </label>
+          </details>
+          <details>
+            <summary>
               {zh ? '协议能力与参考文件限制' : 'Protocol capabilities and reference limits'}
             </summary>
             {c.kind === 'speech' && c.protocol === 'openai-speech' && (

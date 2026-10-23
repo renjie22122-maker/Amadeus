@@ -233,6 +233,9 @@ export function standardUsage(u: any): Usage {
   return u
     ? {
         input: u.prompt_tokens ?? u.input_tokens ?? 0,
+        ...(Number.isSafeInteger(u.prompt_cache_miss_tokens) && u.prompt_cache_miss_tokens >= 0
+          ? { uncached: u.prompt_cache_miss_tokens }
+          : {}),
         output: u.completion_tokens ?? u.output_tokens ?? 0,
         cached:
           u.prompt_cache_hit_tokens ??

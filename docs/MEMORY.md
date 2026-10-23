@@ -145,4 +145,18 @@ At service startup, a local audit repairs current disputed records. Recoverable 
 
 Human-review holds exclude repaired records from automatic candidate review and automatic conflict resolution. Explicit human confirmation or adjudication is required. The UI explains missing counterparts rather than presenting an empty list as proof of a contradiction.
 
-New automatic extraction and candidate review classify applicability separately from memory kind. Uncertain applicability stays in the original conversation; a preference label alone does not establish sharing. Episode and ordinary-chat decision rules remain local. Explicit reach overrides take precedence. Existing records retain their legacy reach and are labeled as not separately reviewed; no bulk activation or migration occurs.
+New automatic extraction and candidate review classify applicability separately from memory kind. Uncertain applicability stays in the original conversation; a preference label alone does not establish sharing. Legacy records without independent applicability assessment retain type-based defaults. Explicit reach overrides take precedence. Existing records retain their legacy reach and are labeled as not separately reviewed; no bulk activation or migration occurs.
+
+### Multidimensional automatic memory (2026-10-23)
+
+Memories include preferences, reported facts/background, ongoing goals, decisions, episodes and evidence-backed experience. Extraction and candidate review share a contract assessing kind, cross-chat applicability, stability and conditions independently. Users need not say "remember" or "all future chats". Useful direct reports can be shared under existing access rules even when they change over time. Do not infer a user profile from temporary commands, fiction or third-party reports. Secrets remain excluded; explicitly supplied personal context for personalization is minimized, never used to infer sensitive traits or widen audiences.
+
+- Stable content does not decay by default; evolving content decays by source time; temporary content decays by time and later turns. Unassessed legacy records preserve prior defaults.
+- Preserve exact quotes, events, source time, units and conditions. Source time is not an inferred measurement date; explicitly reported historical dates stay in the content.
+- Shared means eligible for relevant retrieval, not always injected. Recalled evolving facts/goals include a dated-report freshness marker; the model should check currency when material.
+- Different stability, conditions or observation times are not merged merely because text matches. Automatically local facts can shadow broad facts for a query without overwriting them.
+- No bulk legacy rewrite, widened group/project/personal access, or activation of conflict holds. No database migration, new models or startup command changes.
+
+Design references: [ChatGPT/Codex memories](https://learn.chatgpt.com/docs/customization/memories), [Claude memory](https://support.claude.com/en/articles/11817273-use-claude-s-chat-search-and-memory-to-build-on-previous-context), [LangGraph memory](https://docs.langchain.com/oss/python/concepts/memory). These inform provenance, cross-session retrieval and namespace boundaries; this is not a reproduction of undisclosed algorithms.
+
+Regression coverage checks extraction persistence, cross-chat facts/goals, source age and decay, conditions, project isolation, local specificity and conflict holds. Semantic classification still depends on the model; local tests are not a measured live-model extraction accuracy evaluation.

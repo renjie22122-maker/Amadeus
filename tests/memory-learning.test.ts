@@ -293,3 +293,56 @@ test('memory extraction advances through long chats and does not replay processe
     f.store.close();
   }
 });
+
+test('automatic learning retains reusable evolving facts with source time and conditions', async () => {
+  const f = await fixture();
+  f.store.put('conversation', { ...f.c, automaticMemory: true });
+  let event = f.store.event('chat', 'run', 'user.message', {
+    content: 'The workshop currently has three available machines for planning.',
+  });
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async () =>
+      response([
+        {
+          content: 'Workshop currently has three available machines.',
+          topic: 'workshop-capacity',
+          eventId: event.id,
+          quote: 'The workshop currently has three available machines for planning.',
+          kind: 'fact',
+          applicability: 'scope',
+          stability: 'evolving',
+          conditions: 'workshop planning',
+          attribute: 'available_machines',
+          value: '3',
+          conflictsWith: [],
+        },
+      ]),
+  }));
+  try {
+    await learning.tick();
+    const m = f.store.list<any>('memory')[0];
+    assert.equal(m.kind, 'fact');
+    assert.equal(m.active, true);
+    assert.equal(m.applicability, 'scope');
+    assert.equal(m.stability, 'evolving');
+    assert.equal(m.conditions, 'workshop planning');
+    assert.equal(m.observedAt, event.createdAt);
+    assert.equal(
+      m.evidence[0].quote,
+      'The workshop currently has three available machines for planning.',
+    );
+    event = f.store.event('chat', 'run', 'user.message', {
+      content: 'The workshop currently has three available machines for planning.',
+    });
+    await learning.tick();
+    const reports = f.store.list<any>('memory');
+    assert.equal(reports.length, 2);
+    assert.equal(reports.filter((x) => x.active).length, 2);
+    assert.ok(
+      reports.some((x) => x.sourceEventId === event.id && x.observedAt === event.createdAt),
+    );
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});

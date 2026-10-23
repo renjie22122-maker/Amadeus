@@ -39,7 +39,7 @@ export function MemoryDetails({ memory: m, go, zh }: any) {
       <label>
         {zh ? '衰减规则' : 'Decay policy'}
         <select value={decay} onChange={(e) => setDecay(e.target.value as DecayPolicy)}>
-          <option value="auto">{zh ? '自动：按记忆类型' : 'Automatic by memory kind'}</option>
+          <option value="auto">{zh ? '自动：按内容评估' : 'Automatic assessment'}</option>
           <option value="stable">{zh ? '不衰减' : 'Stable (no decay)'}</option>
           <option value="time">{zh ? '按时间' : 'By time'}</option>
           <option value="turns">{zh ? '按后续用户轮次' : 'By later user turns'}</option>
@@ -72,8 +72,8 @@ export function MemoryDetails({ memory: m, go, zh }: any) {
       )}
       <p className="muted">
         {zh
-          ? '只降低召回排序，不自动删除、不代表真实性。自动规则：稳定偏好和项目决定不衰减；情节及普通对话决定按时间和轮次衰减。'
-          : 'Ranking only, not truth or deletion. Auto: preferences/project decisions stay stable; episodes/general-chat decisions decay by time and turns.'}
+          ? '只降低召回排序，不删除记忆，也不代表真实性。稳定内容不衰减；会变化的事实和目标按来源时间衰减；临时内容按时间和后续轮次衰减。'
+          : 'Ranking only, not truth or deletion. Stable content stays; evolving facts and goals decay by source time; temporary content decays by time and turns.'}
         {decay === 'auto' && ' · ' + memoryDecayPolicy({ ...m, kind, decayPolicy: 'auto' })}
       </p>
       <label>
@@ -82,7 +82,7 @@ export function MemoryDetails({ memory: m, go, zh }: any) {
           value={reach}
           onChange={(e) => setReach(e.target.value as 'conversation' | 'scope')}
         >
-          <option value="auto">{zh ? '自动：按记忆类型' : 'Automatic by memory kind'}</option>
+          <option value="auto">{zh ? '自动：按内容评估' : 'Automatic assessment'}</option>
           <option value="conversation" disabled={!memoryConversation(m)}>
             {zh ? '仅原对话' : 'Original conversation only'}
           </option>
@@ -93,8 +93,8 @@ export function MemoryDetails({ memory: m, go, zh }: any) {
       </label>
       <p className="muted">
         {zh
-          ? '跨场景仍适用的偏好才共享；本次情节应限于原对话。不会跨项目。'
-          : 'Share only reusable preferences; local events belong to the original conversation. Never crosses projects.'}
+          ? '事实、目标、偏好和决定均可按适用性跨对话召回，不要求永久不变；临时情节留在原对话。共享只表示可按需检索，仍遵循原有资料权限。'
+          : 'Facts, goals, preferences and decisions can be reused when applicable, without being permanent. Local episodes stay in their original chat. Shared means eligible for relevant recall, subject to existing access controls.'}
         {reach === 'conversation' &&
           !memoryConversation(m) &&
           (zh
@@ -104,7 +104,7 @@ export function MemoryDetails({ memory: m, go, zh }: any) {
       <label>
         {zh ? '类型' : 'Kind'}
         <select value={kind} onChange={(e) => setKind(e.target.value)}>
-          {['preference', 'decision', 'episode', 'experience'].map((k) => (
+          {['preference', 'fact', 'goal', 'decision', 'episode', 'experience'].map((k) => (
             <option key={k}>{k}</option>
           ))}
         </select>

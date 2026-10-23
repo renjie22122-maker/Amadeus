@@ -241,8 +241,8 @@ export function MemoryList({
         </div>
         <p className="muted">
           {label(
-            'Changing reach never activates a memory or changes its source. Local means each memory stays with its own original chat. Automatic: episodes and general-chat decisions stay local; preferences and project decisions are shared.',
-            '修改使用范围不会自动启用记忆，也不会改变来源。“仅各自原对话”保留每条记忆自己的原对话。自动规则：事件和普通对话决定留在原对话，偏好和项目决定在本范围共享。',
+            'Changing reach never activates a memory or changes its source. Local means each memory stays with its own original chat. Automatic assessment separates applicability from content kind and stability. Shared facts can change; recall retains their source time.',
+            '修改使用范围不会自动启用记忆，也不会改变来源。“仅各自原对话”保留每条记忆自己的原对话。自动分别评估适用范围和稳定程度；事实、目标等也可共享，会变化的内容保留来源时间。',
           )}
         </p>
         <p className="muted">
@@ -381,6 +381,24 @@ export function MemoryList({
               }[memoryReachReason(m)]
             }
           </small>
+          {m.stability && (
+            <small className="muted">
+              {' '}
+              · {label('Stability: ', '稳定程度：')}
+              {
+                {
+                  stable: label('Stable', '稳定'),
+                  evolving: label('May change', '会变化'),
+                  temporary: label('Temporary', '临时'),
+                }[m.stability]
+              }
+              {m.observedAt
+                ? ' · ' +
+                  label('Source time: ', '来源时间：') +
+                  new Date(m.observedAt).toLocaleString()
+                : ''}
+            </small>
+          )}
           <p>{m.content}</p>
           <p className="muted">
             {label('Original conversation / source: ', '原对话／来源：')}

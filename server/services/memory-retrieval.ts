@@ -1,5 +1,5 @@
 import { memoryDecay } from '../../shared/memory-decay.js';
-import { memoryAccessible } from '../../shared/memory-scope.js';
+import { memoryAccessible, memoryReach } from '../../shared/memory-scope.js';
 import { memoryValid } from './memory-lifecycle.js';
 import type { Memory } from '../../shared/types.js';
 export function terms(text: string) {
@@ -56,7 +56,7 @@ export function recallMemories(
   // Specific structured facts override broader facts only for the same entity,
   // attribute and applicability condition. Original memories are never mutated.
   const specificity = (m: Memory) =>
-    (m.recallScope === 'conversation' ? 2 : 0) + (m.scope.startsWith('project:') ? 1 : 0);
+    (memoryReach(m) === 'conversation' ? 2 : 0) + (m.scope.startsWith('project:') ? 1 : 0);
   const factKey = (m: Memory) =>
     m.entityId && m.attribute
       ? JSON.stringify([m.entityId, m.attribute, (m.conditions || '').trim().toLowerCase()])
@@ -86,6 +86,13 @@ export function recallMemories(
       revision: m.revision,
       status: m.status,
       kind: m.kind,
+      stability: m.stability,
+      observedAt: m.observedAt ?? m.validFrom ?? m.createdAt,
+      freshness:
+        m.stability === 'evolving' || m.kind === 'fact' || m.kind === 'goal'
+          ? 'dated-report-not-guaranteed-current'
+          : 'source-bound-context',
+      assessedReach: memoryReach(m),
       validFrom: m.validFrom,
       validUntil: m.validUntil,
       entityId: m.entityId,

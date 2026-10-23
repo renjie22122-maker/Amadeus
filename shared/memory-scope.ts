@@ -3,15 +3,13 @@ export function memoryConversation(m: Memory) {
   return m.sourceConversationId || /^chat:(.+)#event:\d+$/.exec(m.source)?.[1];
 }
 export function memoryReach(m: Memory): 'conversation' | 'scope' {
-  return (
-    (m.recallScope !== 'auto' ? m.recallScope : undefined) ||
-    (m.applicability === 'conversation' ||
-    m.applicability === 'uncertain' ||
-    m.kind === 'episode' ||
-    (m.scope === 'user' && m.kind === 'decision')
-      ? 'conversation'
-      : 'scope')
-  );
+  if (m.recallScope && m.recallScope !== 'auto') return m.recallScope;
+  if (m.applicability === 'scope') return 'scope';
+  if (m.applicability === 'conversation' || m.applicability === 'uncertain') return 'conversation';
+  // Preserve legacy defaults. New extraction independently assesses applicability.
+  return m.kind === 'episode' || (m.scope === 'user' && m.kind === 'decision')
+    ? 'conversation'
+    : 'scope';
 }
 export function memoryAccessible(m: Memory, conversationId?: string) {
   return (

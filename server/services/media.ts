@@ -1,3 +1,4 @@
+import { observeMediaBilling } from '../../shared/media-billing.js';
 import { SpeechAdmission } from './speech-admission.js';
 import { listLocalVoices } from './local-voice-presets.js';
 import { localVoiceConfig } from './local-voice.js';
@@ -498,6 +499,7 @@ export class MediaService {
       updatedAt: Date.now(),
       estimatedUsd: c.estimatedUsd,
       actualUsd: null,
+      billing: c.billing ? { ...c.billing } : undefined,
       outputs: [],
     };
     this.store.transaction(() => {
@@ -649,6 +651,12 @@ export class MediaService {
     j: MediaJob,
     result: { data: any; binary?: { bytes: Buffer; mime: string } },
   ) {
+    const observation = observeMediaBilling(result.data, j.billing);
+    if (observation) {
+      j.billingObservation = observation;
+      if (observation.source === 'provider-reported') j.actualUsd = observation.usd;
+      this.save(j);
+    }
     const folder = join(this.directory, 'media', j.id);
     await mkdir(folder, { recursive: true });
     // Durable result before downloading; crash recovery never submits a second generation.

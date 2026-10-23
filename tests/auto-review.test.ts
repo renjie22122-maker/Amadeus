@@ -133,7 +133,14 @@ test('only exact built-in queries shortcut review; composed commands and high ri
     complete: async () => {
       calls++;
       return {
-        message: { role: 'assistant', content: '{"decision":"ask","reason":"uncertain"}' },
+        message: {
+          role: 'assistant',
+          content: JSON.stringify({
+            ...JSON.parse(approved()),
+            risk: 'unknown',
+            authorization: 'unknown',
+          }),
+        },
         usage: { input: 1, output: 1, cached: 0, measured: true },
       };
     },
@@ -193,7 +200,7 @@ test('new instructions, configuration or changed action invalidate approval', as
       const result = await reviewer.review(f.run, payload, new AbortController().signal);
       assert.equal(result.decision, 'ask');
       assert.match(result.reason, /changed/);
-      assert.equal(result.policyVersion, '2026-10-04.1');
+      assert.equal(result.policyVersion, '2026-10-23.1');
     } finally {
       f.store.close();
     }
@@ -335,7 +342,7 @@ test('review failure identifies invalid response versus provider error without l
     }));
     const result = await invalid.review(f.run, {}, new AbortController().signal);
     assert.equal(result.failureCode, 'REVIEW_INVALID_RESPONSE');
-    assert.equal(result.usage.input, 100);
+    assert.equal(result.usage.input, 200);
     const failed = new AutoReview(f.store, f.config, () => ({
       complete: async () => {
         throw Error('secret-key-do-not-log');
@@ -428,4 +435,24 @@ test('identical in-flight reviews share inference but never cache completed perm
   await review.review(f.run, { command: 'echo hello' }, signal);
   assert.equal(calls, 2);
   f.store.close();
+});
+
+test('malformed assessment gets one format repair without weakening gates', async () => {
+  const f = await setup();
+  let calls = 0;
+  const review = new AutoReview(f.store, f.config, () => ({
+    complete: async () => ({
+      message: { role: 'assistant', content: ++calls === 1 ? 'bad json' : approved() },
+      usage: { input: 2, output: 3, cached: 0, measured: true },
+    }),
+  }));
+  try {
+    const result = await review.review(f.run, { command: 'inspect' }, new AbortController().signal);
+    assert.equal(result.decision, 'allow');
+    assert.equal(calls, 2);
+    assert.equal(result.formatRepairAttempts, 1);
+    assert.equal(result.usage.input, 4);
+  } finally {
+    f.store.close();
+  }
 });

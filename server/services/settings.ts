@@ -129,6 +129,21 @@ const schema = z.object({
             enabled: z.boolean().default(false),
             defaults: z.record(z.string(), z.unknown()).default({}),
             estimatedUsd: z.number().nonnegative().nullable().default(null),
+            billing: z
+              .object({
+                amountPath: z
+                  .string()
+                  .regex(/^[a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*$/)
+                  .max(200)
+                  .optional(),
+                unitsPath: z
+                  .string()
+                  .regex(/^[a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*$/)
+                  .max(200)
+                  .optional(),
+                usdPerUnit: z.number().nonnegative().optional(),
+              })
+              .optional(),
             capabilities: z
               .object({
                 execution: z

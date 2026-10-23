@@ -501,6 +501,7 @@ export class MemoryLifecycle {
         .filter(
           (m) =>
             m.scope === scope &&
+            !m.conflictReviewRequired &&
             (memoryValid(m) ||
               (m.status === 'candidate' &&
                 !m.active &&
@@ -518,6 +519,9 @@ export class MemoryLifecycle {
           m.entityId || '',
           m.attribute || '',
           m.kind || 'preference',
+          m.stability || '',
+          normalizedMemory(m.conditions || ''),
+          m.stability === 'evolving' ? m.observedAt : null,
         ]);
         groups.set(key, [...(groups.get(key) || []), m]);
       }

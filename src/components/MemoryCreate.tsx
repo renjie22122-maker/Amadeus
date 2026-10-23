@@ -52,6 +52,8 @@ export function MemoryCreate({
             onChange={(e) => setKind(e.target.value as Memory['kind'])}
           >
             <option value="preference">{label('Preference', '偏好')}</option>
+            <option value="fact">{label('Reported fact', '事实／背景')}</option>
+            <option value="goal">{label('Ongoing goal', '持续目标')}</option>
             <option value="decision">{label('Decision', '决定')}</option>
             <option value="episode">{label('Event / temporary state', '事件／临时状态')}</option>
           </select>
@@ -63,7 +65,7 @@ export function MemoryCreate({
             value={reach}
             onChange={(e) => setReach(e.target.value as Memory['recallScope'])}
           >
-            <option value="auto">{label('Automatic by kind', '自动：按记忆类型')}</option>
+            <option value="auto">{label('Automatic assessment', '自动：按内容评估')}</option>
             <option value="conversation">{label('Original conversation only', '仅原对话')}</option>
             <option value="scope">{label('Shared in this storage scope', '本存储范围共享')}</option>
           </select>

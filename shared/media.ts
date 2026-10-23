@@ -20,6 +20,12 @@ export type MediaProtocol =
   | 'assemblyai'
   | 'meshy'
   | 'tripo';
+export interface MediaBilling {
+  /** Explicit provider response paths; never infer currency from an arbitrary cost field. */
+  amountPath?: string;
+  unitsPath?: string;
+  usdPerUnit?: number;
+}
 export interface MediaConnection {
   id: string;
   name: string;
@@ -31,6 +37,7 @@ export interface MediaConnection {
   enabled: boolean;
   defaults: Record<string, unknown>;
   estimatedUsd: number | null;
+  billing?: MediaBilling;
   capabilities?: {
     execution?: { target: string; maxConcurrent: number };
     readAloud?: { protocol: 'wav-ndjson-v1'; target: string };
@@ -68,6 +75,13 @@ export interface MediaJob {
   text?: string;
   estimatedUsd: number | null;
   actualUsd: number | null;
+  billing?: MediaBilling;
+  billingObservation?: {
+    source: 'provider-reported' | 'usage-calculated';
+    usd: number;
+    observedAt: number;
+    units?: number;
+  };
   outputs: {
     id: string;
     mime: string;

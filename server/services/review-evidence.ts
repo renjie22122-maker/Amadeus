@@ -123,3 +123,29 @@ export function commandScopeSignals(command: string) {
     note: 'cwd does not constrain process termination. A process name or --test match is not task ownership. Prefer runtime-owned process IDs and creation identity; never kill all matching host tests.',
   };
 }
+
+/** Relevance selects bounded evidence, never grants permission. */
+export function selectReviewMessages(
+  messages: { id: number; text: string; currentRun?: boolean }[],
+  request: Record<string, unknown>,
+) {
+  const terms = new Set(
+    JSON.stringify(request)
+      .toLowerCase()
+      .match(/[a-z0-9_./\\:-]{3,}|[\u3400-\u9fff]{2,}/g) || [],
+  );
+  const selected = new Map<number, { id: number; text: string; currentRun?: boolean }>();
+  const add = (rows: typeof messages) => rows.forEach((row) => selected.set(row.id, row));
+  add(messages.slice(0, 2));
+  add(messages.slice(-12));
+  add(messages.filter((m) => m.currentRun).slice(0, 2));
+  add(
+    messages
+      .map((m) => ({ m, score: [...terms].filter((t) => m.text.toLowerCase().includes(t)).length }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score || b.m.id - a.m.id)
+      .slice(0, 4)
+      .map((x) => x.m),
+  );
+  return [...selected.values()].sort((a, b) => a.id - b.id).map(({ id, text }) => ({ id, text }));
+}

@@ -1,3 +1,4 @@
+import { prepareFileReview, reviewableFileMutation } from '../services/file-review.js';
 import { restrictedChat } from '../services/chat-access.js';
 import { installChatTools } from './chat-tools.js';
 import { rootRun } from '../services/task-board.js';
@@ -275,11 +276,14 @@ export class ToolRegistry {
         'ISOLATION_CLOSED',
         'This isolated copy is merged or uncertain. Create a new isolated worker or reconcile the interrupted merge before modifying it.',
       );
+    let reviewedFiles: Awaited<ReturnType<typeof prepareFileReview>>;
     if (
       def.effect === 'write' &&
-      ctx.config.get().approveFileWrites &&
+      (ctx.config.get().approveFileWrites ||
+        (ctx.conversation.permission === 'auto' && reviewableFileMutation(name))) &&
       ctx.conversation.permission !== 'trusted'
     ) {
+      reviewedFiles = await prepareFileReview(ctx.files, name, parsed);
       await ctx.inputs.request(
         ctx.run,
         'approval',
@@ -287,7 +291,8 @@ export class ToolRegistry {
           action: 'file-write',
           tool: name,
           path: parsed.path,
-          files: parsed.files,
+          files: reviewedFiles ? undefined : parsed.files,
+          fileChanges: reviewedFiles?.evidence,
           reason: 'Approve this scoped file mutation.',
         },
         ctx.signal,
@@ -329,6 +334,7 @@ export class ToolRegistry {
           def.effect === 'write' ? (parsed.path ? String(parsed.path) : undefined) : undefined,
         )
       : null;
+    await reviewedFiles?.revalidate();
     try {
       if (ctx.callId && (def.atomic || def.coordination)) {
         const receipt = prepareCoordination(
@@ -1200,7 +1206,11 @@ export function tools() {
     schema: z.object({
       content: z.string().min(1).max(4000),
       source: z.string().min(1),
-      kind: z.enum(['preference', 'decision', 'episode', 'experience']).default('preference'),
+      kind: z
+        .enum(['preference', 'fact', 'goal', 'decision', 'episode', 'experience'])
+        .default('preference'),
+      applicability: z.enum(['conversation', 'scope', 'uncertain']).default('uncertain'),
+      stability: z.enum(['stable', 'evolving', 'temporary']).default('evolving'),
       entityId: z.string().optional(),
       attribute: z.string().max(80).optional(),
       value: z.string().max(1200).optional(),
@@ -1225,6 +1235,8 @@ export function tools() {
         sourceConversationId: c.conversation.id,
         sourceEventId: c.store.events(c.conversation.id, 0, 'user.message').at(-1)?.id,
         kind: a.kind,
+        applicability: a.applicability,
+        stability: a.stability,
         entityId: a.entityId,
         attribute: a.attribute,
         value: a.value,

@@ -15,8 +15,7 @@ test('host owns risk/authorization matrix and rejects invalid evidence', () => {
   for (const risk of ['low', 'medium', 'high', 'critical', 'unknown'])
     for (const authorization of ['explicit', 'implicit', 'none', 'unknown']) {
       const allow =
-        (risk === 'low' && ['explicit', 'implicit'].includes(authorization)) ||
-        (risk === 'medium' && authorization === 'explicit');
+        ['low', 'medium'].includes(risk) && ['explicit', 'implicit'].includes(authorization);
       assert.equal(
         decideAssessment({ ...base, risk, authorization }, [0]).decision,
         allow ? 'allow' : 'ask',
