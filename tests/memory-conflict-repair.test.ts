@@ -138,3 +138,44 @@ test('mutually disputed references remain visible without activating either side
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('automatic replacement needs sourced update intent, not simply a newer timestamp', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'memory-update-'));
+  const store = new Store(join(dir, 'db.sqlite'));
+  try {
+    store.put('conversation', { id: 'chat', projectId: null });
+    const a = store.event('chat', null, 'user.message', { content: 'Use light theme.' });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const b = store.event('chat', null, 'user.message', { content: 'Switch my theme to dark.' });
+    const life = new MemoryLifecycle(store);
+    life.create(
+      memory('light', {
+        active: true,
+        automatic: true,
+        source: 'chat:chat#event:' + a.id,
+        sourceConversationId: 'chat',
+        sourceEventId: a.id,
+        evidence: [{ conversationId: 'chat', eventId: a.id, quote: 'Use light theme.' }],
+      }),
+    );
+    const next = life.create(
+      memory('dark', {
+        automatic: true,
+        source: 'chat:chat#event:' + b.id,
+        sourceConversationId: 'chat',
+        sourceEventId: b.id,
+        evidence: [{ conversationId: 'chat', eventId: b.id, quote: 'Switch my theme to dark.' }],
+        conflictsWith: ['light'],
+      }),
+    );
+    manageAutomaticMemory(store, next);
+    assert.equal(store.get<Memory>('memory', 'dark').active, false);
+    const assessed = life.update('dark', { revisionIntent: 'replace' });
+    manageAutomaticMemory(store, assessed);
+    assert.equal(store.get<Memory>('memory', 'dark').active, true);
+    assert.equal(store.get<Memory>('memory', 'light').status, 'superseded');
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

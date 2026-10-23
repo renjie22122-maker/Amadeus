@@ -1326,6 +1326,7 @@ export class ChatConnections {
           connectionId: c.id,
           transport: c.transport,
           senderId: next.sender_id || c.senderId,
+          peerType: c.peerType || 'private',
           memoryMessages: burst
             .map((row) => row.memory_text)
             .filter((text) => typeof text === 'string'),

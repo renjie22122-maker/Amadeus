@@ -1,3 +1,4 @@
+import { sharedChatMemorySupported } from './chat-memory-support.js';
 import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { memoryPartition, memoryConversation } from '../../shared/memory-scope.js';
 import { createHash } from 'node:crypto';
@@ -79,6 +80,7 @@ export class MemoryLifecycle {
     return after;
   }
   evidenceValid(m: Memory) {
+    if (!sharedChatMemorySupported(this.store, m)) return false;
     const sourceId = m.sourceConversationId || /^chat:(.+)#event:\d+$/.exec(m.source)?.[1];
     const source = sourceId ? this.store.maybe<any>('conversation', sourceId) : undefined;
     if (

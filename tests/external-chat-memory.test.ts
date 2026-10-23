@@ -200,3 +200,72 @@ test('existing connection migration preserves grants, paused state and model des
   new ChatConnections(store, runtime, dir);
   assert.equal(store.get<any>('conversation', 'bot').automaticMemory, false);
 });
+
+test('shared chat settings require attributed support and remain separate from participant facts', async (t) => {
+  const { store } = fixture(t);
+  store.put('conversation', { id: 'group', projectId: null, remoteMemoryOnly: true });
+  const source = (run: string, sender: string, text: string, extra: any = {}) => {
+    const e = store.event('group', run, 'user.message', { content: text });
+    store.event('group', run, 'chat.origin', {
+      senderId: sender,
+      peerType: 'group',
+      memoryMessages: [text],
+      ...extra,
+    });
+    return { conversationId: 'group', eventId: e.id, quote: text };
+  };
+  const a = source('a', '111', 'Let us use a playful style.'),
+    b = source('b', '222', 'I agree to a playful style.');
+  const life = new MemoryLifecycle(store);
+  const m = life.create({
+    id: 'style',
+    scope: 'chat:group',
+    source: 'chat:group#event:' + a.eventId,
+    sourceConversationId: 'group',
+    sourceEventId: a.eventId,
+    chatSubject: 'assistant',
+    basis: 'proposal',
+    content: 'Use a playful style in casual chat, adapt for serious tasks.',
+    conditions: 'Casual conversation only.',
+    stability: 'evolving',
+    active: true,
+    revision: 1,
+    createdAt: Date.now(),
+    expiresAt: null,
+    evidence: [a],
+  } as any);
+  assert.equal(m.active, false);
+  assert.throws(() => life.update('style', { active: true }), /evidence/i);
+  const fake = { ...b, quote: 'unsupported invented consensus' };
+  assert.equal(life.evidenceValid({ ...m, basis: 'direct-request', evidence: [fake] }), false);
+  const accepted = life.update(
+    'style',
+    { basis: 'direct-request', evidence: [a], active: true },
+    m.revision,
+  );
+  assert.equal(accepted.active, true);
+  const index = new MemoryIndex(store, { enabled: () => false, fingerprint: () => 'test' } as any);
+  const recalled = await index.recall(
+    'hello',
+    null,
+    new AbortController().signal,
+    true,
+    Date.now(),
+    'group',
+  );
+  assert.deepEqual(
+    recalled.memories.map((m) => m.id),
+    ['style'],
+  );
+  assert.equal(recalled.memories[0].chatSubject, 'assistant');
+  assert.equal(
+    (await index.recall('hello', null, new AbortController().signal, true, Date.now(), 'other'))
+      .memories.length,
+    0,
+  );
+  // A single ordinary participant can establish an interaction preference.
+  assert.equal(life.evidenceValid({ ...accepted, evidence: [a] }), true);
+  assert.equal(life.evidenceValid({ ...accepted, scope: 'chat:other', evidence: [a] }), false);
+  const privatePeer = source('private', '444', 'Use concise replies.', { peerType: 'private' });
+  assert.equal(life.evidenceValid({ ...accepted, evidence: [privatePeer] }), true);
+});

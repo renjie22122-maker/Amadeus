@@ -15,7 +15,12 @@ export function manageAutomaticMemory(store: Store, memory: Memory) {
       (m): m is Memory =>
         !!m && m.scope === memory.scope && memoryPartition(m) === memoryPartition(memory),
     );
-  if (conflicts.length && memory.attribute && memory.sourceEventId != null) {
+  if (
+    conflicts.length &&
+    memory.revisionIntent === 'replace' &&
+    memory.attribute &&
+    memory.sourceEventId != null
+  ) {
     const source = store
       .events(memory.sourceConversationId!)
       .find((e) => e.id === memory.sourceEventId);

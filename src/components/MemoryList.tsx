@@ -362,6 +362,15 @@ export function MemoryList({
                 ? label('Stable / no decay', '稳定／不衰减')
                 : label('Decay: ', '衰减：') + decayNames[memoryDecayPolicy(m)]}
             </small>
+            {m.chatSubject && (
+              <small>
+                {m.chatSubject === 'participant'
+                  ? label('Participant context', '成员记忆')
+                  : m.chatSubject === 'conversation'
+                    ? label('Shared chat context', '聊天共同记忆')
+                    : label('Assistant interaction context', 'Bot 互动设定')}
+              </small>
+            )}
             {m.automatic && <small>{label('Automatic', '自动管理')}</small>}
           </div>
           <small className="muted">

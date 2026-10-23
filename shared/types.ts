@@ -275,6 +275,10 @@ export interface Skill {
   createdAt: number;
 }
 export interface Memory {
+  basis?: 'self-report' | 'direct-request' | 'agreement' | 'observation' | 'proposal';
+  revisionIntent?: 'replace' | 'coexist' | 'uncertain';
+  /** Subject within an isolated external chat; not a wider storage scope. */
+  chatSubject?: 'participant' | 'conversation' | 'assistant';
   candidateReview?: { status: 'enabled' | 'needs_review' | 'blocked'; reason: string; at: number };
   decayPolicy?: 'auto' | 'stable' | 'time' | 'turns' | 'time-and-turns';
   halfLifeDays?: number;

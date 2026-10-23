@@ -39,7 +39,10 @@ export function recallMemories(
   const ranked = eligible
     .map((m) => {
       const tokens = terms(m.content + ' ' + (m.conditions || ''));
-      let relevance = 3 * (semantic.get(m.id) || 0);
+      // Shared interaction context is useful even for short greetings. It remains
+      // fallible, conditional data; cap it below and never import another chat.
+      let relevance =
+        (isolatedScope && m.chatSubject === 'assistant' ? 1 : 0) + 3 * (semantic.get(m.id) || 0);
       for (const term of queryTerms)
         if (tokens.has(term))
           relevance += Math.log(1 + eligible.length / (frequency.get(term) || 1));
@@ -75,10 +78,13 @@ export function recallMemories(
   });
   const seen = new Set<string>(),
     selected = [];
-  let size = 0;
+  let size = 0,
+    interactionCount = 0;
   for (const m of applicable) {
+    if (m.chatSubject === 'assistant' && interactionCount >= 4) continue;
     const key = m.content.trim().toLowerCase().replace(/\s+/g, ' ');
     if (seen.has(key) || size + m.content.length > 8000) continue;
+    if (m.chatSubject === 'assistant') interactionCount++;
     seen.add(key);
     size += m.content.length;
     selected.push({
@@ -99,6 +105,7 @@ export function recallMemories(
       validFrom: m.validFrom,
       validUntil: m.validUntil,
       entityId: m.entityId,
+      chatSubject: m.chatSubject,
       attribute: m.attribute,
       value: m.value,
       evidence: m.evidence,
