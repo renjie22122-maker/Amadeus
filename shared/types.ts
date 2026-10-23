@@ -275,6 +275,7 @@ export interface Memory {
   halfLifeDays?: number;
   halfLifeTurns?: number;
   recallScope?: 'auto' | 'conversation' | 'scope';
+  applicability?: 'conversation' | 'scope' | 'uncertain';
   topic?: string;
   automatic?: boolean;
   kind?: 'preference' | 'decision' | 'episode' | 'experience';
@@ -286,6 +287,7 @@ export interface Memory {
   sourceRefs?: string[];
   duplicateOf?: string;
   conflictsWith?: string[];
+  conflictReviewRequired?: boolean;
   entityId?: string;
   attribute?: string;
   factCardinality?: 'single' | 'multiple';

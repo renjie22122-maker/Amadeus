@@ -1,6 +1,6 @@
 import { submitMemoryBatch } from '../memory-batch';
 import { memoryDecayPolicy } from '../../shared/memory-decay';
-import { memoryReach, memoryConversation } from '../../shared/memory-scope';
+import { memoryReach, memoryConversation, memoryReachReason } from '../../shared/memory-scope';
 import { useMemo, useState } from 'react';
 import type { Memory } from '../../shared/types';
 import { api } from '../api';
@@ -358,14 +358,52 @@ export function MemoryList({
             </small>
             {m.automatic && <small>{label('Automatic', '自动管理')}</small>}
           </div>
+          <small className="muted">
+            {
+              {
+                manual: label('Reach explicitly selected', '范围由手动设置决定'),
+                local: label(
+                  'Local applicability or memory-type rule',
+                  '按适用范围或记忆类型限于原对话',
+                ),
+                uncertain: label(
+                  'Broader applicability unclear; kept local',
+                  '跨对话适用性不明确，暂限原对话',
+                ),
+                shared: label(
+                  'Source reviewed for broader applicability',
+                  '按原文评估为跨对话适用',
+                ),
+                legacy: label(
+                  'Legacy type-based default; applicability not separately reviewed',
+                  '沿用原有类型默认范围，尚未单独复核适用性',
+                ),
+              }[memoryReachReason(m)]
+            }
+          </small>
           <p>{m.content}</p>
           <p className="muted">
             {label('Original conversation / source: ', '原对话／来源：')}
             {sourceName(m)}
           </p>
+          {m.conflictReviewRequired && (
+            <p className="muted">
+              {label(
+                'Conflict record needs human review. Recall remains disabled; this is not proof of a contradiction.',
+                '冲突记录待人工复核，保持不参与召回；不代表已确认存在矛盾。',
+              )}
+            </p>
+          )}
           {status(m) === 'disputed' && (
             <div className="muted">
-              <strong>{label('Conflicting with:', '与以下记忆冲突：')}</strong>
+              <strong>
+                {m.conflictsWith?.length
+                  ? label('Conflicting with:', '与以下记忆冲突：')
+                  : label(
+                      'Conflict counterpart not recorded; review required.',
+                      '未记录冲突对象，需要复核。',
+                    )}
+              </strong>
               {(m.conflictsWith || []).map((id) => {
                 const other = scoped.find((x) => x.id === id);
                 return (

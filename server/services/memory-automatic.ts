@@ -6,6 +6,7 @@ import { KnowledgeGraph } from './knowledge-graph.js';
 
 // Deterministic maintenance: inferred semantic equivalence never authorizes replacement.
 export function manageAutomaticMemory(store: Store, memory: Memory) {
+  if (memory.conflictReviewRequired) return;
   const lifecycle = new MemoryLifecycle(store);
   let current = memory;
   const conflicts = (memory.conflictsWith || [])
@@ -66,7 +67,10 @@ export function reconsiderMemoryConflicts(store: Store, scope: string) {
   let resolved = 0;
   for (const m of store
     .list<Memory>('memory')
-    .filter((m) => m.scope === scope && m.automatic && m.status === 'disputed')) {
+    .filter(
+      (m) =>
+        m.scope === scope && m.automatic && !m.conflictReviewRequired && m.status === 'disputed',
+    )) {
     const source =
       m.sourceConversationId &&
       store.events(m.sourceConversationId).find((e) => e.id === m.sourceEventId);

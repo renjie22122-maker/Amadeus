@@ -105,3 +105,17 @@ test('sharing an active local memory cannot bypass a conflicting shared fact', a
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('applicability narrows automatic preferences without overriding explicit user reach', () => {
+  const local = memory('temporary', { applicability: 'conversation' });
+  assert.equal(memoryReach(local), 'conversation');
+  assert.equal(memoryAccessible(local, 'other'), false);
+  assert.equal(memoryReach({ ...local, applicability: 'uncertain' }), 'conversation');
+  assert.equal(memoryReach({ ...local, applicability: 'scope' }), 'scope');
+  assert.equal(memoryReach({ ...local, recallScope: 'scope' }), 'scope');
+  assert.equal(
+    memoryReach({ ...local, applicability: 'scope', recallScope: 'conversation' }),
+    'conversation',
+  );
+  assert.equal(memoryReach(memory('legacy')), 'scope');
+});

@@ -1,3 +1,4 @@
+import { MemoryLifecycle } from '../services/memory-lifecycle.js';
 import { MemoryLearning } from '../services/memory-learning.js';
 import { KnowledgeMaintenance } from '../services/knowledge-maintenance.js';
 import { ScheduledWorkService } from '../services/scheduled-work.js';
@@ -11,6 +12,7 @@ export function startMaintenanceServices(
   runtime: Runtime,
   directory: string,
 ) {
+  new MemoryLifecycle(store).reconcileConflicts();
   const memoryLearning = new MemoryLearning(store, config);
   memoryLearning.start();
   const knowledgeEmbedding = new Embeddings(() => config.get().embedding);

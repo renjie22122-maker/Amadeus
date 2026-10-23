@@ -15,6 +15,7 @@ export const sourceKey = (scope: string, chat: string, event: number) =>
 export function memoryValid(m: Memory, at = Date.now()) {
   return (
     (m.active || (m.status === 'superseded' && at < (m.validUntil ?? 0))) &&
+    !m.conflictReviewRequired &&
     m.status !== 'disputed' &&
     m.status !== 'forgotten' &&
     (m.validFrom ?? m.createdAt) <= at &&
@@ -110,18 +111,7 @@ export class MemoryLifecycle {
       'This content was forgotten.',
     );
     if (m.entityId) this.entity(m.scope, m.entityId);
-    const conflicts = this.conflicts(m);
-    for (const key of m.conflictsWith || []) {
-      const other = this.store.maybe<Memory>('memory', key);
-      if (
-        other &&
-        other.scope === m.scope &&
-        memoryPartition(other) === memoryPartition(m) &&
-        memoryValid(other) &&
-        !conflicts.some((x) => x.id === key)
-      )
-        conflicts.push(other);
-    }
+    const conflicts = this.conflictReferences(m);
     const safe = m.active && !conflicts.length && this.evidenceValid(m);
     return this.record(
       null,
@@ -192,6 +182,74 @@ export class MemoryLifecycle {
           normalizedMemory(x.value || x.content) !== normalizedMemory(m.value || m.content),
       );
   }
+  private conflictReferences(m: Memory) {
+    const conflicts = this.conflicts(m);
+    const at = Date.now();
+    for (const key of m.conflictsWith || []) {
+      const other = this.store.maybe<Memory>('memory', key);
+      if (
+        other &&
+        other.id !== m.id &&
+        other.scope === m.scope &&
+        memoryPartition(other) === memoryPartition(m) &&
+        (memoryValid(other, at) ||
+          (other.status === 'disputed' &&
+            (other.validFrom ?? other.createdAt) <= at &&
+            (other.validUntil == null || other.validUntil > at) &&
+            (!other.expiresAt || other.expiresAt > at))) &&
+        !conflicts.some((x) => x.id === key)
+      )
+        conflicts.push(other);
+    }
+    return conflicts;
+  }
+  /** Repair inconsistent conflict metadata without granting recall or model review permission. */
+  reconcileConflicts() {
+    const report = { checked: 0, linked: 0, needsReview: 0 };
+    const at = Date.now();
+    for (const m of this.store.list<Memory>('memory')) {
+      if (
+        m.status !== 'disputed' ||
+        (m.validUntil != null && m.validUntil <= at) ||
+        (m.expiresAt != null && m.expiresAt <= at)
+      )
+        continue;
+      report.checked++;
+      const ids = this.conflictReferences(m)
+        .map((x) => x.id)
+        .sort();
+      if (
+        ids.length &&
+        !m.active &&
+        JSON.stringify(ids) === JSON.stringify([...(m.conflictsWith || [])].sort())
+      )
+        continue;
+      this.store.transaction(() =>
+        this.record(
+          m,
+          {
+            ...m,
+            active: false,
+            status: ids.length ? 'disputed' : 'candidate',
+            conflictsWith: ids,
+            conflictReviewRequired: true,
+            revision: m.revision + 1,
+            candidateReview: {
+              status: 'needs_review',
+              reason: ids.length
+                ? 'Conflict references repaired; human review required.'
+                : 'No current conflict counterpart could be established; human review required.',
+              at,
+            },
+          },
+          'conflict metadata reconciled; recall remains disabled',
+        ),
+      );
+      if (ids.length) report.linked++;
+      else report.needsReview++;
+    }
+    return report;
+  }
   update(key: string, patch: Partial<Memory>, revision?: number) {
     const old = this.store.get<Memory>('memory', key);
     assert(
@@ -206,18 +264,8 @@ export class MemoryLifecycle {
       'MEMORY_TIME',
       'End must be after start.',
     );
-    const conflicts = this.conflicts(next);
-    for (const key of next.conflictsWith || []) {
-      const other = this.store.maybe<Memory>('memory', key);
-      if (
-        other &&
-        other.scope === next.scope &&
-        memoryPartition(other) === memoryPartition(next) &&
-        memoryValid(other) &&
-        !conflicts.some((x) => x.id === key)
-      )
-        conflicts.push(other);
-    }
+    const conflicts = this.conflictReferences(next);
+    next.conflictsWith = conflicts.map((m) => m.id);
 
     if (next.active) {
       assert(
@@ -238,6 +286,7 @@ export class MemoryLifecycle {
         : conflicts.length
           ? 'disputed'
           : 'candidate';
+    if (patch.active === true) next.conflictReviewRequired = false;
     return this.record(old, next, 'edited');
   }
   resolve(
@@ -249,6 +298,11 @@ export class MemoryLifecycle {
   ) {
     return this.store.transaction(() => {
       const winner = this.store.get<Memory>('memory', winnerId);
+      assert(
+        !automatic || !winner.conflictReviewRequired,
+        'MEMORY_REVIEW',
+        'Human review is required.',
+      );
       assert(winner.revision === revision, 'MEMORY_CHANGED', 'Memory changed. Refresh.');
       assert(at > 0 && at <= Date.now(), 'MEMORY_TIME', 'Choose a past or current effective time.');
       assert(this.evidenceValid(winner), 'MEMORY_EVIDENCE', 'Experience evidence is missing.');
@@ -281,6 +335,7 @@ export class MemoryLifecycle {
           ...winner,
           active: true,
           status: 'active',
+          conflictReviewRequired: false,
           validFrom: at,
           supersedes: loserIds,
           conflictsWith: [],

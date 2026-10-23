@@ -83,6 +83,7 @@ test('idle opted-in chats extract with provenance, consolidate duplicates and do
     const memories = f.store.list<any>('memory');
     assert.equal(memories.length, 1);
     assert.equal(memories[0].active, true);
+    assert.equal(memories[0].applicability, 'uncertain');
     assert.equal(memories[0].sourceEventId, f.eid);
     assert.equal(f.store.list<any>('memory-learning')[0].status, 'completed');
   } finally {
@@ -252,7 +253,8 @@ test('automatic mode quarantines ambiguous conflicts without activating competin
     f.config,
     () =>
       ({
-        complete: async () => response([{ ...f.item, conflictsWith: ['old'] }]),
+        complete: async () =>
+          response([{ ...f.item, applicability: 'scope', conflictsWith: ['old'] }]),
       }) as any,
   );
   await learning.tick();
