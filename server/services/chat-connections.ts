@@ -1,3 +1,4 @@
+import { chatApprovalContainsCredentials } from './chat-approval-privacy.js';
 import { MemoryLifecycle } from './memory-lifecycle.js';
 import { remoteConversationStyle } from './chat-style.js';
 import { installChatMediaGrants, mediaFingerprint } from './chat-media-grant.js';
@@ -829,9 +830,7 @@ export class ChatConnections {
       const localOnly =
         !c.remoteApprovals ||
         payload.length > 6500 ||
-        /(?:api[_-]?key|access[_-]?token|authorization|password|secret|bearer\s|BEGIN .*PRIVATE KEY)/i.test(
-          payload,
-        ) ||
+        chatApprovalContainsCredentials(q.payload) ||
         q.payload.action === 'resolve-effect';
       const code = randomBytes(12).toString('hex');
       this.store.db
@@ -956,10 +955,7 @@ export class ChatConnections {
     );
     const payload = JSON.stringify(q.payload, null, 2);
     assert(
-      payload.length <= 6500 &&
-        !/(?:api[_-]?key|access[_-]?token|authorization|password|secret|bearer\s|BEGIN .*PRIVATE KEY)/i.test(
-          payload,
-        ),
+      payload.length <= 6500 && !chatApprovalContainsCredentials(q.payload),
       'CHAT_APPROVAL',
       'Local review required.',
     );

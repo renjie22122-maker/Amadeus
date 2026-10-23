@@ -351,7 +351,11 @@ test('remote approvals are bound, single-use and invalidated by changed payloads
     kind: 'approval',
     status: 'pending',
     createdAt: Date.now(),
-    payload: { action: 'write_file', path: 'report.txt' },
+    payload: {
+      action: 'write_file',
+      path: 'report.txt',
+      serviceContext: { localityIsAuthorization: false },
+    },
   };
   store.put('input', q);
   channel.tick(Date.now() + 20000);
