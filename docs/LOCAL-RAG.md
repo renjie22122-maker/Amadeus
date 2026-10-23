@@ -175,3 +175,5 @@ Configure automatic scanning from 30 to 86400 seconds; scheduling can add one 30
 Document browsing provides name/source/ID search, current/historical/missing-vector/identical-text filters, sorting and 25-item pages. Preview loads five chunks at a time without vectors. Identical extracted-text hashes identify review candidates, never automatic merges. Removing library entries does not remove source files; maintenance may import them again.
 
 Revision editing offers opt-in trailing-space, repeated-blank-line and control-character cleanup of pasted revision text. Compare before/after, apply to draft, optionally undo, then explicitly save a new version. Trailing spaces may carry Markdown semantics. No automatic OCR correction, header removal, table merging, repeated-paragraph removal or reconstruction from overlapping chunks. Historical versions and citations remain.
+
+Document browsing uses separate cards with only name, format, character count, version and index state visible by default. Expand one document at a time for its source, preview and maintenance actions.

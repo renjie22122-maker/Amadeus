@@ -1,0 +1,135 @@
+.document-browser-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.document-browser-toolbar input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.document-browser-toolbar select {
+  width: auto;
+  max-width: 100%;
+}
+.document-browser-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 18px 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.document-browser-pagination > div {
+  display: flex;
+  gap: 8px;
+}
+.document-browser-cards {
+  display: grid;
+  gap: 12px;
+}
+.document-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.document-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+}
+.document-file-type {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.document-card-title {
+  flex: 1;
+  min-width: 0;
+}
+.document-card-title h4 {
+  margin: 0;
+  line-height: 1.5;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.document-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.document-review-tag {
+  font-weight: 600;
+}
+.document-card-toggle {
+  flex-shrink: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.document-card-detail {
+  padding: 4px 18px 18px;
+  border-top: 1px solid var(--border);
+}
+.document-card-detail dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px 16px;
+  font-size: 12px;
+  margin: 14px 0;
+}
+.document-card-detail dt {
+  color: var(--muted);
+}
+.document-card-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.document-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+.document-card-detail details {
+  margin: 14px 0;
+}
+.document-card-detail pre {
+  font-size: 13px;
+}
+@media (max-width: 650px) {
+  .document-card-heading {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 10px;
+    padding: 14px;
+  }
+  .document-file-type {
+    width: 36px;
+    height: 40px;
+  }
+  .document-card-toggle {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .document-browser-toolbar select {
+    flex: 1 1 120px;
+  }
+  .document-card-detail {
+    padding: 4px 14px 14px;
+  }
+}
