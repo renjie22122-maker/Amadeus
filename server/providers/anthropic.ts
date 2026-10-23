@@ -65,6 +65,7 @@ export class AnthropicProvider implements ModelProvider {
       anthropicPayload(input),
       input.signal,
       { 'x-api-key': p.apiKey, 'anthropic-version': '2023-06-01' },
+      input.retryTransientConnect,
     );
     const blocks = new Map<number, any>();
     let content = '',

@@ -78,3 +78,38 @@ test('file preview never writes and invalidates changed bytes before execution',
     }),
   );
 });
+
+test('distant changes retain every changed region without carrying unchanged middle', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'review-diff-'));
+  const file = join(root, 'source.txt');
+  const middle = 'unchanged line\n'.repeat(3000);
+  const before = 'old start\n' + middle + 'old end\n';
+  await writeFile(file, before);
+  const review = await prepareFileReview(new FileScope([root]), 'write_file', {
+    path: file,
+    content: 'new start\n' + middle + 'new end\n',
+  });
+  const evidence = review!.evidence[0];
+  assert.equal(evidence.truncated, false);
+  assert.equal(evidence.completeChangedRegions, true);
+  assert.match(evidence.before, /old start/);
+  assert.match(evidence.before, /old end/);
+  assert.match(evidence.after, /new start/);
+  assert.match(evidence.after, /new end/);
+  assert(evidence.after.length < 1000);
+  assert.equal(await readFile(file, 'utf8'), before);
+});
+
+test('oversized actual changes request smaller edits before any mutation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'review-limit-'));
+  const file = join(root, 'source.txt');
+  await writeFile(file, 'original');
+  await assert.rejects(
+    prepareFileReview(new FileScope([root]), 'write_file', {
+      path: file,
+      content: 'changed\n'.repeat(4000),
+    }),
+    (e: any) => e.code === 'FILE_REVIEW_TOO_LARGE',
+  );
+  assert.equal(await readFile(file, 'utf8'), 'original');
+});

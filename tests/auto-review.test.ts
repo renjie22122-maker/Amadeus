@@ -205,7 +205,7 @@ test('new instructions, configuration or changed action invalidate approval', as
       const result = await reviewer.review(f.run, payload, new AbortController().signal);
       assert.equal(result.decision, 'ask');
       assert.match(result.reason, /changed/);
-      assert.equal(result.policyVersion, '2026-10-23.3');
+      assert.equal(result.policyVersion, '2026-10-23.4');
     } finally {
       f.store.close();
     }
@@ -350,11 +350,15 @@ test('review failure identifies invalid response versus provider error without l
     assert.equal(result.usage.input, 200);
     const failed = new AutoReview(f.store, f.config, () => ({
       complete: async () => {
-        throw Error('secret-key-do-not-log');
+        throw new TypeError('fetch failed', {
+          cause: Object.assign(new Error('secret-key-do-not-log'), { code: 'ECONNRESET' }),
+        });
       },
     }));
     const failure = await failed.review(f.run, {}, new AbortController().signal);
     assert.equal(failure.failureCode, 'REVIEW_PROVIDER_FAILED');
+    assert.equal(failure.providerFailure.transportCode, 'ECONNRESET');
+    assert.equal(failure.providerFailure.category, 'network');
     assert.ok(!JSON.stringify(failure).includes('secret-key'));
   } finally {
     f.store.close();
@@ -582,5 +586,45 @@ test('remediation is never an authorization and allows high-risk inspection but 
     const review = decideAssessment({ ...base, ...change }, [0]);
     assert.equal(review.decision, 'ask');
     assert.equal(review.replan, undefined);
+  }
+});
+
+test('format repair receives precise schema issue but never fabricates missing safety fields', async () => {
+  const f = await setup();
+  let calls = 0;
+  try {
+    const reviewer = new AutoReview(f.store, f.config, () => ({
+      complete: async (req) => {
+        calls++;
+        if (calls === 2) {
+          assert.match(req.messages[0].content, /Required JSON Schema/);
+          assert.match(req.messages[0].content, /Validation issues/);
+          assert.match(req.messages[0].content, /effectsKnown/);
+        }
+        return {
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({
+              risk: 'low',
+              authorization: 'explicit',
+              evidence: [0],
+              bounded: true,
+              sensitiveData: false,
+              securityChange: false,
+              reason: 'in scope',
+            }),
+          },
+          usage: { input: 20, output: 20, cached: 0, measured: true },
+        };
+      },
+    }));
+    const result = await reviewer.review(f.run, {}, new AbortController().signal);
+    assert.equal(calls, 2);
+    assert.equal(result.decision, 'ask');
+    assert.equal(result.failureCode, 'REVIEW_INVALID_RESPONSE');
+    assert.equal(result.validationIssue.category, 'schema');
+    assert.equal(result.repairValidationIssue.category, 'schema');
+  } finally {
+    f.store.close();
   }
 });

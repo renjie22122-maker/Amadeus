@@ -75,6 +75,8 @@ export class ResponsesProvider implements ModelProvider {
       endpoint(input.profile, '/responses'),
       responsesPayload(input),
       input.signal,
+      {},
+      input.retryTransientConnect,
     );
     let content = '',
       final: any;

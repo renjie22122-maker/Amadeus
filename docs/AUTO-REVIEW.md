@@ -4,7 +4,7 @@
 
 Reviewed: 2026-10-23.
 
-Policy version in code: `2026-10-23.3`. This is Amadeus's implementation, not a claim to reproduce private Codex internals.
+Policy version in code: `2026-10-23.4`. This is Amadeus's implementation, not a claim to reproduce private Codex internals.
 
 ## Decision path
 
@@ -57,3 +57,11 @@ Public design references: [OpenAI Auto-review research](https://alignment.openai
 A heuristic high-risk label now reaches independent assessment rather than immediately escalating. High risk requires explicit consent for the target and consequences, bounded known impact and observed reversible/recoverable mechanisms. Missing evidence, irreversible/critical effects, sensitive transfers, security changes and forced-human rules remain restricted. A promised backup is not a verified backup; reverting files does not undo publication. Context/source revalidation still applies. See [OpenAI auto-review](https://alignment.openai.com/auto-review/).
 
 The run footer reports parent/child input, output, recorded cached-input ratio and estimated USD. Missing rates/usage are not free; historical unknown costs are not backfilled. Manual prices override the dated official-origin/model catalog. The DeepSeek snapshot verified 2026-10-23 expires 2026-11-23 UTC. A generic schedule resolver uses request-time UTC windows, weekday rules and a verified local-date holiday calendar; the footer lists all rate bands used across calls. Estimates are not bills. Per-call ledgers retain applied rates and provenance. Third-party endpoints never inherit official prices. [Pricing source](https://api-docs.deepseek.com/quick_start/pricing/).
+
+## Complete change evidence and transient connections
+
+File review preserves all changed lines, compressing only unchanged context between distant edits. Hash revalidation remains mandatory. Changes exceeding the 24,000-character evidence budget return `FILE_REVIEW_TOO_LARGE` before mutation so the executor can split them into independently reviewed edits; omitted changes never receive approval. Dependency excerpts remain separately bounded.
+
+Review requests opt into pre-connection recovery; normal chat retains its own recovery loop without nested retries. Known transient failures before response headers (connection reset/refused, temporary DNS or unreachable network) share the existing HTTP retry budget: at most three attempts within the original deadline. Authentication, certificate errors and partial response streams are not replayed. Reviewer failure diagnostics retain safe error codes without response bodies. Exhausted retries do not grant permission.
+
+Invalid assessment format receives one bounded repair with the exact JSON Schema and safe field-level diagnostics. Missing safety facts are never filled automatically; a valid negative assessment is not retried. The audit distinguishes JSON syntax from schema errors without retaining raw model output.

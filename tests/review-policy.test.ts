@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boundedReview, decideAssessment } from '../server/services/review-policy.js';
+import {
+  boundedReview,
+  decideAssessment,
+  assessmentSchema,
+  reviewValidationIssue,
+} from '../server/services/review-policy.js';
 const base = {
   risk: 'low',
   authorization: 'explicit',
@@ -76,4 +81,21 @@ test('high impact needs explicit consent and evidenced recovery, without bypassi
     { recovery: { ...high.recovery, kind: 'irreversible' } },
   ])
     assert.equal(decideAssessment({ ...high, ...override }, [0]).decision, 'ask');
+});
+
+test('review schema diagnostics identify missing facts without disclosing model output', () => {
+  const result = assessmentSchema.safeParse({
+    ...base,
+    effectsKnown: 'secret-value',
+    secret: 'private',
+  });
+  assert.equal(result.success, false);
+  if (!result.success) {
+    const issue = reviewValidationIssue(result.error);
+    assert.equal(issue.category, 'schema');
+    assert.match(JSON.stringify(issue), /effectsKnown/);
+    assert(!JSON.stringify(issue).includes('secret'));
+    assert(!JSON.stringify(issue).includes('private'));
+  }
+  assert.equal(reviewValidationIssue(new SyntaxError('private JSON text')).category, 'json');
 });

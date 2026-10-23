@@ -1,3 +1,4 @@
+import { providerFailureDiagnostic } from '../providers/failure.js';
 import { modelPricing } from '../../shared/model-pricing.js';
 import { reviewContent, reviewHash, ReviewFlights } from './review-cache.js';
 import type { FileScope } from './paths.js';
@@ -17,6 +18,8 @@ import {
   decideAssessment,
   REVIEW_POLICY_VERSION,
   REVIEW_PROMPT,
+  REVIEW_RESPONSE_SCHEMA,
+  reviewValidationIssue,
 } from './review-policy.js';
 import type { Conversation, Run } from '../../shared/types.js';
 import type { ModelProvider } from '../providers/protocol.js';
@@ -187,6 +190,7 @@ export class AutoReview {
                   this.provider(profile).complete({
                     profile,
                     tools: [],
+                    retryTransientConnect: true,
                     signal: activeSignal,
                     onText: () => {},
                     messages: [
@@ -240,7 +244,8 @@ export class AutoReview {
         let parsed;
         try {
           parsed = parse(result.message.content);
-        } catch {
+        } catch (error) {
+          record.validationIssue = reviewValidationIssue(error);
           // Repair invalid formatting once; never retry a valid negative assessment.
           record.formatRepairAttempts = 1;
           const repairFlight = this.flights.get(
@@ -257,6 +262,7 @@ export class AutoReview {
                     this.provider(profile).complete({
                       profile,
                       tools: [],
+                      retryTransientConnect: true,
                       signal: activeSignal,
                       onText: () => {},
                       messages: [
@@ -264,7 +270,11 @@ export class AutoReview {
                           role: 'system',
                           content:
                             REVIEW_PROMPT +
-                            '\nYour previous response did not validate. Return only the exact JSON assessment schema with enum strings and numeric humanMessages IDs. Do not return decision/allow fields. Reassess the same evidence; uncertainty must remain uncertainty.',
+                            '\nYour previous response did not validate. Return only the exact JSON assessment schema with enum strings and numeric humanMessages IDs. Do not return decision/allow fields. Reassess the same evidence; uncertainty must remain uncertainty.' +
+                            '\nValidation issues (no source content): ' +
+                            JSON.stringify(record.validationIssue) +
+                            '\nRequired JSON Schema: ' +
+                            REVIEW_RESPONSE_SCHEMA,
                         },
                         { role: 'user', content },
                       ],
@@ -301,7 +311,12 @@ export class AutoReview {
             else record.estimatedUsd = null;
           }
           if (repaired.message.calls?.length) throw Error('Reviewer may not call tools.');
-          parsed = parse(repaired.message.content);
+          try {
+            parsed = parse(repaired.message.content);
+          } catch (error) {
+            record.repairValidationIssue = reviewValidationIssue(error);
+            throw error;
+          }
         }
         Object.assign(record, parsed);
         if (
@@ -326,6 +341,8 @@ export class AutoReview {
               : 'REVIEW_PROVIDER_FAILED';
       record.failureCode = code;
       record.failurePhase = phase;
+      if (phase === 'provider' || phase === 'shared-review')
+        record.providerFailure = providerFailureDiagnostic(error);
       // Never persist arbitrary provider error bodies: they may contain credentials/source.
       record.reason = (
         {

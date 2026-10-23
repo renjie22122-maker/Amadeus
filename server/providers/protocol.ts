@@ -1,4 +1,4 @@
-import { normalizeProviderFailure } from './failure.js';
+import { normalizeProviderFailure, transportFailure } from './failure.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { ModelMessage, Profile, ToolCall, ToolSpec, Usage } from '../../shared/types.js';
 import { AppError, assert } from '../core/errors.js';
@@ -9,6 +9,8 @@ export interface ModelRequest {
   signal: AbortSignal;
   onText: (text: string) => void;
   onThinking?: () => void;
+  /** Opt in only when the caller has no separate connection recovery loop. */
+  retryTransientConnect?: boolean;
 }
 export interface ModelResult {
   message: ModelMessage;
@@ -94,6 +96,7 @@ export async function request(
   body: any,
   signal: AbortSignal,
   headers: Record<string, string> = {},
+  retryTransientConnect = false,
 ) {
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(profile.timeoutMs)]);
   for (let attempt = 0; ; attempt++) {
@@ -116,6 +119,27 @@ export async function request(
           'Model connection timed out before a response was received.',
           504,
         );
+      const failure = transportFailure(error);
+      // Shared attempt/deadline budget with HTTP retries; never replay a partial stream.
+      if (
+        retryTransientConnect &&
+        !deadline.aborted &&
+        attempt < 2 &&
+        failure.kind === 'network' &&
+        [
+          'ECONNRESET',
+          'EPIPE',
+          'UND_ERR_SOCKET',
+          'ECONNREFUSED',
+          'ENETUNREACH',
+          'EHOSTUNREACH',
+          'EAI_AGAIN',
+          'UND_ERR_CONNECT_TIMEOUT',
+        ].includes(failure.code || '')
+      ) {
+        await delay(250 * 2 ** attempt, undefined, { signal: deadline });
+        continue;
+      }
       throw normalizeProviderFailure(error, 'connect');
     }
     if (response.ok) return response;

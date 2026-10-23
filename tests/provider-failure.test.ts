@@ -108,3 +108,76 @@ test('generation diagnostics preserve safe limits and distinguish empty response
     ).includes('secret'),
   );
 });
+
+test('pre-connect transient failure and HTTP busy share a bounded attempt budget', async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    if (calls === 1) throw Object.assign(new Error('offline'), { code: 'ECONNREFUSED' });
+    if (calls === 2) return new Response('', { status: 503 });
+    return new Response('{}');
+  });
+  assert.equal(
+    (await request(profile, profile.baseUrl, {}, new AbortController().signal, {}, true)).status,
+    200,
+  );
+  assert.equal(calls, 3);
+});
+
+test('persistent pre-connect failure stops at three attempts; cancellation stops backoff', async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    throw Object.assign(new Error('offline'), { code: 'ECONNREFUSED' });
+  });
+  await assert.rejects(
+    request(profile, profile.baseUrl, {}, new AbortController().signal, {}, true),
+    (e: any) => e.code === 'MODEL_NETWORK',
+  );
+  assert.equal(calls, 3);
+  calls = 0;
+  const abort = new AbortController();
+  const pending = request(profile, profile.baseUrl, {}, abort.signal, {}, true);
+  setTimeout(() => abort.abort(), 20);
+  await assert.rejects(pending);
+  assert.equal(calls, 1);
+});
+
+test('request does not retry permanent DNS, certificate or authentication failures', async (t) => {
+  for (const code of ['ENOTFOUND', 'CERT_HAS_EXPIRED']) {
+    let calls = 0;
+    const mock = t.mock.method(globalThis, 'fetch', async () => {
+      calls++;
+      throw Object.assign(new Error('private'), { code });
+    });
+    await assert.rejects(
+      request(profile, profile.baseUrl, {}, new AbortController().signal, {}, true),
+    );
+    assert.equal(calls, 1);
+    mock.mock.restore();
+  }
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    return new Response('{}', { status: 401 });
+  });
+  await assert.rejects(
+    request(profile, profile.baseUrl, {}, new AbortController().signal, {}, true),
+    (e: any) => e.code === 'MODEL_HTTP_401',
+  );
+  assert.equal(calls, 1);
+});
+
+test('tool-free reviewer opt-in can recover a pre-response reset; ordinary callers do not replay', async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    if (calls === 1) throw broken();
+    return new Response('{}');
+  });
+  assert.equal(
+    (await request(profile, profile.baseUrl, {}, new AbortController().signal, {}, true)).status,
+    200,
+  );
+  assert.equal(calls, 2);
+});

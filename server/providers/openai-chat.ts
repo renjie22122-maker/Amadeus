@@ -58,6 +58,8 @@ export class ChatProvider implements ModelProvider {
       endpoint(input.profile, '/chat/completions'),
       chatPayload(input),
       input.signal,
+      {},
+      input.retryTransientConnect,
     );
     let content = '',
       reasoning = '',

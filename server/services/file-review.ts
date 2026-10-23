@@ -1,3 +1,4 @@
+import { diffLines } from 'diff';
 import { createHash } from 'node:crypto';
 import type { FileScope } from './paths.js';
 import { NotStartedError } from '../core/errors.js';
@@ -36,29 +37,44 @@ export async function prepareFileReview(files: FileScope, name: string, args: Re
   let remaining = 24000;
   const evidence = snapshots.map(({ path, before, after }) => {
     const old = before || '';
-    let start = 0,
-      end = 0;
-    while (start < old.length && start < after.length && old[start] === after[start]) start++;
-    while (
-      end < old.length - start &&
-      end < after.length - start &&
-      old[old.length - 1 - end] === after[after.length - 1 - end]
-    )
-      end++;
-    const from = Math.max(0, start - 300);
-    const oldPart = old.slice(from, Math.min(old.length, old.length - end + 300));
-    const newPart = after.slice(from, Math.min(after.length, after.length - end + 300));
-    const cap = Math.min(6000, Math.floor(remaining / 2));
-    remaining -= Math.min(cap, oldPart.length) + Math.min(cap, newPart.length);
+    const parts = diffLines(old, after, { timeout: 250 });
+    const tooLarge = () =>
+      new NotStartedError(
+        'FILE_REVIEW_TOO_LARGE',
+        'No files changed. Complete change evidence exceeds the review budget. Split the mutation into smaller independently reviewable edits and retry; do not omit changes.',
+      );
+    if (!parts) throw tooLarge();
+    let beforeText = '',
+      afterText = '';
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part.added) afterText += part.value;
+      else if (part.removed) beforeText += part.value;
+      else {
+        const lines = part.value.match(/[^\n]*\n|[^\n]+$/g) || [];
+        const head = i > 0 ? 3 : 0;
+        const tail = i < parts.length - 1 ? 3 : 0;
+        const context =
+          lines.length <= head + tail
+            ? part.value
+            : lines.slice(0, head).join('') +
+              `\n[unchanged context omitted: ${lines.length - head - tail} lines]\n` +
+              (tail ? lines.slice(-tail).join('') : '');
+        beforeText += context;
+        afterText += context;
+      }
+    }
+    remaining -= beforeText.length + afterText.length;
+    if (remaining < 0) throw tooLarge();
     return {
       path,
       operation: before === null ? 'create' : 'edit',
       beforeSha256: before === null ? null : hash(old),
       afterSha256: hash(after),
-      contextStartCharacter: from,
-      before: oldPart.slice(0, cap),
-      after: newPart.slice(0, cap),
-      truncated: oldPart.length > cap || newPart.length > cap,
+      before: beforeText,
+      after: afterText,
+      truncated: false,
+      completeChangedRegions: true,
       beforeCharacters: old.length,
       afterCharacters: after.length,
     };

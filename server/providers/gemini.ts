@@ -72,9 +72,16 @@ export class GeminiProvider implements ModelProvider {
       '/models/' +
       encodeURIComponent(p.model) +
       ':streamGenerateContent?alt=sse';
-    const response = await request(p, url, geminiPayload(input), input.signal, {
-      'x-goog-api-key': p.apiKey,
-    });
+    const response = await request(
+      p,
+      url,
+      geminiPayload(input),
+      input.signal,
+      {
+        'x-goog-api-key': p.apiKey,
+      },
+      input.retryTransientConnect,
+    );
     let content = '',
       finish = '',
       usage = emptyUsage();
