@@ -1,5 +1,5 @@
 import type { AgentEvent } from '../shared/types';
-/** Only known successful delivery folds; legacy/partial/error records stay visible. */
+/** Only completed delivery folds; tool failures remain inspectable inside its history. */
 export function collapsibleProcess(
   events: AgentEvent[],
   runs: { id: string; status: string }[],
@@ -40,12 +40,7 @@ export function collapsibleProcess(
               'model.protocol-repair',
               'model.reconnecting',
               'cognitive.intervention',
-            ].includes(e.type)) &&
-          !(
-            e.type === 'tool.completed' &&
-            e.data.outcome &&
-            !['succeeded', 'not-needed'].includes(e.data.outcome.status)
-          ),
+            ].includes(e.type)),
       )
       .map((e) => e.id),
   );

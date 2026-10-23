@@ -696,7 +696,7 @@ export function App() {
             });
           }}
         >
-          {language === 'zh' ? '加载较早的对话' : 'Load earlier messages'} ·{' '}
+          {language === 'zh' ? '加载更早的消息与执行记录' : 'Load earlier messages and activity'} ·{' '}
           {loadingOlder ? '…' : Math.max(0, starts.length - visibleTurns) || '…'}
         </button>,
       );
@@ -852,6 +852,16 @@ export function App() {
     }
     flush();
     for (const [runId, group] of processes) {
+      const partial =
+        !offset &&
+        !!detail?.hasOlderEvents &&
+        all[0]?.runId === runId &&
+        !all.some((e) => e.runId === runId && e.type === 'user.message' && !e.data.steering);
+      const partialLabel = partial
+        ? language === 'zh'
+          ? ' · 部分已加载（可加载更早记录）'
+          : ' · Partially loaded (earlier records available)'
+        : '';
       const messages = group.events.filter((e) => e.type === 'assistant.message').length;
       const tools = group.events.filter((e) => e.type === 'tool.started').length;
       const count = group.events.length;
@@ -901,7 +911,8 @@ export function App() {
             (language === 'zh'
               ? `此前过程 · ${count} 条记录${messages ? ` · ${messages} 条模型回复` : ''}${tools ? ` · ${tools} 次工具调用` : ''}`
               : `${count} previous events${messages ? ` · ${messages} assistant messages` : ''}${tools ? ` · ${tools} tool calls` : ''}`) +
-            approvalLabel
+            approvalLabel +
+            partialLabel
           }
         />
       );

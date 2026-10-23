@@ -80,6 +80,11 @@ test(
         created.store.put('input', input);
         created.store.event(c.id, 'r', 'input.requested', { ...input, status: 'pending' });
       }
+      created.store.event(c.id, 'r', 'tool.completed', {
+        name: 'fixture_failed_attempt',
+        outcome: { status: 'failed' },
+        result: 'Historical attempt failed',
+      });
       created.store.event(c.id, 'r', 'tool.started', {
         name: 'mcp_call',
         arguments: { tool: 'screenshot', serverId: 'browser', content: 'LONG'.repeat(10000) },
@@ -135,6 +140,7 @@ test(
         0,
       );
       assert.equal(await page.locator('.completed-process').count(), 1);
+      assert.equal(await page.locator('.activity').count(), 0);
       assert.equal(await page.locator('.input-card').count(), 0);
       assert.match(await page.locator('.process-toggle').innerText(), /2 approvals/);
       assert.equal(await page.locator('.process-segment .message.user').count(), 0);
@@ -188,6 +194,7 @@ test(
       assert.equal(await page.locator('.process-segment .message.user').count(), 0);
       await page.locator('.completed-process .process-toggle').first().click();
       await assertCollapsedUsers();
+      assert.equal(await page.locator('.activity').count(), 0);
       assert.equal(await page.locator('.input-card').count(), 0);
       await page.getByRole('button', { name: '打开 / Open · report.md', exact: true }).click();
       await page.getByRole('heading', { name: 'Report preview', exact: true }).waitFor();

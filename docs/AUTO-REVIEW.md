@@ -75,3 +75,5 @@ When a validated assessment establishes task authorization but leaves target bou
 ## Completed-turn presentation
 
 After a successful final answer, approval cards join the collapsible previous process in chronological order. User messages and the final answer remain outside. Active/waiting turns do not fold. A historical pending approval remains discoverable through the pending count and attention navigation, which opens the corresponding process. Folding changes presentation only, never approval state or authorization.
+
+Completed history also folds failed or denied tool attempts; their details remain available on expansion. Event pagination may split a long run: the loader says messages and activity, and partial process counts are explicitly marked. Active and unsuccessful runs remain visible.

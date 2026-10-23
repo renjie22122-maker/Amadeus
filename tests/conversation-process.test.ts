@@ -10,7 +10,7 @@ const event = (id: number, type: string, data: any = {}): AgentEvent => ({
   conversationId: 'c',
   createdAt: id,
 });
-test('fold only successful delivered process; preserve user steering, approvals, files and errors', () => {
+test('fold only successful delivered process; preserve user steering, questions and files; fold historical tool errors', () => {
   const events = [
     event(1, 'user.message'),
     event(2, 'assistant.message', { final: false }),
@@ -22,7 +22,7 @@ test('fold only successful delivered process; preserve user steering, approvals,
     event(8, 'assistant.message', { final: true }),
     event(9, 'run.status'),
   ];
-  assert.deepEqual([...collapsibleProcess(events, [{ id: 'r', status: 'completed' }])], [2, 3]);
+  assert.deepEqual([...collapsibleProcess(events, [{ id: 'r', status: 'completed' }])], [2, 3, 7]);
   for (const status of ['running', 'failed', 'interrupted'])
     assert.equal(collapsibleProcess(events, [{ id: 'r', status }]).size, 0);
   assert.equal(
