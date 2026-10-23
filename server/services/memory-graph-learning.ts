@@ -1,3 +1,4 @@
+import { chatMemorySources } from './chat-memory-source.js';
 import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -63,6 +64,10 @@ export async function learnMemoryGraph(
     )
     .slice(0, 4)
     .flatMap((m) => {
+      if (scope.startsWith('chat:')) {
+        const source = chatMemorySources(store, c.id).find((s) => s.id === m.sourceEventId);
+        return source ? [{ m, original: source.text }] : [];
+      }
       const event = store
         .events(c.id)
         .find(

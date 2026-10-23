@@ -30,7 +30,7 @@ export class MemoryIndex {
     }
   }
   // Explicit user action only: inactive candidates never leave the machine for embedding.
-  async index(scope?: string, allowed: () => boolean = () => true) {
+  async index(scope?: string, allowed: () => boolean = () => true, signal?: AbortSignal) {
     const fingerprint = this.embeddings.fingerprint();
     let indexed = 0;
     for (const m of this.store
@@ -49,7 +49,7 @@ export class MemoryIndex {
       )
         continue;
       if (!allowed() || this.embeddings.fingerprint() !== fingerprint) break;
-      const [values] = await this.embeddings.encode([m.content]);
+      const [values] = await this.embeddings.encode([m.content], signal);
       const current = this.store.maybe<Memory>('memory', m.id);
       if (
         allowed() &&

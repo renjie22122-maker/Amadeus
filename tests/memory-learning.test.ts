@@ -91,8 +91,8 @@ test('idle opted-in chats extract with provenance, consolidate duplicates and do
     f.store.close();
   }
 });
-test('opt-out, changed destination, active and short chats do not generate', async () => {
-  for (const mode of ['off', 'endpoint', 'active', 'short']) {
+test('opt-out, changed destination and unfinished source runs do not generate', async () => {
+  for (const mode of ['off', 'endpoint', 'active']) {
     const f = await fixture();
     let calls = 0;
     if (mode === 'off') f.store.put('conversation', { ...f.c, generateMemory: false });
@@ -154,12 +154,14 @@ test('project evidence is isolated; conflicts and decisions remain candidates', 
   }
 });
 test('source changes and opt-out during extraction discard results', async () => {
-  for (const change of ['message', 'off']) {
+  for (const change of ['edit', 'off']) {
     const f = await fixture();
     const learning = new MemoryLearning(f.store, f.config, () => ({
       complete: async () => {
-        if (change === 'message')
-          f.store.event('chat', 'run', 'user.message', { content: 'Actually, change that.' });
+        if (change === 'edit')
+          f.store.db
+            .prepare('UPDATE events SET data=? WHERE id=?')
+            .run(JSON.stringify({ content: 'Actually, change that.' }), f.eid);
         else f.store.put('conversation', { ...f.c, generateMemory: false });
         return response([f.item]);
       },
@@ -341,6 +343,93 @@ test('automatic learning retains reusable evolving facts with source time and co
     assert.ok(
       reports.some((x) => x.sourceEventId === event.id && x.observedAt === event.createdAt),
     );
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});
+
+test('new messages and unrelated active runs do not discard a completed batch', async () => {
+  const f = await fixture();
+  f.store.put('run', { id: 'other', conversationId: 'other', status: 'running', checkpoints: [] });
+  f.store.put('conversation', { ...f.c, updatedAt: Date.now() });
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async () => {
+      f.store.event('chat', 'run', 'user.message', {
+        content: 'A later message for the next batch.',
+      });
+      return response([
+        { ...f.item, attribute: null, value: null, conditions: null, conflictsWith: null },
+      ]);
+    },
+  }));
+  try {
+    await learning.tick();
+    assert.equal(f.store.list<any>('memory')[0].active, true);
+    assert.equal(f.store.list<any>('memory-learning')[0].status, 'completed');
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});
+test('retry state survives worker replacement, backs off and stops after five attempts', async () => {
+  const f = await fixture();
+  let calls = 0;
+  const provider = () => ({
+    complete: async () => {
+      calls++;
+      throw new Error('do not persist secret provider body');
+    },
+  });
+  let learning = new MemoryLearning(f.store, f.config, provider);
+  try {
+    let now = Date.now();
+    await learning.tick(now);
+    await learning.tick(now);
+    assert.equal(calls, 1);
+    await learning.close();
+    learning = new MemoryLearning(f.store, f.config, provider);
+    for (let i = 1; i < 5; i++) {
+      now += 1800000;
+      await learning.tick(now);
+    }
+    await learning.tick(now + 1800000);
+    assert.equal(calls, 5);
+    const job = f.store.list<any>('memory-learning')[0];
+    assert.equal(job.retryExhausted, true);
+    assert.equal(JSON.stringify(job).includes('secret provider body'), false);
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});
+
+test('extraction has an independent supported reasoning budget without modifying chat settings', async () => {
+  const f = await fixture();
+  const original = f.config.profile();
+  f.config.save({
+    ...f.config.get(),
+    profiles: [
+      {
+        ...original,
+        reasoningFormat: 'openai',
+        reasoning: 'high',
+        efforts: ['auto', 'none', 'high'],
+        maxOutputTokens: 32000,
+      },
+    ],
+  });
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async (request) => {
+      assert.equal(request.profile.reasoning, 'none');
+      assert.equal(request.profile.maxOutputTokens, 8192);
+      return response([f.item]);
+    },
+  }));
+  try {
+    await learning.tick();
+    assert.equal(f.store.list<any>('memory-learning')[0].status, 'completed');
+    assert.equal(f.config.profile().reasoning, 'high');
   } finally {
     await learning.close();
     f.store.close();

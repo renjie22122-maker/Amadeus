@@ -79,7 +79,12 @@ export function reconsiderMemoryConflicts(store: Store, scope: string) {
     const source =
       m.sourceConversationId &&
       store.events(m.sourceConversationId).find((e) => e.id === m.sourceEventId);
-    if (!source || source.type !== 'user.message' || source.data.scheduledTrigger) continue;
+    if (
+      !source ||
+      !['user.message', 'chat.memory-source'].includes(source.type) ||
+      source.data.scheduledTrigger
+    )
+      continue;
     const activeConflicts = new MemoryLifecycle(store).conflicts(m);
     for (const key of m.conflictsWith || []) {
       const old = store.maybe<Memory>('memory', key);

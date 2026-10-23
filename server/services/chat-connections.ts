@@ -1,3 +1,4 @@
+import { recordChatMemorySource } from './chat-memory-source.js';
 import { chatApprovalContainsCredentials } from './chat-approval-privacy.js';
 import { MemoryLifecycle } from './memory-lifecycle.js';
 import { remoteConversationStyle } from './chat-style.js';
@@ -593,6 +594,7 @@ export class ChatConnections {
         'DELETE FROM chat_received WHERE connection_id=? AND (at<? OR rowid NOT IN (SELECT rowid FROM chat_received WHERE connection_id=? ORDER BY at DESC,rowid DESC LIMIT 40))',
       )
       .run(c.id, now - 86400000, c.id);
+    recordChatMemorySource(this.store, c, m);
     const memoryText = m.text;
     let helpRequested =
       !m.media?.length &&
@@ -1323,6 +1325,9 @@ export class ChatConnections {
           transport: c.transport,
           senderId: next.sender_id || c.senderId,
           peerType: c.peerType || 'private',
+          sourceEventIds: burst
+            .map((row) => this.store.maybe<any>('chat-memory-receipt', row.id)?.eventId)
+            .filter(Boolean),
           memoryMessages: burst
             .map((row) => row.memory_text)
             .filter((text) => typeof text === 'string'),

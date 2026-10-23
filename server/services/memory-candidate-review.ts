@@ -1,3 +1,4 @@
+import { chatMemorySources } from './chat-memory-source.js';
 import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { memoryAssessment } from './memory-assessment.js';
 import { manageAutomaticMemory } from './memory-automatic.js';
@@ -82,13 +83,8 @@ export async function reviewMemoryCandidates(
       .filter((e) => !e.data.scheduledTrigger)
       .find((e) => e.id === eventId);
     if (scope.startsWith('chat:')) {
-      const origin = store.events(c.id, 0, 'chat.origin').find((o) => e && o.runId === e.runId);
-      return origin?.data.senderId
-        ? '[Platform sender ' +
-            origin.data.senderId +
-            ']\n' +
-            (origin.data.memoryMessages || []).join('\n')
-        : '';
+      const source = chatMemorySources(store, c.id).find((s) => s.id === eventId);
+      return source ? '[Platform sender ' + source.sender + ']\n' + source.text : '';
     }
     return String(e?.data.content || e?.data.text || '');
   };

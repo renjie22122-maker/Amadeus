@@ -1,3 +1,8 @@
+import {
+  chatMemorySources,
+  backfillChatMemorySources,
+  type MemorySource,
+} from './chat-memory-source.js';
 import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { memoryAssessment } from './memory-assessment.js';
 import { learnMemoryGraph } from './memory-graph-learning.js';
@@ -79,27 +84,54 @@ export class MemoryLearning {
   tick(now = Date.now()) {
     if (this.task) return this.task;
     this.task = this.scan(now)
-      .catch(() => {})
+      .catch((error) => {
+        this.store.put('memory-maintenance-status', {
+          id: 'latest',
+          status: 'failed',
+          at: Date.now(),
+          category: error instanceof Error ? error.name : 'UnknownError',
+        });
+      })
       .finally(() => {
         this.task = null;
       });
     return this.task;
   }
-  private ready(c: Conversation, now: number) {
-    const runs = this.store.runMetadata(c.id);
+  private ready(c: Conversation, _now: number) {
     if (c.projectId && this.store.maybe<Project>('project', c.projectId)?.removedAt) return false;
-    return (
-      c.generateMemory === true &&
-      c.memoryGenerationTarget === memoryTarget(this.config.profile(c.profileId)) &&
-      !c.parentId &&
-      !c.archived &&
-      runs.length > 0 &&
-      runs.every((r) => terminal(r.status)) &&
-      runs.some((r) => r.status === 'completed') &&
-      now - Math.max(c.updatedAt || 0, ...runs.map((r) => r.updatedAt || r.createdAt || 0)) >=
-        120000
-    );
+    try {
+      return (
+        c.generateMemory === true &&
+        c.memoryGenerationTarget === memoryTarget(this.config.profile(c.profileId)) &&
+        !c.parentId &&
+        !c.archived
+      );
+    } catch {
+      return false;
+    }
   }
+  private sources(c: Conversation): MemorySource[] {
+    if (conversationMemoryScope(c).startsWith('chat:')) return chatMemorySources(this.store, c.id);
+    const runs = new Map(this.store.runMetadata(c.id).map((r) => [r.id, r]));
+    return this.store
+      .events(c.id, 0, 'user.message')
+      .filter(
+        (e) =>
+          !e.data.scheduledTrigger &&
+          (e.runId
+            ? !!runs.get(e.runId) && terminal(runs.get(e.runId)!.status)
+            : [...runs.values()].some((r) => r.status === 'completed')),
+      )
+      .map((e) => ({
+        id: e.id,
+        at: e.createdAt,
+        text: String(e.data.content || e.data.text || ''),
+      }));
+  }
+  private sourceHash(source: MemorySource) {
+    return createHash('sha256').update(JSON.stringify(source)).digest('hex');
+  }
+
   private scoped(scope: string, conversationId: string) {
     return this.store
       .list<Memory>('memory')
@@ -117,14 +149,14 @@ export class MemoryLearning {
       .sort((a, b) => a.createdAt - b.createdAt)
       .slice(-80);
   }
-  private stamp(c: Conversation, last: number | undefined, scope: string) {
+  private stamp(c: Conversation, last: string, scope: string) {
     return createHash('sha256')
       .update(
         JSON.stringify([
           conversationMemoryScope(c),
           c.generateMemory,
           c.automaticMemory,
-          c.updatedAt,
+          c.memoryGenerationTarget,
           c.projectId,
           c.profileId,
           last,
@@ -138,98 +170,156 @@ export class MemoryLearning {
   }
   private async scan(now: number) {
     if (this.controller.signal.aborted) return;
-    if (this.store.runMetadata().some((r) => !terminal(r.status))) return;
-    for (const c of this.store.list<Conversation>('conversation')) {
-      if (!this.ready(c, now)) continue;
-      if (c.automaticMemory) {
-        const profile = this.config.profile(c.profileId),
-          target = memoryTarget(profile);
-        await learnMemoryGraph(
-          this.store,
-          c,
-          profile,
-          this.provider(profile),
-          AbortSignal.any([this.controller.signal, AbortSignal.timeout(65000)]),
-          () => {
-            const latest = this.store.maybe<Conversation>('conversation', c.id);
-            return (
-              !!latest &&
-              latest.generateMemory === true &&
-              latest.automaticMemory === true &&
-              latest.memoryGenerationTarget ===
-                memoryTarget(this.config.profile(latest.profileId)) &&
-              memoryTarget(this.config.profile(latest.profileId)) === target &&
-              latest.projectId === c.projectId &&
-              !latest.archived &&
-              !this.store.runMetadata().some((r) => !terminal(r.status))
-            );
-          },
-        );
-        const reviewed = await reviewMemoryCandidates(
-          this.store,
-          c,
-          profile,
-          this.provider(profile),
-          AbortSignal.any([this.controller.signal, AbortSignal.timeout(65000)]),
-          () => {
-            const latest = this.store.maybe<Conversation>('conversation', c.id);
-            return (
-              !!latest &&
-              latest.automaticMemory === true &&
-              this.ready(latest, Date.now()) &&
-              memoryTarget(this.config.profile(latest.profileId)) === target &&
-              this.config.profile(latest.profileId).model === profile.model
-            );
-          },
-          sensitive,
-          new MemoryLifecycle(this.store, (stage, m) =>
-            memoryHooks(this.store, this.config, stage, m),
-          ),
-        );
-        if (reviewed) return;
-      }
-
-      const events = this.store
-        .events(c.id, 0, 'user.message')
-        .filter((e) => !e.data.scheduledTrigger);
-      if (events.length < 2) continue;
-      const observedLast = events.at(-1)!.id;
-      const cursor = Math.max(
+    const lastAttempt = (id: string) =>
+      Math.max(
         0,
         ...this.store
           .list<any>('memory-learning')
-          .filter((j) => j.conversationId === c.id && j.status === 'completed')
-          .map((j) => Number(j.sourceEvent) || 0),
+          .filter((j) => j.conversationId === id)
+          .map((j) => j.at || 0),
       );
-      const pending = events.filter((e) => e.id > cursor).slice(0, 30);
-      if (!pending.length) continue;
+    const conversations = this.store
+      .list<Conversation>('conversation')
+      .sort((a, b) => lastAttempt(a.id) - lastAttempt(b.id));
+    for (const c of conversations) {
+      if (!this.ready(c, now)) continue;
+      const scope = conversationMemoryScope(c),
+        isolated = scope.startsWith('chat:');
+      if (isolated) backfillChatMemorySources(this.store, c.id);
+      const sources = this.sources(c);
+      if (!isolated) {
+        const legacyCursor = Math.max(
+          0,
+          ...this.store
+            .list<any>('memory-learning')
+            .filter(
+              (j) =>
+                j.conversationId === c.id &&
+                j.status === 'completed' &&
+                !j.id.includes(':sources-v2:'),
+            )
+            .map((j) => j.sourceEvent || 0),
+        );
+        for (const source of sources.filter((s) => s.id <= legacyCursor)) {
+          const id = c.id + ':' + source.id;
+          if (!this.store.maybe('memory-source-progress', id))
+            this.store.put('memory-source-progress', {
+              id,
+              conversationId: c.id,
+              sourceEvent: source.id,
+              fingerprint: this.sourceHash(source),
+              attempts: 0,
+              status: 'completed',
+              migrated: true,
+            });
+        }
+      }
+
+      const progress = (source: MemorySource) =>
+        this.store.maybe<any>('memory-source-progress', c.id + ':' + source.id);
+      const pending = sources
+        .filter((source) => {
+          const p = progress(source);
+          return (
+            (!p ||
+              p.fingerprint !== this.sourceHash(source) ||
+              (p.status !== 'completed' &&
+                (p.attempts || 0) < 5 &&
+                (p.nextAttemptAt || 0) <= now)) &&
+            (!isolated || source.at <= now - 2000)
+          );
+        })
+        .slice(0, 30);
+      if (!pending.length) {
+        if (c.automaticMemory) {
+          const profile = this.config.profile(c.profileId),
+            target = memoryTarget(profile);
+          await learnMemoryGraph(
+            this.store,
+            c,
+            profile,
+            this.provider(profile),
+            AbortSignal.any([this.controller.signal, AbortSignal.timeout(65000)]),
+            () => {
+              const latest = this.store.maybe<Conversation>('conversation', c.id);
+              return (
+                !!latest &&
+                latest.generateMemory === true &&
+                latest.automaticMemory === true &&
+                latest.memoryGenerationTarget ===
+                  memoryTarget(this.config.profile(latest.profileId)) &&
+                memoryTarget(this.config.profile(latest.profileId)) === target &&
+                latest.projectId === c.projectId &&
+                !latest.archived &&
+                !this.store.runMetadata().some((r) => !terminal(r.status))
+              );
+            },
+          );
+          const reviewed = await reviewMemoryCandidates(
+            this.store,
+            c,
+            profile,
+            this.provider(profile),
+            AbortSignal.any([this.controller.signal, AbortSignal.timeout(65000)]),
+            () => {
+              const latest = this.store.maybe<Conversation>('conversation', c.id);
+              return (
+                !!latest &&
+                latest.automaticMemory === true &&
+                this.ready(latest, Date.now()) &&
+                memoryTarget(this.config.profile(latest.profileId)) === target &&
+                this.config.profile(latest.profileId).model === profile.model
+              );
+            },
+            sensitive,
+            new MemoryLifecycle(this.store, (stage, m) =>
+              memoryHooks(this.store, this.config, stage, m),
+            ),
+          );
+          if (reviewed) return;
+        }
+
+        continue;
+      }
       const last = pending.at(-1)!.id,
-        key = c.id + ':' + last;
-      const prior = this.store.maybe<any>('memory-learning', key);
-      if (prior && (prior.status !== 'failed' || prior.sourceLatest === observedLast)) continue;
-      const scope = conversationMemoryScope(c);
-      const origins = new Map(
-        this.store.events(c.id, 0, 'chat.origin').map((e) => [e.runId, e.data]),
-      );
-      const isolated = scope.startsWith('chat:');
+        observedLast = sources.at(-1)!.id;
+      const key =
+        c.id +
+        ':sources-v2:' +
+        createHash('sha256')
+          .update(JSON.stringify(pending.map((s) => [s.id, this.sourceHash(s)])))
+          .digest('hex')
+          .slice(0, 24);
+      const attempts =
+        Math.max(
+          0,
+          ...pending.map((s) => {
+            const p = progress(s);
+            return p?.fingerprint === this.sourceHash(s) ? p.attempts || 0 : 0;
+          }),
+        ) + 1;
       const evidence = pending
-        .map((e) => ({
-          id: e.id,
-          at: e.createdAt,
-          sender: isolated ? origins.get(e.runId)?.senderId : undefined,
-          peerType: isolated ? origins.get(e.runId)?.peerType : undefined,
-          text: isolated
-            ? (origins.get(e.runId)?.memoryMessages || []).join('\n').slice(0, 4000)
-            : String(e.data.content || e.data.text || '').slice(0, 4000),
-        }))
+        .map((e) => ({ ...e, text: e.text.slice(0, 4000) }))
         .filter(
           (e) =>
             !!e.text &&
-            (!isolated || !!e.sender) &&
             !sensitive(e.text) &&
             !this.store.maybe('memory-source-forgotten', sourceKey(scope, c.id, e.id)),
         );
+      const mark = (status: string, nextAttemptAt = 0) => {
+        for (const source of pending)
+          this.store.put('memory-source-progress', {
+            id: c.id + ':' + source.id,
+            conversationId: c.id,
+            sourceEvent: source.id,
+            fingerprint: this.sourceHash(source),
+            attempts,
+            status,
+            nextAttemptAt,
+          });
+      };
       if (!evidence.length) {
+        mark('completed');
         this.store.put('memory-learning', {
           id: key,
           conversationId: c.id,
@@ -237,13 +327,16 @@ export class MemoryLearning {
           status: 'completed',
           at: now,
           sourceEvent: last,
+          sourceEvents: pending.map((e) => e.id),
+          reason: 'no_eligible_source',
           added: 0,
           candidates: 0,
+          attempts,
         });
         continue;
       }
       const existing = this.scoped(scope, c.id),
-        snapshot = this.stamp(c, observedLast, scope);
+        snapshot = this.stamp(c, JSON.stringify(pending), scope);
       const job: any = {
         id: key,
         conversationId: c.id,
@@ -252,13 +345,25 @@ export class MemoryLearning {
         at: now,
         sourceEvent: last,
         sourceLatest: observedLast,
+        sourceEvents: pending.map((e) => e.id),
+        attempts,
+        eligibleSources: evidence.length,
       };
+      mark('running', now + 120000);
       this.store.put('memory-learning', job);
       this.store.event(c.id, null, 'memory.learning', { id: key, status: 'running' });
+      let phase = 'provider';
       try {
+        const base = this.config.profile(c.profileId);
         const profile = {
-          ...this.config.profile(c.profileId),
-          maxOutputTokens: 4096,
+          ...base,
+          reasoning:
+            base.reasoningFormat !== 'none' && base.efforts.includes('none')
+              ? ('none' as const)
+              : base.reasoningFormat !== 'none' && base.efforts.includes('low')
+                ? ('low' as const)
+                : base.reasoning,
+          maxOutputTokens: Math.min(base.maxOutputTokens || 8192, 8192),
           timeoutMs: 60000,
         };
         const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(65000)]);
@@ -302,25 +407,44 @@ export class MemoryLearning {
           }),
           signal,
         );
+        phase = 'parse';
+        job.usage = result.usage;
+        job.model = profile.model;
         if (result.message.calls?.length) throw Error('Memory extractor cannot call tools');
-        const parsed = output.parse(
-          JSON.parse(
-            result.message.content.trim().replace(/^\x60{3}(?:json)?\s*|\s*\x60{3}$/g, ''),
-          ),
+        const decoded = JSON.parse(
+          result.message.content.trim().replace(/^\x60{3}(?:json)?\s*|\s*\x60{3}$/g, ''),
         );
+        if (!Array.isArray(decoded?.items)) throw new Error('MEMORY_OUTPUT_SCHEMA');
+        const optional = [
+          'chatSubject',
+          'basis',
+          'revisionIntent',
+          'supportingEvidence',
+          'stability',
+          'conditions',
+          'applicability',
+          'attribute',
+          'factCardinality',
+          'value',
+        ];
+        for (const item of decoded.items)
+          if (item && typeof item === 'object') {
+            for (const field of optional) if (item[field] === null) delete item[field];
+            if (item.conflictsWith == null) item.conflictsWith = [];
+          }
+        const parsed = output.parse(decoded);
         const current = this.store.maybe<Conversation>('conversation', c.id);
-        const latest = this.store
-          .events(c.id, 0, 'user.message')
-          .filter((e) => !e.data.scheduledTrigger)
-          .at(-1)?.id;
+        const refreshed = this.sources(c);
+        const batch = pending.map((source) => refreshed.find((e) => e.id === source.id));
         if (
           !current ||
           !this.ready(current, Date.now()) ||
-          this.stamp(current, latest, scope) !== snapshot
+          this.stamp(current, JSON.stringify(batch), scope) !== snapshot
         )
-          throw Error('Memory source changed');
+          throw Error('MEMORY_SOURCE_CHANGED');
         let added = 0,
           candidates = 0;
+        phase = 'apply';
         this.store.transaction(() => {
           for (const item of parsed.items) {
             if (
@@ -486,6 +610,7 @@ export class MemoryLearning {
           new MemoryLifecycle(this.store, (stage, m) =>
             memoryHooks(this.store, this.config, stage, m),
           ).consolidate(scope);
+          mark('completed');
           this.store.put('memory-learning', {
             ...job,
             status: 'completed',
@@ -496,12 +621,49 @@ export class MemoryLearning {
             finishedAt: Date.now(),
           });
         });
-      } catch {
+      } catch (error) {
         if (!this.store.maybe('conversation', c.id)) return;
+        const name = error instanceof Error ? error.name : 'UnknownError';
+        const code = String((error as any)?.code || '');
+        const category =
+          error instanceof z.ZodError
+            ? 'output_schema'
+            : error instanceof SyntaxError
+              ? 'output_json'
+              : error instanceof Error && error.message === 'MEMORY_SOURCE_CHANGED'
+                ? 'source_changed'
+                : /timeout|abort/i.test(name + code)
+                  ? 'timeout_or_cancelled'
+                  : 'provider_or_processing';
+        const nextAttemptAt = now + Math.min(1800000, 30000 * 2 ** (attempts - 1));
+        mark(attempts >= 5 ? 'exhausted' : 'retry_wait', nextAttemptAt);
         this.store.put('memory-learning', {
           ...job,
           status: this.controller.signal.aborted ? 'cancelled' : 'failed',
-          reason: 'No changes applied; source changed, extraction failed or timed out.',
+          reason: category,
+          phase,
+          errorType: name,
+          providerFinish: ['length', 'stop', 'tool_calls', ''].includes(
+            (error as any)?.finishReason,
+          )
+            ? (error as any).finishReason
+            : undefined,
+          outputTokens: Number.isFinite((error as any)?.outputTokens)
+            ? (error as any).outputTokens
+            : undefined,
+          answerCharacters: Number.isFinite((error as any)?.answerCharacters)
+            ? (error as any).answerCharacters
+            : undefined,
+          reasoningCharacters: Number.isFinite((error as any)?.reasoningCharacters)
+            ? (error as any).reasoningCharacters
+            : undefined,
+          errorCode: /^[A-Z0-9_]{1,64}$/.test(code) ? code : undefined,
+          nextAttemptAt: attempts < 5 ? nextAttemptAt : null,
+          retryExhausted: attempts >= 5,
+          validationIssues:
+            error instanceof z.ZodError
+              ? error.issues.map((i) => ({ path: i.path, code: i.code })).slice(0, 8)
+              : undefined,
           finishedAt: Date.now(),
         });
       }
@@ -520,6 +682,7 @@ export class MemoryLearning {
               this.store.maybe<Conversation>('conversation', c.id)?.automaticMemory === true &&
               this.config.get().embedding.backend === 'local' &&
               !this.controller.signal.aborted,
+            AbortSignal.any([this.controller.signal, AbortSignal.timeout(15000)]),
           );
         } catch {
           const job = this.store.maybe<any>('memory-learning', key);
