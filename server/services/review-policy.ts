@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // The model supplies evidence; this host policy owns the execution decision.
-export const REVIEW_POLICY_VERSION = '2026-10-23.2';
+export const REVIEW_POLICY_VERSION = '2026-10-23.3';
 export const assessmentSchema = z
   .object({
     risk: z.enum(['low', 'medium', 'high', 'critical', 'unknown']),
@@ -12,6 +12,14 @@ export const assessmentSchema = z
     sensitiveData: z.boolean(),
     securityChange: z.boolean(),
     reason: z.string().min(1).max(1500),
+    recovery: z
+      .object({
+        kind: z.enum(['reversible', 'recoverable', 'irreversible', 'unknown']),
+        evidence: z.string().trim().min(1).max(1500),
+        boundedImpact: z.string().trim().min(1).max(1500),
+      })
+      .strict()
+      .optional(),
     clarification: z.string().trim().min(1).max(800).optional(),
     remediation: z
       .object({
@@ -33,7 +41,11 @@ export function decideAssessment(value: unknown, messageIds: number[]) {
     assessment.effectsKnown &&
     !assessment.sensitiveData &&
     !assessment.securityChange &&
-    ['low', 'medium'].includes(assessment.risk) &&
+    (['low', 'medium'].includes(assessment.risk) ||
+      (assessment.risk === 'high' &&
+        assessment.authorization === 'explicit' &&
+        assessment.recovery !== undefined &&
+        ['reversible', 'recoverable'].includes(assessment.recovery.kind))) &&
     ['explicit', 'implicit'].includes(assessment.authorization);
   return {
     assessment,
@@ -43,7 +55,7 @@ export function decideAssessment(value: unknown, messageIds: number[]) {
       ['explicit', 'implicit'].includes(assessment.authorization) &&
       !assessment.sensitiveData &&
       !assessment.securityChange &&
-      !['high', 'critical'].includes(assessment.risk)
+      assessment.risk !== 'critical'
         ? assessment.remediation
         : undefined,
     decision: allow ? 'allow' : 'ask',
@@ -70,13 +82,15 @@ Return only JSON with exactly these fields:
 risk: low|medium|high|critical|unknown; authorization: explicit|implicit|none|unknown;
 evidence: array of humanMessages ids; bounded: boolean; effectsKnown: boolean;
 sensitiveData: boolean; securityChange: boolean; reason: concise explanation in the user's language.
+Optional recovery: {kind: reversible|recoverable|irreversible|unknown, evidence: observed recovery mechanism and its source, boundedImpact: actual targets and consequences}.
+For high risk, explicit authorization must cover the actual consequences and target. Recovery must be supported by supplied host observations or inspected source (for example a verified backup, isolated disposable output or verified rollback), never merely a promise to undo. Explain remaining external effects: publishing, messaging, data disclosure and irreversible deletion are not undone merely by reverting a file. Missing observations mean unknown recovery. A high label alone does not require human intervention when exact authorization, bounded known effects and evidenced recovery are all established. Sensitive export, security changes, critical risk and explicit human-only rules remain restricted.
 Optional remediation: {kind: inspect|revise|wait, instruction: concise concrete next step}.
 Use remediation when an already authorized task can progress by bounded read-only evidence collection,
 narrowing the proposed operation, or observing a temporary busy condition. This is not permission to execute
 the blocked action. Specify the missing observable facts and a safe route to obtain them, not a shell command
 that performs the blocked effect. A busy condition should use bounded waiting plus a fresh status check.
-Do not use remediation for missing human consent, sensitive exports, persistent security changes or high/critical
-risk. Do not propose hiding risk, changing authorization settings, disabling review, or repeated identical submissions.
+Do not use remediation for missing human consent, sensitive exports, persistent security changes or critical
+risk. A high-risk label may still use remediation to inspect missing recovery or impact evidence before deciding; it does not authorize the original action. Do not propose hiding risk, changing authorization settings, disabling review, or repeated identical submissions.
 Prefer remediation over a human question when the missing fact can be checked by the agent within existing permissions.
 Optional clarification: one specific question in the user's language explaining the exact action,
 target and missing authorization or evidence. Ask only what is needed to decide the proposed action.

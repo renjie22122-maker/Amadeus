@@ -1,3 +1,4 @@
+import { modelPricing } from '../../shared/model-pricing.js';
 import { reviewContent, reviewHash, ReviewFlights } from './review-cache.js';
 import type { FileScope } from './paths.js';
 import {
@@ -129,8 +130,8 @@ export class AutoReview {
         record.reason =
           'Process cleanup is not scoped to this task. Select runtime-owned process identities before retrying; cwd does not constrain Stop-Process.';
         record.failureCode = 'UNSCOPED_PROCESS_TERMINATION';
-      } else if (risk.level === 'high')
-        record.reason = 'High-risk operation requires explicit human approval: ' + risk.reason;
+      } else if (payload.forceHuman || payload.forceManual)
+        record.reason = 'Explicit human-only rule requires human approval: ' + risk.reason;
       else {
         const content = reviewContent({
           humanMessages: messages,
@@ -216,7 +217,7 @@ export class AutoReview {
             ? Math.min(1, Math.max(0, result.usage.cached / result.usage.input))
             : null;
         record.model = profile.model;
-        const prices = profile.prices,
+        const prices = modelPricing(profile).prices,
           u = result.usage;
         record.estimatedUsd =
           !flight.joined &&

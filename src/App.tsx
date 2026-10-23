@@ -398,6 +398,7 @@ export function App() {
   const totalUsage = run
     ? {
         ...run,
+        priceBands: [...new Set(descendants.flatMap((r) => r.priceBands || []))],
         usageComplete: !descendants.some((r) => r.usageComplete === false),
         inputTokens: descendants.reduce((n, r) => n + r.inputTokens, 0),
         outputTokens: descendants.reduce((n, r) => n + r.outputTokens, 0),
@@ -1432,16 +1433,39 @@ export function App() {
                       <div className={'run-result ' + run.status}>
                         <span className="dot" />
                         {run.status}
-                        <span>{totalUsage!.modelCalls} model calls 路 parent + children</span>
+                        <span
+                          title={t(
+                            'Estimates use configured or dated official rates; not a provider bill. Based on request time and verified calendar.',
+                          )}
+                        >
+                          {totalUsage!.modelCalls} model calls · parent + children
+                        </span>
                         <span>
                           {(totalUsage!.inputTokens + totalUsage!.outputTokens).toLocaleString()}{' '}
                           tokens
                         </span>
                         <span>
                           {totalUsage!.estimatedUsd === null
-                            ? t('unknownCost')
+                            ? t('Cost unavailable: missing price or usage')
                             : '~$' + totalUsage!.estimatedUsd!.toFixed(5)}
                         </span>
+                        <span>
+                          {t('Input')} {totalUsage!.inputTokens.toLocaleString()} · {t('Output')}{' '}
+                          {totalUsage!.outputTokens.toLocaleString()}
+                        </span>
+                        <span>
+                          {totalUsage!.usageComplete &&
+                          totalUsage!.inputTokens > 0 &&
+                          totalUsage!.cachedTokens > 0
+                            ? `${t('Recorded cache hit')} ${(Math.min(1, totalUsage!.cachedTokens / totalUsage!.inputTokens) * 100).toFixed(1)}% (${totalUsage!.cachedTokens.toLocaleString()})`
+                            : t('Cache usage unavailable or zero')}
+                        </span>
+                        <span>
+                          {totalUsage!.priceBands.map((b) => t('Rate: ' + b)).join(' / ')}
+                        </span>
+                        {totalUsage!.usageComplete === false && (
+                          <span>{t('Usage incomplete')}</span>
+                        )}
                       </div>
                     )}
                     <div ref={bottom} />

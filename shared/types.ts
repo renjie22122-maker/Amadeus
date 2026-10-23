@@ -223,6 +223,7 @@ export interface Run {
   cachedTokens: number;
   modelCalls: number;
   estimatedUsd: number | null;
+  priceBands?: string[];
   maxSteps: number;
   profileId: string;
   reasoning: Reasoning;

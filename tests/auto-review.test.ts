@@ -170,7 +170,12 @@ test('only exact built-in queries shortcut review; composed commands and high ri
       ).decision,
       'ask',
     );
-    assert.equal(calls, 5);
+    assert.equal(calls, 6);
+    assert.equal(
+      (await reviewer.review(f.run, { command: 'git push', forceHuman: true }, signal)).decision,
+      'ask',
+    );
+    assert.equal(calls, 6);
   } finally {
     f.store.close();
   }
@@ -200,7 +205,7 @@ test('new instructions, configuration or changed action invalidate approval', as
       const result = await reviewer.review(f.run, payload, new AbortController().signal);
       assert.equal(result.decision, 'ask');
       assert.match(result.reason, /changed/);
-      assert.equal(result.policyVersion, '2026-10-23.2');
+      assert.equal(result.policyVersion, '2026-10-23.3');
     } finally {
       f.store.close();
     }
@@ -552,7 +557,7 @@ test('unchanged evidence cannot repeatedly defer a human decision', async () => 
     f.store.close();
   }
 });
-test('remediation is never an authorization and excludes high risk and missing consent', async () => {
+test('remediation is never an authorization and allows high-risk inspection but excludes critical risk and missing consent', async () => {
   const { decideAssessment } = await import('../server/services/review-policy.js');
   const base = {
     ...JSON.parse(approved()),
@@ -563,8 +568,10 @@ test('remediation is never an authorization and excludes high risk and missing c
   const fixable = decideAssessment(base, [0]);
   assert.equal(fixable.decision, 'ask');
   assert.equal(fixable.replan?.kind, 'inspect');
+  const high = decideAssessment({ ...base, risk: 'high' }, [0]);
+  assert.equal(high.decision, 'ask');
+  assert.equal(high.replan?.kind, 'inspect');
   for (const change of [
-    { risk: 'high' },
     { risk: 'critical' },
     { authorization: 'none' },
     { authorization: 'unknown' },

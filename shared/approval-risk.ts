@@ -1,6 +1,6 @@
 export function approvalRisk(payload: Record<string, any>) {
   const command = typeof payload.command === 'string' ? payload.command.trim() : '';
-  if (payload.forceHuman)
+  if (payload.forceHuman || payload.forceManual)
     return {
       level: 'high',
       reason: 'Explicit human approval required',

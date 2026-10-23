@@ -4,13 +4,13 @@
 
 Reviewed: 2026-10-23.
 
-Policy version in code: `2026-10-23.2`. This is Amadeus's implementation, not a claim to reproduce private Codex internals.
+Policy version in code: `2026-10-23.3`. This is Amadeus's implementation, not a claim to reproduce private Codex internals.
 
 ## Decision path
 
-Tool guards first determine whether approval is required. Auto mode invokes a separate tool-free reviewer. Exact argument-free cd with execution metadata has a narrow shortcut. Deterministic dangerous matches, explicit ask rules and forceHuman still require a person.
+Tool guards first determine whether approval is required. Auto mode invokes a separate tool-free reviewer. Exact argument-free cd with execution metadata has a narrow shortcut. Explicit ask rules and forceHuman still require a person; keyword risk matches reach independent assessment.
 
-The host accepts only validated bounded low-risk actions with explicit/implicit authorization, or medium-risk actions with explicit/ordinary task-implied authorization, known effects, valid user-message references and no sensitive-data/security-change flags. High, critical and unknown risks go to the user. A changed operation, settings or authorization context invalidates the assessment.
+The host accepts only validated bounded low-risk actions with explicit/implicit authorization, or medium-risk actions with explicit/ordinary task-implied authorization, known effects, valid user-message references and no sensitive-data/security-change flags. High risk follows the explicit-authorization and recovery-evidence path below; critical and unresolved unknown risks require human review. A changed operation, settings or authorization context invalidates the assessment.
 
 ## Evidence and privacy
 
@@ -32,7 +32,7 @@ Audit cards expose policy, rationale, duration, input/cached/output tokens and e
 
 ## General evidence and accounting (2026-10-23)
 
-Automatic review selects recent and task-relevant human authorization, preserving message IDs; it does not treat scheduled prompts or tool text as human approval. Bounded low/medium actions may use explicit or ordinary task-implied authorization when material effects are established. High-risk, unknown effects, sensitive transfers and persistent security changes still need human review. A malformed reviewer JSON response receives one format-only retry within the original timeout; both calls count toward usage. A valid negative decision is not retried for a different verdict.
+Automatic review selects recent and task-relevant human authorization, preserving message IDs; it does not treat scheduled prompts or tool text as human approval. Bounded low/medium actions may use explicit or ordinary task-implied authorization when material effects are established. Unresolved high-risk effects, unknown effects, sensitive transfers and persistent security changes still need human review. A malformed reviewer JSON response receives one format-only retry within the original timeout; both calls count toward usage. A valid negative decision is not retried for a different verdict.
 
 Native write_file/edit_file/apply_patch mutations in auto mode now provide scoped before/after excerpts, hashes and truncation markers before writing. Bytes are rechecked immediately before execution; changes invalidate review. This is an application tool gate, not an OS filesystem sandbox or an atomic lock against unrelated external writers. Host commands remain subject to their own review. Review considers actual destination, data categories, process ownership, active-work impact and reversibility across action types, not application/vendor allowlists. Unknown state must be established, not invented by the reviewer.
 
@@ -48,6 +48,12 @@ Validation: synthetic billing/usage fixtures, budget boundaries, file preview/st
 
 A valid independent assessment can request inspect/revise/wait for an already authorized task whose material effects remain unresolved. The original operation is not started or approved. The host returns a not-started tool result to the executing agent, which may collect evidence or propose a smaller operation using existing permissions. Every resubmission is reviewed independently. There is no automatic shell execution, permission grant or background sleep created by this mechanism.
 
-At most three repair notices per run are persisted. Identical unchanged review evidence goes straight to the existing human path; counters survive restart. Missing consent, high/critical risk, sensitive transfers, security changes, forced human rules, recovery uncertainty, failed reviewer calls and changed authorization are excluded. This lowers unnecessary interruptions without claiming that every task can finish without a person. Model compliance and the available inspection tools still determine whether the agent resolves the missing facts.
+At most three repair notices per run are persisted. Identical unchanged review evidence goes straight to the existing human path; counters survive restart. Missing consent, critical risk, sensitive transfers, security changes, forced human rules, recovery uncertainty, failed reviewer calls and changed authorization are excluded. This lowers unnecessary interruptions without claiming that every task can finish without a person. Model compliance and the available inspection tools still determine whether the agent resolves the missing facts.
 
-Public design references: [OpenAI Auto-review research](https://alignment.openai.com/auto-review/) separates execution from authorization, supplies rejection rationale and limits repeated denials; [Claude Code modes](https://code.claude.com/docs/en/permission-modes) distinguish classifier review from bypass and retain escalation thresholds; [ChatGPT Agent safety](https://help.openai.com/en/articles/11752874-chatgpt-agent) documents consequential-action confirmation. These are design references, not shared implementation or promised approval rates. Amadeus still has more conservative deterministic high-risk gates and has not replicated their OS sandbox or production evaluations.
+Public design references: [OpenAI Auto-review research](https://alignment.openai.com/auto-review/) separates execution from authorization, supplies rejection rationale and limits repeated denials; [Claude Code modes](https://code.claude.com/docs/en/permission-modes) distinguish classifier review from bypass and retain escalation thresholds; [ChatGPT Agent safety](https://help.openai.com/en/articles/11752874-chatgpt-agent) documents consequential-action confirmation. These are design references, not shared implementation or promised approval rates. Amadeus retains deterministic authorization/evidence checks and has not replicated their OS sandbox or production evaluations.
+
+## Risk, authorization and usage (2026-10-23)
+
+A heuristic high-risk label now reaches independent assessment rather than immediately escalating. High risk requires explicit consent for the target and consequences, bounded known impact and observed reversible/recoverable mechanisms. Missing evidence, irreversible/critical effects, sensitive transfers, security changes and forced-human rules remain restricted. A promised backup is not a verified backup; reverting files does not undo publication. Context/source revalidation still applies. See [OpenAI auto-review](https://alignment.openai.com/auto-review/).
+
+The run footer reports parent/child input, output, recorded cached-input ratio and estimated USD. Missing rates/usage are not free; historical unknown costs are not backfilled. Manual prices override the dated official-origin/model catalog. The DeepSeek snapshot verified 2026-10-23 expires 2026-11-23 UTC. A generic schedule resolver uses request-time UTC windows, weekday rules and a verified local-date holiday calendar; the footer lists all rate bands used across calls. Estimates are not bills. Per-call ledgers retain applied rates and provenance. Third-party endpoints never inherit official prices. [Pricing source](https://api-docs.deepseek.com/quick_start/pricing/).

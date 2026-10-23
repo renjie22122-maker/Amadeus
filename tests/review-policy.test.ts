@@ -51,3 +51,29 @@ test('uncooperative provider cannot keep review waiting or authorize late', asyn
   await assert.rejects(p, /deadline/);
   finish('allow');
 });
+
+test('high impact needs explicit consent and evidenced recovery, without bypassing restrictions', () => {
+  const high = {
+    ...base,
+    risk: 'high',
+    recovery: {
+      kind: 'recoverable',
+      evidence: 'host read verified backup manifest and restore procedure',
+      boundedImpact: 'one user-selected disposable output directory',
+    },
+  };
+  assert.equal(decideAssessment(high, [0]).decision, 'allow');
+  for (const override of [
+    { authorization: 'implicit' },
+    { evidence: [99] },
+    { bounded: false },
+    { effectsKnown: false },
+    { sensitiveData: true },
+    { securityChange: true },
+    { risk: 'critical' },
+    { recovery: undefined },
+    { recovery: { ...high.recovery, kind: 'unknown' } },
+    { recovery: { ...high.recovery, kind: 'irreversible' } },
+  ])
+    assert.equal(decideAssessment({ ...high, ...override }, [0]).decision, 'ask');
+});

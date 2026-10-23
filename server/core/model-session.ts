@@ -1,3 +1,4 @@
+import { modelPricing } from '../../shared/model-pricing.js';
 import type { Run, Profile, Usage } from '../../shared/types.js';
 import type { ModelRequest, ModelProvider } from '../providers/protocol.js';
 import { Store, id } from '../storage/store.js';
@@ -16,6 +17,7 @@ export async function completeModel(
   run: Run,
   input: ModelRequest,
 ) {
+  const requestedAt = Date.now();
   try {
     const result = await resolveProvider(input.profile).complete(input);
     // Validate delivery before treating an otherwise successful transport as a result.
@@ -46,7 +48,7 @@ export async function completeModel(
       store.put('context-diagnostics', { id: run.id, ...diagnostics });
       store.event(run.conversationId, run.id, 'context.cache_observed', diagnostics);
     }
-    accountModelUsage(store, run, result.usage, input.profile, id());
+    accountModelUsage(store, run, result.usage, input.profile, id(), requestedAt);
     return result;
   } catch (error) {
     const usage = (error as { usage?: Usage })?.usage || {
@@ -55,7 +57,7 @@ export async function completeModel(
       cached: 0,
       measured: false,
     };
-    accountModelUsage(store, run, usage, input.profile, id());
+    accountModelUsage(store, run, usage, input.profile, id(), requestedAt);
     if (error instanceof AppError && error.code === 'MODEL_INCOMPLETE') {
       const info = error as AppError & {
         finishReason?: string;
@@ -83,16 +85,23 @@ export function accountModelUsage(
   usage: Usage,
   profile: Profile,
   requestId: string,
+  requestedAt = Date.now(),
 ) {
+  const pricing = modelPricing(profile, requestedAt);
+  run.priceBands = [...new Set([...(run.priceBands || []), pricing.basis])];
   store.db
     .prepare('INSERT INTO ledger(request_id,run_id,data) VALUES(?,?,?)')
-    .run(requestId, run.id, JSON.stringify({ usage, model: profile.model, at: Date.now() }));
+    .run(
+      requestId,
+      run.id,
+      JSON.stringify({ usage, model: profile.model, pricing, at: Date.now() }),
+    );
   run.inputTokens += usage.input;
   run.outputTokens += usage.output;
   run.cachedTokens += usage.cached;
   run.modelCalls++;
   if (!usage.measured) run.usageComplete = false;
-  const p = profile.prices;
+  const p = pricing.prices;
   if (
     usage.measured &&
     p.input !== null &&

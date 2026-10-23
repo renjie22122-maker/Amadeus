@@ -79,6 +79,22 @@ const words: Record<string, [string, string]> = {
   ],
   draft: ['Your message will join at the next safe step.', '消息会在下一个安全步骤加入上下文。'],
   usage: ['Measured token usage', 'API 实测用量'],
+  'Cost unavailable: missing price or usage': [
+    'Cost unavailable: missing price or usage',
+    '费用暂不可估算：缺少单价或用量',
+  ],
+  'Estimates use configured or dated official rates; not a provider bill. Based on request time and verified calendar.':
+    [
+      'Estimates use configured or dated official rates; not a provider bill. Based on request time and verified calendar.',
+      '按配置或有时效的官方价格估算，不是服务商账单；按请求时间与已核对日历选价。',
+    ],
+  'Recorded cache hit': ['Recorded cache hit', '已记录缓存命中'],
+  'Cache usage unavailable or zero': ['Cache usage unavailable or zero', '缓存用量未报告或为零'],
+  'Usage incomplete': ['Usage incomplete', '用量不完整'],
+  'Rate: peak': ['Peak rate', '峰时价'],
+  'Rate: off-peak': ['Off-peak rate', '谷时价'],
+  'Rate: configured': ['Configured rate', '配置单价'],
+  'Rate: unknown': ['Unknown rate', '单价未知'],
   unknownCost: ['Price not configured', '尚未配置价格'],
   attachments: ['Attachments', '附件'],
   selectedSkills: ['Selected skills', '选用技能'],
