@@ -67,18 +67,24 @@ test('automatic sources preserve versions, reuse vectors, isolate scopes and ret
   await writeFile(join(root, 'node_modules', 'skip.md'), 'Excluded dependency');
   await writeFile(join(root, 'binary.exe'), 'unsupported');
   await manager.tick();
-  assert.deepEqual(store.get<any>('knowledge-watch', 'project:p').scan, {
-    files: 1,
-    updated: 1,
-    unchanged: 0,
-  });
+  assert.deepEqual(
+    (({ completedAt, ...counts }) => counts)(store.get<any>('knowledge-watch', 'project:p').scan),
+    {
+      files: 1,
+      updated: 1,
+      unchanged: 0,
+    },
+  );
   assert.equal(knowledge.search(['project:p'], 'Nested')[0].text.includes('Nested'), true);
   await manager.tick();
-  assert.deepEqual(store.get<any>('knowledge-watch', 'project:p').scan, {
-    files: 1,
-    updated: 0,
-    unchanged: 1,
-  });
+  assert.deepEqual(
+    (({ completedAt, ...counts }) => counts)(store.get<any>('knowledge-watch', 'project:p').scan),
+    {
+      files: 1,
+      updated: 0,
+      unchanged: 1,
+    },
+  );
   await manager.close();
   knowledge.close();
   store.close();
@@ -238,11 +244,14 @@ test('adding a source reuses parsed documents and vectors without resetting fail
     await manager.tick();
     assert.equal(parsed, 2);
     assert.equal(encoded, 2);
-    assert.deepEqual(store.get<any>('knowledge-watch', 'general').scan, {
-      files: 2,
-      updated: 1,
-      unchanged: 1,
-    });
+    assert.deepEqual(
+      (({ completedAt, ...counts }) => counts)(store.get<any>('knowledge-watch', 'general').scan),
+      {
+        files: 2,
+        updated: 1,
+        unchanged: 1,
+      },
+    );
     manager.synchronize('general');
     await manager.tick();
     assert.equal(parsed, 2);
@@ -344,6 +353,79 @@ test('automatic scan respects configured interval while explicit synchronization
     assert.equal(after.scanIntervalSeconds, 7200);
     assert.equal(after.revision, before.revision);
     assert.deepEqual(after.issues, before.issues);
+    await writeFile(join(root, 'three.txt'), 'three');
+    store.put('knowledge-watch', { ...after, status: 'processing' });
+    await manager.tick(false);
+    assert.equal(parsed, 3, 'interrupted scan resumes without waiting for its hourly interval');
+  } finally {
+    await manager.close();
+    knowledge.close();
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('scan persists failures before the next file finishes, preserves successes on retry, and distinguishes import errors', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'knowledge-live-errors-'));
+  const root = join(dir, 'docs');
+  const data = join(dir, 'data');
+  await mkdir(root);
+  await mkdir(data);
+  const store = new Store(join(data, 'db.sqlite'));
+  const embedding: any = {
+    enabled: () => true,
+    fingerprint: () => 'fixture',
+    encode: async (texts: string[]) => texts.map(() => [1, 0]),
+  };
+  const knowledge = new Knowledge(store, embedding);
+  let recovering = false;
+  const parsed: string[] = [];
+  const manager = new KnowledgeMaintenance(
+    store,
+    knowledge,
+    embedding,
+    data,
+    undefined,
+    async (path) => {
+      parsed.push(path);
+      if (path.endsWith('a.pdf') && !recovering) throw Error('Fixture parser failure');
+      if (path.endsWith('b.pdf') && !recovering) {
+        const live = store.get<any>('knowledge-watch', 'general');
+        assert.equal(live.currentIssues.length, 1);
+        assert.equal(live.issues[0].stage, 'parse');
+        assert.equal(live.progress.failed, 1);
+        assert.ok(live.issues[0].observedAt);
+        assert.equal(live.scan.files, 99);
+      }
+      return 'Readable fixture text';
+    },
+  );
+  try {
+    for (const name of ['a.pdf', 'b.pdf']) await writeFile(join(root, name), name);
+    store.put('knowledge-watch', {
+      id: 'general',
+      paths: [root],
+      enabled: true,
+      target: 'fixture',
+      revision: 1,
+      scan: { files: 99, updated: 0, unchanged: 99 },
+    });
+    await manager.tick();
+    const first = store.get<any>('knowledge-watch', 'general');
+    assert.equal(first.issues.length, 1);
+    assert.equal(first.scan.files, 2);
+    assert.ok(first.scan.completedAt);
+    recovering = true;
+    parsed.length = 0;
+    await manager.tick();
+    assert.deepEqual(parsed, [join(root, 'a.pdf')]);
+    assert.equal(store.get<any>('knowledge-watch', 'general').issues.length, 0);
+    await writeFile(join(root, 'c.pdf'), 'new');
+    knowledge.import = () => {
+      throw Error('Fixture database write failure');
+    };
+    await manager.tick();
+    assert.equal(store.get<any>('knowledge-watch', 'general').issues[0].stage, 'import');
   } finally {
     await manager.close();
     knowledge.close();

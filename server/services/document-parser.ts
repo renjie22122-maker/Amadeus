@@ -23,10 +23,14 @@ export function extractIsolated(
           ...(import.meta.url.endsWith('.ts') ? ['--import', 'tsx'] : []),
           '--max-old-space-size=768',
         ],
-        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
         windowsHide: true,
       },
     );
+    let stderr = '';
+    child.stderr?.on('data', (data) => {
+      stderr = (stderr + data.toString()).slice(-8192);
+    });
     let settled = false;
     const finish = (error?: Error, text?: string) => {
       if (settled) return;
@@ -67,9 +71,23 @@ export function extractIsolated(
       return;
     }
     child.once('error', (e) => finish(e));
-    child.once('exit', (code) =>
-      finish(Error('Document parser exited before completing (code ' + code + ').')),
-    );
+    child.once('close', (code, signal) => {
+      // Classify bounded diagnostics without exposing document text or environment values.
+      const reason = /heap out of memory|allocation failed/i.test(stderr)
+        ? 'memory limit'
+        : /ERR_MODULE_NOT_FOUND|Cannot find module|MODULE_NOT_FOUND/.test(stderr)
+          ? 'missing runtime module'
+          : /ERR_DLOPEN_FAILED|not a valid Win32|specified module could not be found/i.test(stderr)
+            ? 'native dependency load failure'
+            : /EACCES|EPERM|access is denied/i.test(stderr)
+              ? 'access denied'
+              : 'unexpected worker exit';
+      finish(
+        Error(
+          `DOCUMENT_WORKER_EXIT: ${reason} (code ${code}, signal ${signal || 'none'}, completed ${lastPage}${pageCount ? '/' + pageCount : ''} pages).`,
+        ),
+      );
+    });
     child.on('message', (m: any) => {
       if (settled) return;
       if (m?.type === 'tile') {

@@ -281,3 +281,9 @@ New unnamed root conversations show a short provisional title immediately. After
 Context inspection uses the run’s effective reasoning setting, matching runtime calibration. It shows the current saved snapshot separately from the latest pre-request compaction check. Reaching the threshold after a response does not interrupt that response; compression is checked before the next request. A threshold check is not proof of successful compression.
 
 Compaction counts distinguish persisted conversation-wide history from the selected run, so a new run does not reset the displayed lifetime count.
+
+## Live import diagnostics
+
+Folder maintenance persists each source failure immediately with its stage (read, parse, import or index), observation time and scan identity. The current cycle has a separate live issue list; prior unresolved issues remain available across interruption. Completed-scan totals and skipped counts are explicitly historical and include a completion timestamp for new scans. Successful source hashes and completed indexes continue to bypass parsing and embedding on resume. Parser child exits report bounded error categories and completed-page progress without exposing stderr/document contents.
+
+Worker completion waits for `close`, not `exit`: a congested parent can observe process exit before processing the final IPC result. A real-file regression blocks only the test parent to exercise this ordering; valid results and explicit parser errors must both survive. Interrupted scans bypass the periodic scan interval on restart.

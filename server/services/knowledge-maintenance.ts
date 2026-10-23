@@ -25,6 +25,8 @@ export interface SourceIssue {
   attempts: number;
   revision: number;
   parserRevision?: number;
+  observedAt?: number;
+  cycleStartedAt?: number;
 }
 export interface KnowledgeProgress {
   phase: 'scanning' | 'checking' | 'parsing' | 'graph' | 'indexing' | 'evaluating' | 'done';
@@ -48,7 +50,8 @@ export interface KnowledgeWatch {
   revision: number;
   status?: string;
   progress?: KnowledgeProgress;
-  scan?: { files: number; updated: number; unchanged: number };
+  scan?: { files: number; updated: number; unchanged: number; completedAt?: number };
+  currentIssues?: SourceIssue[];
   issues?: SourceIssue[];
   skipped?: { excluded: number; links: number; unsupported: number };
   error?: string;
@@ -300,6 +303,7 @@ export class KnowledgeMaintenance {
       if (
         !force &&
         w.status !== 'pending' &&
+        w.status !== 'processing' &&
         !w.nextRetryAt &&
         Date.now() - (w.updatedAt || 0) < (w.scanIntervalSeconds ?? 30) * 1000
       )
@@ -314,6 +318,7 @@ export class KnowledgeMaintenance {
         reused: 0,
         failed: 0,
       };
+      const issues: SourceIssue[] = [];
       let lastPublished = 0;
       const publish = (patch: Partial<KnowledgeProgress>, force = false) => {
         Object.assign(progress, patch);
@@ -325,6 +330,7 @@ export class KnowledgeMaintenance {
           ...current,
           status: 'processing',
           progress: { ...progress },
+          currentIssues: [...issues],
         });
       };
       try {
@@ -340,7 +346,6 @@ export class KnowledgeMaintenance {
         if (w.id.startsWith('project:') && (!project || project.removedAt))
           throw Error('Project is unavailable.');
         const files: string[] = [];
-        const issues: SourceIssue[] = [];
         const skipped = { excluded: 0, links: 0, unsupported: 0 };
         let traversalFailed = false;
         let indexError: unknown;
@@ -359,12 +364,33 @@ export class KnowledgeMaintenance {
             stage,
             hash,
             error: String((error as any)?.message || error).slice(0, 500),
+            observedAt: Date.now(),
+            cycleStartedAt: progress.startedAt,
             attempts: (old?.attempts || 0) + 1,
             revision: w.revision,
             parserRevision: textFormats.has(extname(path).toLowerCase())
               ? TEXT_DECODING_REVISION
               : undefined,
           });
+          // Persist each failure immediately, including before a long next file or interruption.
+          const current = this.store.get<KnowledgeWatch>('knowledge-watch', w.id);
+          if (this.current(w))
+            this.store.put('knowledge-watch', {
+              ...current,
+              issues: [
+                ...(current.issues || []).filter((x) => x.path !== path || x.stage !== stage),
+                issues.at(-1)!,
+              ],
+            });
+          publish({ failed: issues.length }, true);
+        };
+        const resolvedSource = (path: string) => {
+          const current = this.store.get<KnowledgeWatch>('knowledge-watch', w.id);
+          const remaining = (current.issues || []).filter(
+            (x) => x.path !== path || !['read', 'parse', 'import'].includes(x.stage),
+          );
+          if (remaining.length !== (current.issues || []).length && this.current(w))
+            this.store.put('knowledge-watch', { ...current, issues: remaining });
         };
         let visited = 0;
         const scope = project && new FileScope(project.folders, this.directory);
@@ -417,6 +443,7 @@ export class KnowledgeMaintenance {
           status: 'processing',
           error: undefined,
           progress,
+          currentIssues: [],
         });
         for (const path of w.paths) {
           try {
@@ -463,12 +490,13 @@ export class KnowledgeMaintenance {
               }
           }
           let hash: string | undefined;
+          let stage = 'read';
           try {
             hash = await fileHash(path);
             const failed = w.issues?.find(
               (x) =>
                 x.path === path &&
-                x.stage === 'parse' &&
+                ['read', 'parse', 'import'].includes(x.stage) &&
                 x.hash === hash &&
                 x.revision === w.revision &&
                 x.parserRevision === parserRevision,
@@ -481,8 +509,10 @@ export class KnowledgeMaintenance {
               if (old.parserRevision !== parserRevision)
                 this.store.put('knowledge-source', { ...old, parserRevision });
               unchanged++;
+              resolvedSource(path);
               continue;
             }
+            stage = 'parse';
             publish({ phase: 'parsing', currentFile: path }, true);
             const checkpointDirectory = join(this.directory, 'pdf-checkpoints', key);
             const text = this.parse
@@ -493,6 +523,7 @@ export class KnowledgeMaintenance {
             if ((await fileHash(path)) !== hash)
               throw Error('Source changed during parsing; retry on the next scan.');
             if (!this.current(w)) return;
+            stage = 'import';
             const doc: any = this.knowledge.import(w.id, basename(path), text, {
               source: path,
               revisionOf: old?.removed ? undefined : old?.documentId,
@@ -500,6 +531,7 @@ export class KnowledgeMaintenance {
             // Scope/path-derived private checkpoint folder; source files are never removed.
             await rm(checkpointDirectory, { recursive: true, force: true }).catch(() => {});
             updated++;
+            resolvedSource(path);
             this.store.put('knowledge-source', {
               id: key,
               scope: w.id,
@@ -511,7 +543,7 @@ export class KnowledgeMaintenance {
             });
           } catch (e) {
             if (this.stopped) return;
-            issue(path, 'parse', e, hash);
+            issue(path, stage, e, hash);
             // A failed replacement must not leave stale facts searchable.
             if (old && hash && (old.hash !== hash || needsRepair)) {
               const doc = this.store.maybe<any>('document', old.documentId);
@@ -628,10 +660,11 @@ export class KnowledgeMaintenance {
               total: uniqueFiles.length,
             },
             issues,
+            currentIssues: [...issues],
             skipped,
             scanIntervalSeconds: this.store.maybe<KnowledgeWatch>('knowledge-watch', w.id)
               ?.scanIntervalSeconds,
-            scan: { files: new Set(files).size, updated, unchanged },
+            scan: { files: new Set(files).size, updated, unchanged, completedAt: Date.now() },
             failures: 0,
             failureKind: indexError
               ? diagnoseFailure(indexError).automatic
@@ -650,7 +683,8 @@ export class KnowledgeMaintenance {
         const transient = diagnosis.automatic;
         if (this.store.maybe<KnowledgeWatch>('knowledge-watch', w.id)?.revision === w.revision)
           this.store.put('knowledge-watch', {
-            ...w,
+            ...this.store.get<KnowledgeWatch>('knowledge-watch', w.id),
+            currentIssues: [...issues],
             status: 'needs_attention',
             progress: { ...progress, updatedAt: Date.now() },
             failures: (w.failures || 0) + 1,

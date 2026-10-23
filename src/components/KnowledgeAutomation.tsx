@@ -345,7 +345,8 @@ export function KnowledgeAutomation({
       </p>
       {value.scan && (
         <p className="muted">
-          {zh ? '最近扫描：' : 'Latest scan: '}
+          {zh ? '上次完成的扫描：' : 'Last completed scan: '}
+          {value.scan.completedAt ? new Date(value.scan.completedAt).toLocaleString() + ' · ' : ''}
           {value.scan.files} {zh ? '个支持文件；新增或更新 ' : 'supported files; imported/updated '}
           {value.scan.updated} · {zh ? '未变化 ' : 'unchanged '}
           {value.scan.unchanged}
@@ -353,7 +354,9 @@ export function KnowledgeAutomation({
       )}
       {value.skipped && (
         <p className="muted">
-          {zh ? '跳过：隐藏或构建目录 ' : 'Skipped: hidden/build entries '}
+          {zh
+            ? '上次完成扫描跳过：隐藏或构建目录 '
+            : 'Last completed scan skipped: hidden/build entries '}
           {value.skipped.excluded}
           {' · '}
           {zh ? '链接 ' : 'links '}
@@ -364,10 +367,33 @@ export function KnowledgeAutomation({
         </p>
       )}
       {value.error && <p role="alert">{value.error}</p>}
+      {value.status === 'processing' && (
+        <details open>
+          <summary>
+            {zh ? '本次扫描问题（实时）' : 'Current scan issues (live)'} ·{' '}
+            {value.progress?.failed || 0}
+          </summary>
+          {(value.currentIssues || []).map((x: any, i: number) => (
+            <p key={i}>
+              <strong>{x.path}</strong> · {x.stage} · {x.error}
+            </p>
+          ))}
+          {(value.progress?.failed || 0) > (value.currentIssues?.length || 0) && (
+            <p>
+              {zh
+                ? '此运行尚未记录完整错误详情；后续扫描将逐项实时记录。'
+                : 'Details are incomplete for this run; subsequent scans persist each issue live.'}
+            </p>
+          )}
+        </details>
+      )}
       {!!value.issues?.length && (
         <details open>
           <summary>
-            {zh ? '失败或跳过的文件' : 'Failed or skipped files'} · {value.issues.length}
+            {zh
+              ? '已记录的问题（含历史待重试项）'
+              : 'Recorded issues (including prior unresolved items)'}{' '}
+            · {value.issues.length}
           </summary>
           <ul>
             {value.issues.map((x: any, i: number) => (
