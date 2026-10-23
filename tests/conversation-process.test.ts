@@ -41,3 +41,28 @@ test('incomplete output and latest final remain visible', () => {
   ];
   assert.deepEqual([...collapsibleProcess(events, [{ id: 'r', status: 'completed' }])], [2]);
 });
+
+test('completed run folds approval cards including pending ones, preserving questions and user chronology', () => {
+  const events = [
+    event(1, 'user.message'),
+    event(2, 'input.requested', { id: 'a', kind: 'approval', status: 'pending' }),
+    event(3, 'user.message', { steering: true }),
+    event(4, 'input.requested', { id: 'b' }),
+    event(5, 'input.requested', { id: 'q', kind: 'question' }),
+    event(6, 'assistant.message', { final: true }),
+  ];
+  const before = JSON.stringify(events);
+  const inputs = [
+    { id: 'a', kind: 'approval', status: 'answered' },
+    { id: 'b', kind: 'approval', status: 'pending' },
+  ];
+  assert.deepEqual(
+    [...collapsibleProcess(events, [{ id: 'r', status: 'completed' }], inputs)],
+    [2, 4],
+  );
+  assert.equal(
+    collapsibleProcess(events, [{ id: 'r', status: 'waiting_approval' }], inputs).size,
+    0,
+  );
+  assert.equal(JSON.stringify(events), before);
+});

@@ -4,7 +4,7 @@
 
 Reviewed: 2026-10-23.
 
-Policy version in code: `2026-10-23.4`. This is Amadeus's implementation, not a claim to reproduce private Codex internals.
+Policy version in code: `2026-10-23.5`. This is Amadeus's implementation, not a claim to reproduce private Codex internals.
 
 ## Decision path
 
@@ -65,3 +65,13 @@ File review preserves all changed lines, compressing only unchanged context betw
 Review requests opt into pre-connection recovery; normal chat retains its own recovery loop without nested retries. Known transient failures before response headers (connection reset/refused, temporary DNS or unreachable network) share the existing HTTP retry budget: at most three attempts within the original deadline. Authentication, certificate errors and partial response streams are not replayed. Reviewer failure diagnostics retain safe error codes without response bodies. Exhausted retries do not grant permission.
 
 Invalid assessment format receives one bounded repair with the exact JSON Schema and safe field-level diagnostics. Missing safety facts are never filled automatically; a valid negative assessment is not retried. The audit distinguishes JSON syntax from schema errors without retaining raw model output.
+
+## Cleanup and evidence repair
+
+Cleanup is assessed by actual consequences, provenance and retention needs, not deletion keywords, directory names or suffixes. The same-profile reviewer can see bounded directory observations and at most six completed current-run file writes from the latest 24 journal records, with current versus recorded content hashes. A write is not proof of initial creation or disposability; a hash mismatch means later contents cannot be justified by that write. Evidence is checked again before accepting the review. Other runs and different reviewer profiles do not receive this journal context.
+
+When a validated assessment establishes task authorization but leaves target boundaries, effects or high-risk recovery unknown, the host can request bounded inspection even if the reviewer omitted remediation. Explicit clarification, missing authorization, sensitive/security changes and critical risk retain their human gate. Existing three-opportunity and unchanged-evidence limits apply. No blocked operation executes during repair. Known irreversible high-impact deletion is not automatically downgraded; retaining uncertain files or proposing a verified reversible archive can complete the task instead.
+
+## Completed-turn presentation
+
+After a successful final answer, approval cards join the collapsible previous process in chronological order. User messages and the final answer remain outside. Active/waiting turns do not fold. A historical pending approval remains discoverable through the pending count and attention navigation, which opens the corresponding process. Folding changes presentation only, never approval state or authorization.

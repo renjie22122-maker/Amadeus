@@ -99,3 +99,39 @@ test('review schema diagnostics identify missing facts without disclosing model 
   }
   assert.equal(reviewValidationIssue(new SyntaxError('private JSON text')).category, 'json');
 });
+
+test('material evidence gaps get bounded inspection without changing the approval matrix', () => {
+  for (const change of [{ bounded: false }, { effectsKnown: false }, { risk: 'high' }]) {
+    const result = decideAssessment({ ...base, authorization: 'implicit', ...change }, [0]);
+    assert.equal(result.decision, 'ask');
+    assert.equal(result.replan?.kind, 'inspect');
+    assert.match(result.replan!.instruction, /not approved/);
+  }
+  const irreversible = {
+    ...base,
+    risk: 'high',
+    authorization: 'implicit',
+    recovery: {
+      kind: 'irreversible',
+      evidence: 'No retained copy',
+      boundedImpact: 'unique local experiment records',
+    },
+  };
+  assert.equal(decideAssessment(irreversible, [0]).decision, 'ask');
+  assert.equal(decideAssessment(irreversible, [0]).replan, undefined);
+  for (const change of [
+    { authorization: 'none' },
+    { authorization: 'unknown' },
+    { evidence: [90] },
+    { sensitiveData: true },
+    { securityChange: true },
+    { risk: 'critical' },
+    { clarification: 'Do you authorize deleting the unique data?' },
+  ]) {
+    assert.equal(
+      decideAssessment({ ...base, effectsKnown: false, ...change }, [0]).replan,
+      undefined,
+    );
+  }
+  assert.equal(decideAssessment({ ...base, authorization: 'implicit' }, [0]).decision, 'allow');
+});

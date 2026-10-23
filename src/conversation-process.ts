@@ -1,6 +1,11 @@
 import type { AgentEvent } from '../shared/types';
 /** Only known successful delivery folds; legacy/partial/error records stay visible. */
-export function collapsibleProcess(events: AgentEvent[], runs: { id: string; status: string }[]) {
+export function collapsibleProcess(
+  events: AgentEvent[],
+  runs: { id: string; status: string }[],
+  inputs: { id: string; kind: string; status?: string }[] = [],
+) {
+  const requests = new Map(inputs.map((input) => [input.id, input]));
   const completed = new Set(runs.filter((r) => r.status === 'completed').map((r) => r.id));
   const finals = new Map<string, number>();
   for (const e of events)
@@ -20,6 +25,8 @@ export function collapsibleProcess(events: AgentEvent[], runs: { id: string; sta
           finals.has(e.runId) &&
           e.id < finals.get(e.runId)! &&
           ((e.type === 'assistant.message' && !e.data.incomplete) ||
+            (e.type === 'input.requested' &&
+              (requests.get(e.data.id)?.kind || e.data.kind) === 'approval') ||
             [
               'tool.started',
               'tool.completed',

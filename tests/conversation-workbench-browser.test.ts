@@ -63,6 +63,23 @@ test(
         text: 'Intermediate progress hidden until expanded',
         final: false,
       });
+      for (const [id, answer] of [
+        ['approved', 'Approved fixture'],
+        ['denied', 'Denied fixture'],
+      ]) {
+        const input = {
+          id,
+          conversationId: c.id,
+          runId: 'r',
+          kind: 'approval',
+          status: 'answered',
+          answer,
+          payload: { command: 'fixture operation', reason: 'Synthetic approval' },
+          createdAt: Date.now(),
+        };
+        created.store.put('input', input);
+        created.store.event(c.id, 'r', 'input.requested', { ...input, status: 'pending' });
+      }
       created.store.event(c.id, 'r', 'tool.started', {
         name: 'mcp_call',
         arguments: { tool: 'screenshot', serverId: 'browser', content: 'LONG'.repeat(10000) },
@@ -118,6 +135,8 @@ test(
         0,
       );
       assert.equal(await page.locator('.completed-process').count(), 1);
+      assert.equal(await page.locator('.input-card').count(), 0);
+      assert.match(await page.locator('.process-toggle').innerText(), /2 approvals/);
       assert.equal(await page.locator('.process-segment .message.user').count(), 0);
       await page.getByText('Keep my follow-up outside', { exact: true }).waitFor();
       const assertCollapsedUsers = async () => {
@@ -139,6 +158,10 @@ test(
         .getByText('Intermediate progress hidden until expanded', { exact: true })
         .waitFor();
       await page.getByText('Second progress after steering', { exact: true }).waitFor();
+      assert.equal(await page.locator('.process-segment .input-card.answered').count(), 2);
+      assert.equal(await page.locator('.input-card[open]').count(), 0);
+      await page.locator('#input-approved > summary').click();
+      assert.equal(await page.locator('#input-approved[open]').count(), 1);
       const ordered = await page.locator('.conversation-width .message-body').allTextContents();
       assert.ok(
         ordered.findIndex((t) => t.includes('Intermediate progress')) <
@@ -151,7 +174,10 @@ test(
       assert.ok((await page.locator('.process-segment .activity').count()) >= 1);
       assert.equal(await page.locator('.process-segment .activity[open]').count(), 0);
       await page.locator('.process-segment .activity > summary').first().click();
-      assert.ok((await page.locator('.process-segment .activity-full details').count()) > 0);
+      await page
+        .locator('.process-segment .activity-full details')
+        .first()
+        .waitFor({ state: 'visible' });
       await page.locator('.process-segment .activity-full details > summary').first().click();
       if (process.env.AMADEUS_WORKBENCH_SCREENSHOT)
         await page.screenshot({ path: process.env.AMADEUS_WORKBENCH_SCREENSHOT });
@@ -162,6 +188,7 @@ test(
       assert.equal(await page.locator('.process-segment .message.user').count(), 0);
       await page.locator('.completed-process .process-toggle').first().click();
       await assertCollapsedUsers();
+      assert.equal(await page.locator('.input-card').count(), 0);
       await page.getByRole('button', { name: '打开 / Open · report.md', exact: true }).click();
       await page.getByRole('heading', { name: 'Report preview', exact: true }).waitFor();
       assert.equal(await page.evaluate(() => (window as any).pwned), undefined);

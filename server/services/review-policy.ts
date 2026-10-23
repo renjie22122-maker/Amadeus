@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // The model supplies evidence; this host policy owns the execution decision.
-export const REVIEW_POLICY_VERSION = '2026-10-23.4';
+export const REVIEW_POLICY_VERSION = '2026-10-23.5';
 export const assessmentSchema = z
   .object({
     risk: z.enum(['low', 'medium', 'high', 'critical', 'unknown']),
@@ -80,17 +80,35 @@ export function decideAssessment(value: unknown, messageIds: number[]) {
         assessment.recovery !== undefined &&
         ['reversible', 'recoverable'].includes(assessment.recovery.kind))) &&
     ['explicit', 'implicit'].includes(assessment.authorization);
+  const canRepair =
+    !allow &&
+    validEvidence &&
+    ['explicit', 'implicit'].includes(assessment.authorization) &&
+    !assessment.sensitiveData &&
+    !assessment.securityChange &&
+    assessment.risk !== 'critical';
+  const gaps = [
+    ...(!assessment.bounded ? ['actual target set and impact boundary'] : []),
+    ...(!assessment.effectsKnown ? ['material side effects'] : []),
+    ...(assessment.risk === 'high' &&
+    (!assessment.recovery || assessment.recovery.kind === 'unknown')
+      ? ['observed recovery mechanism and what unique information would be lost']
+      : []),
+  ];
+  const fallback =
+    !assessment.clarification && gaps.length
+      ? {
+          kind: 'inspect' as const,
+          instruction:
+            'The operation is not approved. Within existing task permissions, inspect ' +
+            gaps.join('; ') +
+            '. Preserve uncertain or unique data; submit new evidence or a narrower reversible alternative. Do not repeat the original operation, treat generated files as disposable without evidence, or change permissions. If the remaining action needs new consent, ask the user.',
+        }
+      : undefined;
   return {
     assessment,
-    replan:
-      !allow &&
-      validEvidence &&
-      ['explicit', 'implicit'].includes(assessment.authorization) &&
-      !assessment.sensitiveData &&
-      !assessment.securityChange &&
-      assessment.risk !== 'critical'
-        ? assessment.remediation
-        : undefined,
+    replan: canRepair ? assessment.remediation || fallback : undefined,
+
     decision: allow ? 'allow' : 'ask',
     reason: allow ? assessment.reason : 'Human review required: ' + assessment.reason,
   };
@@ -131,7 +149,10 @@ Do not suggest permanent permission, hide risk, or treat a user's answer as perm
 Assess the exact action, target, scope, backend, network, reversibility and possible side effects.
 Apply the same assessment across file edits, commands, API requests, data transfer and service lifecycle actions; do not infer safety from a provider or application name. A service restart requires evidence of target ownership and active-work impact; when busy, recommend waiting for idle or a scoped graceful restart rather than asking for blanket process termination. For transfers identify the actual destination and data categories, existing user authorization and whether a different reviewer profile would receive new source data. Do not demand a new approval merely because a previously authorized exact destination is used again, but do not treat an unknown destination as approved.
 Low means bounded routine non-destructive work. Medium includes bounded installations or paid actions.
-High includes destructive, broad or publishing operations. Critical includes credential theft or security bypass.
+Classify by consequences, not command verbs. Removing verified task-owned disposable intermediates with bounded targets and no meaningful loss can be low or medium; do not label every delete high. High includes consequential data loss, broad destructive actions or publishing operations.
+For cleanup, assess the actual resolved target set (including wildcard expansion, recursion, links and concurrent changes), task provenance, current contents, deliverable status and retention needs. A path name, file extension, untracked Git status or executor claim of authorship is not proof of disposability. writtenFiles contains host-journal completed writes and current hashes; a match proves the recorded bytes, not that the file was newly created or is safe to remove. observedSource.listings are bounded historical directory observations, not a fresh recursive inventory.
+Separate reproducible builds from unique experiment results, logs, analysis scripts, user edits and deliverables. Re-running a process does not recover its original observations. A retained complete copy or verified reconstruction may establish recoverability; a promise to recreate does not. Ordinary necessary cleanup of demonstrated disposable intermediates may follow task-implied authorization; optional broad cleanup is not implied merely by completing a task. Do not demand separate human confirmation of each incidental file when its task origin, expendability and bounded impact are established.
+For mixed or uncertain targets, prefer inspect/revise remediation: enumerate and check provenance, preserve valuable/uncertain items, narrow to demonstrated disposable outputs, or propose an evidenced reversible archive. Archiving also needs scope, destination and overwrite checks. Do not perform cleanup solely for tidiness when retaining files completes the task. A genuinely high-impact action still needs explicit authorization and recovery evidence under the host policy. Critical includes credential theft or security bypass.
 Explicit means the human clearly requested this action and its scope; implicit means a necessary ordinary
 step of the requested task. Ordinary bounded inspection necessary to an explicit task does not need
 the human to spell out exact command syntax. Evaluate actual effects, not whether the command was named.

@@ -20,6 +20,7 @@ export function reviewContent(data: Record<string, any>) {
     'humanDecisions',
     'observedSource',
     'inspectedSource',
+    'writtenFiles',
     'executionEvidence',
     'risk',
     'commandSignals',

@@ -98,8 +98,12 @@ export function App() {
       target.scrollIntoView({ block: 'center' });
       target.focus({ preventScroll: true });
       setAnchor('');
+    } else if (anchor.startsWith('input-')) {
+      const input = detail?.inputs.find((q) => 'input-' + q.id === anchor);
+      if (input?.runId && !expandedProcesses[input.runId])
+        setExpandedProcesses((previous) => ({ ...previous, [input.runId]: true }));
     }
-  }, [anchor, detail, visibleTurns]);
+  }, [anchor, detail, visibleTurns, expandedProcesses]);
   const finishedMessages = useRef(new Set<string>());
   const selectedRef = useRef(selected),
     scroll = useRef<HTMLDivElement>(null),
@@ -696,7 +700,7 @@ export function App() {
           {loadingOlder ? '…' : Math.max(0, starts.length - visibleTurns) || '…'}
         </button>,
       );
-    const folded = collapsibleProcess(all, currentRuns);
+    const folded = collapsibleProcess(all, currentRuns, detail?.inputs || []);
     const processes = new Map<
       string,
       { index: number; segments: { index: number; nodes: any[] }[]; events: AgentEvent[] }
@@ -851,6 +855,14 @@ export function App() {
       const messages = group.events.filter((e) => e.type === 'assistant.message').length;
       const tools = group.events.filter((e) => e.type === 'tool.started').length;
       const count = group.events.length;
+      const approvals = group.events.filter((e) => e.type === 'input.requested');
+      const pendingApprovals = approvals.filter(
+        (e) => (detail?.inputs.find((q) => q.id === e.data.id) || e.data).status === 'pending',
+      ).length;
+      const approvalLabel =
+        language === 'zh'
+          ? `${approvals.length ? ` · ${approvals.length} 次审批` : ''}${pendingApprovals ? ` · ${pendingApprovals} 待审批（展开处理）` : ''}`
+          : `${approvals.length ? ` · ${approvals.length} approvals` : ''}${pendingApprovals ? ` · ${pendingApprovals} pending (expand to review)` : ''}`;
       for (const segment of group.segments) {
         const contents: any[] = [];
         for (const node of segment.nodes) {
@@ -886,9 +898,10 @@ export function App() {
             .map((segment) => 'segment-' + runId + '-' + segment.index)
             .join(' ')}
           label={
-            language === 'zh'
+            (language === 'zh'
               ? `此前过程 · ${count} 条记录${messages ? ` · ${messages} 条模型回复` : ''}${tools ? ` · ${tools} 次工具调用` : ''}`
-              : `${count} previous events${messages ? ` · ${messages} assistant messages` : ''}${tools ? ` · ${tools} tool calls` : ''}`
+              : `${count} previous events${messages ? ` · ${messages} assistant messages` : ''}${tools ? ` · ${tools} tool calls` : ''}`) +
+            approvalLabel
           }
         />
       );

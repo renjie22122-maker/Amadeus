@@ -4,6 +4,7 @@ import { reviewContent, reviewHash, ReviewFlights } from './review-cache.js';
 import type { FileScope } from './paths.js';
 import {
   inspectReviewSources,
+  inspectWrittenFiles,
   reviewEvidence,
   recentExecutionEvidence,
   commandScopeSignals,
@@ -97,6 +98,8 @@ export class AutoReview {
       const files =
         original.id === run.profileId && this.filesForRun ? await this.filesForRun(run) : undefined;
       const inspectedSource = files ? await inspectReviewSources(files, payload) : [];
+      const writtenFiles = files ? await inspectWrittenFiles(this.store, run, files) : [];
+      record.writtenFiles = writtenFiles;
       record.sourceEvidence = inspectedSource.map(({ content, ...metadata }: any) => metadata);
       const profile = {
         ...original,
@@ -162,6 +165,7 @@ export class AutoReview {
           risk,
           observedSource: reviewEvidence(run, original.id === run.profileId),
           inspectedSource,
+          writtenFiles,
           executionEvidence:
             original.id === run.profileId ? recentExecutionEvidence(this.store, run) : [],
           commandSignals,
@@ -321,8 +325,10 @@ export class AutoReview {
         Object.assign(record, parsed);
         if (
           files &&
-          JSON.stringify(await inspectReviewSources(files, payload)) !==
-            JSON.stringify(inspectedSource)
+          (JSON.stringify(await inspectReviewSources(files, payload)) !==
+            JSON.stringify(inspectedSource) ||
+            JSON.stringify(await inspectWrittenFiles(this.store, run, files)) !==
+              JSON.stringify(writtenFiles))
         ) {
           record.decision = 'ask';
           record.reason = 'Reviewed source changed during assessment; request a fresh review.';
