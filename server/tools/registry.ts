@@ -1,8 +1,5 @@
-import {
-  searchHistory,
-  readHistoryDigest,
-  readHistorySource,
-} from '../services/conversation-history.js';
+import { HistorySemantic } from '../services/history-semantic.js';
+import { readHistoryDigest, readHistorySource } from '../services/conversation-history.js';
 import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { prepareFileReview, reviewableFileMutation } from '../services/file-review.js';
 import { restrictedChat } from '../services/chat-access.js';
@@ -406,6 +403,7 @@ export class ToolRegistry {
   }
 }
 export function tools() {
+  const historyIndexes = new WeakMap<Store, HistorySemantic>();
   const registry = new ToolRegistry();
   installComposition(registry);
   installPatch(registry);
@@ -1210,13 +1208,20 @@ export function tools() {
     name: 'search_conversation_history',
     effect: 'read',
     description:
-      'Search eligible past human/assistant text and topic summaries in the current memory domain. Bot chats remain isolated. Returns citations and an older-page cursor; no matches is not proof of absence.',
+      'Hybrid lexical/semantic search of eligible past human/assistant text and topic summaries in the current memory domain. Lazily indexes a small missing passage batch using the configured embedding service; reports coverage and fallback. Bot chats remain isolated. Returns citations and an older-page cursor; no matches is not proof of absence.',
     schema: z.object({
       query: z.string().min(1).max(2000),
       before: z.number().int().positive().optional(),
       limit: z.number().int().min(1).max(20).default(8),
     }),
-    run: (a, c) => text(searchHistory(c.store, c.conversation.id, a.query, a.before, a.limit)),
+    run: async (a, c) => {
+      let index = historyIndexes.get(c.store);
+      if (!index) {
+        index = new HistorySemantic(c.store, new Embeddings(() => c.config.get().embedding));
+        historyIndexes.set(c.store, index);
+      }
+      return text(await index.search(c.conversation.id, a.query, c.signal, a.before, a.limit));
+    },
   });
   registry.add({
     name: 'read_history_summary',

@@ -46,7 +46,7 @@ export function historyConversations(store: Store, callerId: string) {
     );
 }
 
-function source(store: Store, c: Conversation, eventId: number) {
+export function historySource(store: Store, c: Conversation, eventId: number) {
   const row = store.db
     .prepare('SELECT type,data,created_at,run_id FROM events WHERE conversation_id=? AND id=?')
     .get(c.id, eventId) as any;
@@ -98,7 +98,7 @@ export function saveHistoryDigest(
   topics: HistoryTopic[],
 ) {
   const valid = batch.filter((s) => {
-    const original = source(store, c, s.id);
+    const original = historySource(store, c, s.id);
     return original && original.text === s.text;
   });
   if (!valid.length) return;
@@ -128,7 +128,7 @@ export function saveHistoryDigest(
     topics: accepted.length ? accepted : fallback,
     sources: valid.map((s) => ({
       id: s.id,
-      hash: hash(JSON.stringify([s.text, source(store, c, s.id)!.speaker])),
+      hash: hash(JSON.stringify([s.text, historySource(store, c, s.id)!.speaker])),
     })),
     at: valid.at(-1)!.at,
   });
@@ -140,7 +140,7 @@ function validDigest(store: Store, allowed: Map<string, Conversation>, d: Digest
     !!c &&
     d.scope === conversationMemoryScope(c) &&
     d.sources.every((ref) => {
-      const current = source(store, c, ref.id);
+      const current = historySource(store, c, ref.id);
       return current && hash(JSON.stringify([current.text, current.speaker])) === ref.hash;
     })
   );
@@ -209,7 +209,7 @@ export function readHistorySource(
   offset = 0,
 ) {
   const c = historyConversations(store, callerId).find((c) => c.id === conversationId);
-  const s = c && source(store, c, eventId);
+  const s = c && historySource(store, c, eventId);
   if (!s) return { unavailable: true };
   const text = s.text.slice(offset, offset + 8000);
   return {
@@ -246,7 +246,7 @@ export function searchHistory(
     q = terms(query);
   const results = page
     .flatMap(({ id, c }) => {
-      const s = source(store, c, id);
+      const s = historySource(store, c, id);
       if (!s) return [];
       const score = [...terms(s.text)].filter((v) => q.has(v)).length;
       if (!score) return [];
