@@ -435,3 +435,18 @@ test('extraction has an independent supported reasoning budget without modifying
     f.store.close();
   }
 });
+
+test('decimal source IDs normalize without weakening exact evidence checks', async () => {
+  const f = await fixture();
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async () => response([{ ...f.item, eventId: String(f.item.eventId) }]),
+  }));
+  try {
+    await learning.tick();
+    assert.equal(f.store.list<any>('memory-learning')[0].status, 'completed');
+    assert.equal(f.store.list<any>('memory')[0].sourceEventId, f.item.eventId);
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});
