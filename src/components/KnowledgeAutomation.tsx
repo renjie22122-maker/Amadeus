@@ -14,6 +14,8 @@ export function KnowledgeAutomation({
   const [value, setValue] = useState<any>(null),
     [paths, setPaths] = useState(''),
     [busy, setBusy] = useState(false);
+  const [scanInterval, setScanInterval] = useState(30);
+  const [coverage, setCoverage] = useState<any>(null);
   const picker = useRef<AbortController | null>(null);
   const [picking, setPicking] = useState(false);
   const addPaths = (added: string[]) =>
@@ -57,6 +59,7 @@ export function KnowledgeAutomation({
       initialized = false;
     setPicking(false);
     setValue(null);
+    setCoverage(null);
     setPaths('');
     setLoadError('');
     const load = async () => {
@@ -78,6 +81,7 @@ export function KnowledgeAutomation({
         if (!initialized) {
           setPaths(v.paths.join('\n'));
           setGraph(!!v.graphProfileId);
+          setScanInterval(v.scanIntervalSeconds ?? 30);
           initialized = true;
         }
       } catch (e: any) {
@@ -97,7 +101,17 @@ export function KnowledgeAutomation({
           {},
           controller.signal,
         );
-        if (!controller.signal.aborted) statusCallback.current?.(v);
+        if (!controller.signal.aborted) {
+          statusCallback.current?.(v);
+          const entries = Object.values(v) as any[];
+          setCoverage({
+            documents: entries.length,
+            indexed: entries.filter((s) => s.status === 'indexed').length,
+            chunks: entries.reduce((n, s) => n + s.total, 0),
+            vectors: entries.reduce((n, s) => n + s.completed, 0),
+            at: Date.now(),
+          });
+        }
       } catch {
         /* Progress remains usable when optional vector statistics are unavailable. */
       } finally {
@@ -132,6 +146,7 @@ export function KnowledgeAutomation({
         await api('/knowledge/maintenance', {
           scope,
           enabled,
+          scanIntervalSeconds: scanInterval,
           graphProfileId: graph ? profile?.id : undefined,
           paths: paths
             .split('\n')
@@ -148,7 +163,8 @@ export function KnowledgeAutomation({
   };
   const dirty =
     !!value &&
-    (graph !== !!value.graphProfileId ||
+    (scanInterval !== (value.scanIntervalSeconds ?? 30) ||
+      graph !== !!value.graphProfileId ||
       JSON.stringify(
         [
           ...new Set(
@@ -272,6 +288,23 @@ export function KnowledgeAutomation({
         />
         {zh ? '开启自动更新与索引' : 'Automatically update and index'}
       </label>
+      <label>
+        {zh ? '自动扫描间隔（秒，30–86400）' : 'Automatic scan interval (seconds, 30–86400)'}
+        <input
+          type="number"
+          min={30}
+          max={86400}
+          step={1}
+          value={scanInterval}
+          disabled={busy}
+          onChange={(e) => setScanInterval(Number(e.target.value))}
+        />
+        <small>
+          {zh
+            ? '保存后生效；到期后由后台调度检查，最多约 30 秒调度延迟。手动同步不受此间隔限制。'
+            : 'Save to apply. Scheduling may add up to 30 seconds. Manual sync bypasses this interval.'}
+        </small>
+      </label>
       <div className="row wrap">
         <button disabled={busy || !dirty} onClick={() => void save(value.enabled)}>
           {zh ? '保存范围' : 'Save sources'}
@@ -303,38 +336,8 @@ export function KnowledgeAutomation({
         {value.updatedAt ? ' · ' + new Date(value.updatedAt).toLocaleString() : ''}
       </p>
       {loadError && <p role="alert">{loadError}</p>}
+      <h4>{zh ? '1 · 文件扫描与解析（文件数）' : '1 · Source scan and parsing (files)'}</h4>
       <KnowledgeProgress value={value} zh={zh} />
-      <button
-        disabled={busy || ['pending', 'running'].includes(value.batch?.status)}
-        onClick={async () => {
-          setBusy(true);
-          try {
-            const batch = await api('/knowledge/batch-index', { scope });
-            setValue({ ...value, batch });
-          } catch (e: any) {
-            notify(e.message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {zh ? '批量补齐本范围向量索引' : 'Index missing vectors in this scope'}
-      </button>
-      <small style={{ display: 'block' }}>
-        {zh
-          ? '使用上方已配置的 embedding 服务；仅处理当前范围，复用已有向量。外部 API 会接收待索引正文分块。'
-          : 'Uses the configured embedding service for this scope only; existing vectors are reused. External APIs receive unindexed text chunks.'}
-      </small>
-      <LightRagProgress key={scope} value={value.lightRag} zh={zh} scope={scope} />
-      {value.batch && (
-        <p role="status">
-          {zh ? '最近批量索引任务：' : 'Latest batch indexing task: '}
-          {value.batch.status} · {value.batch.completed}/{value.batch.documents.length}
-          {value.batch.currentFile && ' · ' + value.batch.currentFile}
-          {value.batch.failed > 0 && ' · ' + value.batch.failed + (zh ? ' 项失败' : ' failed')}
-          {value.batch.error && ' · ' + value.batch.error}
-        </p>
-      )}
       <p className="muted">
         {zh
           ? '新增文件夹仅解析新增或变化的文件；已有文件仍会校验内容哈希，同一模型的已完成索引保持不动。'
@@ -382,9 +385,99 @@ export function KnowledgeAutomation({
       )}
       <small>
         {zh
-          ? '每 30 秒检查；无固定文件数量或目录项上限，无固定单文件大小上限；逐文件独立解析，页面／OCR 分块无进展时限 120 秒（PDF 每次最多 30 分钟，大页面分块识别，重试复用已完成页和分块）、V8 堆上限 768 MB、提取文本最多 500 万字符。支持 TXT、Markdown、CSV、JSON、DOCX、XLSX、文本 PDF 等；跳过隐藏文件与构建目录；图片与扫描 PDF 使用本机 Windows OCR。临时网络故障退避重试；配置错误 3 次后暂停，移除源文件会使当前版本退出检索。'
-          : 'Checks every 30 seconds; no fixed file-count, entry-count or per-file byte limit. Parsing is isolated per file: 120 seconds without page/tile progress (30-minute PDF attempt budget; tiled OCR and resumable pages/tiles), 768 MB V8 heap, 5 million extracted characters. Text, Markdown, CSV, JSON, DOCX, XLSX and text PDFs. Hidden/build folders excluded; Windows OCR handles images/scanned PDFs. Transient network errors retry with backoff; configuration errors pause after three attempts; removed files leave current retrieval.'}
+          ? '按所设间隔检查；无固定文件数量或目录项上限，无固定单文件大小上限；逐文件独立解析，页面／OCR 分块无进展时限 120 秒（PDF 每次最多 30 分钟，大页面分块识别，重试复用已完成页和分块）、V8 堆上限 768 MB、提取文本最多 500 万字符。支持 TXT、Markdown、CSV、JSON、DOCX、XLSX、文本 PDF 等；跳过隐藏文件与构建目录；图片与扫描 PDF 使用本机 Windows OCR。临时网络故障退避重试；配置错误 3 次后暂停，移除源文件会使当前版本退出检索。'
+          : 'Checks at the configured interval; no fixed file-count, entry-count or per-file byte limit. Parsing is isolated per file: 120 seconds without page/tile progress (30-minute PDF attempt budget; tiled OCR and resumable pages/tiles), 768 MB V8 heap, 5 million extracted characters. Text, Markdown, CSV, JSON, DOCX, XLSX and text PDFs. Hidden/build folders excluded; Windows OCR handles images/scanned PDFs. Transient network errors retry with backoff; configuration errors pause after three attempts; removed files leave current retrieval.'}
       </small>
+      <fieldset style={{ marginTop: 20, padding: 16 }}>
+        <legend>{zh ? '2 · 向量索引' : '2 · Vector index'}</legend>
+        <p role="status">
+          {coverage
+            ? (zh ? '当前范围：' : 'Current scope: ') +
+              coverage.indexed +
+              '/' +
+              coverage.documents +
+              (zh ? ' 份文档向量已齐全；' : ' documents fully indexed; ') +
+              coverage.vectors.toLocaleString() +
+              '/' +
+              coverage.chunks.toLocaleString() +
+              (zh ? ' 个分块具有当前模型的有效向量' : ' chunks have compatible vectors')
+            : zh
+              ? '正在读取当前范围覆盖情况…'
+              : 'Loading current scope coverage…'}
+        </p>
+        <small className="muted">
+          {zh
+            ? '自动导入与手动补齐使用同一套索引。下面的操作检查当前文档，已有有效向量不会重算。'
+            : 'Automatic import and manual backfill use the same index. This checks current documents without recomputing valid vectors.'}
+        </small>
+
+        <button
+          disabled={busy || ['pending', 'running'].includes(value.batch?.status)}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              const batch = await api('/knowledge/batch-index', { scope });
+              setValue({ ...value, batch });
+            } catch (e: any) {
+              notify(e.message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {zh ? '检查并补齐缺失向量' : 'Check and fill missing vectors'}
+        </button>
+        <small style={{ display: 'block' }}>
+          {zh
+            ? '使用上方已配置的 embedding 服务；仅处理当前范围，复用已有向量。外部 API 会接收待索引正文分块。'
+            : 'Uses the configured embedding service for this scope only; existing vectors are reused. External APIs receive unindexed text chunks.'}
+        </small>
+        {value.batch && (
+          <p role="status">
+            {zh ? '最近一次手动补齐任务（文档数）：' : 'Latest manual backfill (documents): '}
+            {(
+              {
+                completed: zh ? '已完成' : 'Completed',
+                running: zh ? '处理中' : 'Running',
+                pending: zh ? '待处理' : 'Pending',
+              } as Record<string, string>
+            )[value.batch.status] || value.batch.status}{' '}
+            · {value.batch.completed}/{value.batch.documents.length}
+            {value.batch.currentFile && ' · ' + value.batch.currentFile}
+            {value.batch.failed > 0 && ' · ' + value.batch.failed + (zh ? ' 项失败' : ' failed')}
+            {value.batch.error && ' · ' + value.batch.error}
+            {value.batch.skipped !== undefined && (
+              <span>
+                {' · '}
+                {zh ? '已齐全跳过 ' : 'Already indexed '}
+                {value.batch.skipped}
+                {' · '}
+                {zh ? '实际补齐文档 ' : 'Documents filled '}
+                {value.batch.filledDocuments || 0}
+                {' · '}
+                {zh ? '补齐分块 ' : 'Chunks filled '}
+                {value.batch.filledChunks || 0}
+                {zh ? ' · 实际向量计算分块 ' : ' · Encoded chunks '}
+                {value.batch.encodedChunks ?? '—'}
+                {value.batch.elapsedMs !== undefined && (
+                  <>
+                    {zh ? ' · 检查及补齐 ' : ' · Check/fill '}
+                    {(value.batch.elapsedMs / 1000).toFixed(1)}s
+                    {zh ? ' · 向量计算 ' : ' · Encoding '}
+                    {(value.batch.encodingMs / 1000).toFixed(1)}s
+                  </>
+                )}
+              </span>
+            )}
+          </p>
+        )}
+        <small className="muted">
+          {zh
+            ? '这里是手动补齐任务的历史记录，不是全库向量覆盖率，也不是 LightRAG 建图进度。文件自动导入产生的向量不计入这次任务。'
+            : 'This is a historical manual backfill, not total vector coverage or LightRAG progress. Automatic ingestion is not counted in this task.'}
+        </small>
+      </fieldset>
+      <LightRagProgress key={scope} value={value.lightRag} zh={zh} scope={scope} />
     </section>
   );
 }

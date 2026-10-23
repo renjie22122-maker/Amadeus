@@ -68,6 +68,28 @@ export async function mediaHttp(
         /* Keep a bounded generic error when the local provider has no JSON diagnostic. */
       }
     } else await response.body?.cancel();
+    if (response.status === 429 && /^ VOICE_BUSY(?::|$)/.test(detail)) {
+      const retry = response.headers.get('retry-after');
+      const seconds =
+        retry && /^\d+(?:\.\d+)?$/.test(retry)
+          ? Number(retry)
+          : retry
+            ? (Date.parse(retry) - Date.now()) / 1000
+            : 2;
+      throw Object.assign(
+        new AppError(
+          'MEDIA_VOICE_BUSY',
+          'Voice service rejected the request before admission.',
+          429,
+        ),
+        {
+          retryAfterMs: Math.min(
+            30000,
+            Math.max(1000, Number.isFinite(seconds) ? seconds * 1000 : 2000),
+          ),
+        },
+      );
+    }
     throw new AppError(
       'MEDIA_HTTP',
       'Media provider returned HTTP ' + response.status + '. No automatic resubmission.' + detail,

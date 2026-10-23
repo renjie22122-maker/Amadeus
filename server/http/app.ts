@@ -666,9 +666,29 @@ export async function createApp(options: { directory: string; dist?: string; run
     return configureLocalRag(config, directory, data.scope, data.profileId, data);
   });
   app.post('/api/knowledge/lightrag-sync', async () => runtime.knowledge.syncLightRag());
+  app.post('/api/knowledge/lightrag-control', async (req) => {
+    const { scope, action, autoContinue } = z
+      .object({
+        scope: z.string().min(1),
+        action: z.enum(['pause', 'continue', 'configure']),
+        autoContinue: z.boolean().optional(),
+      })
+      .parse(req.body);
+    checkScope(scope);
+    const value = runtime.knowledge.controlLightRag(scope, {
+      ...(action === 'pause' ? { paused: true } : action === 'continue' ? { paused: false } : {}),
+      ...(autoContinue === undefined ? {} : { autoContinue }),
+    });
+    if (action === 'continue') {
+      // Start asynchronously: slow sidecar recovery must not hold the UI request open.
+      void runtime.knowledge.syncLightRag(scope).catch(() => {});
+    }
+    return value;
+  });
   app.post('/api/knowledge/lightrag-resume', async (req) => {
     const { scope } = z.object({ scope: z.string().min(1) }).parse(req.body);
     checkScope(scope);
+    runtime.knowledge.controlLightRag(scope, { paused: false });
     return runtime.knowledge.syncLightRag(scope);
   });
   app.get<{ Querystring: { scope: string } }>('/api/knowledge/statistics', async (req) => {
@@ -686,6 +706,7 @@ export async function createApp(options: { directory: string; dist?: string; run
         scope: z.string(),
         enabled: z.boolean(),
         paths: z.array(z.string()).max(12),
+        scanIntervalSeconds: z.number().int().min(30).max(86400).optional(),
         graphProfileId: z.string().optional(),
       })
       .parse(req.body);
@@ -718,6 +739,7 @@ export async function createApp(options: { directory: string; dist?: string; run
       id: data.scope,
       enabled: data.enabled,
       paths: data.paths,
+      scanIntervalSeconds: data.scanIntervalSeconds,
       target: knowledgeEmbedding.fingerprint(),
       graphProfileId: data.graphProfileId,
       graphTarget: data.graphProfileId
@@ -787,6 +809,26 @@ export async function createApp(options: { directory: string; dist?: string; run
       .parse(req.body);
     checkScope(data.scope);
     return runtime.knowledge.hybrid([data.scope], data.query, 6, undefined, data.asOf);
+  });
+  app.get<{ Params: { id: string } }>('/api/knowledge/:id/chunks', async (req) => {
+    const doc = store.get<any>('document', req.params.id);
+    assert(doc, 'NOT_FOUND', 'Document not found.');
+    checkScope(doc.scope);
+    const { offset, limit } = z
+      .object({
+        offset: z.coerce.number().int().min(0).default(0),
+        limit: z.coerce.number().int().min(1).max(20).default(5),
+      })
+      .parse(req.query);
+    const total = (
+      store.db.prepare('SELECT COUNT(*) AS n FROM chunks WHERE document_id=?').get(doc.id) as any
+    ).n;
+    const chunks = store.db
+      .prepare(
+        'SELECT id,ordinal,text FROM chunks WHERE document_id=? ORDER BY ordinal LIMIT ? OFFSET ?',
+      )
+      .all(doc.id, limit, offset);
+    return { offset, total, chunks };
   });
   app.post<{ Params: { id: string } }>('/api/knowledge/:id/index', async (req) =>
     runtime.knowledge.index(req.params.id),

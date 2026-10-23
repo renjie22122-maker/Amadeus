@@ -257,3 +257,97 @@ test('adding a source reuses parsed documents and vectors without resetting fail
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('explicit backfill reports zero embedding calls and writes for complete current vectors', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'backfill-counts-'));
+  const store = new Store(join(dir, 'db.sqlite'));
+  let calls = 0;
+  const embedding: any = {
+    enabled: () => true,
+    fingerprint: () => 'fixture',
+    encode: async (texts: string[]) => {
+      calls += texts.length;
+      return texts.map(() => [1, 0]);
+    },
+  };
+  const knowledge = new Knowledge(store, embedding);
+  try {
+    const doc: any = knowledge.import('general', 'test.txt', 'Some normal source text.');
+    const first = await knowledge.index(doc.id);
+    assert.equal(first.encoded, 1);
+    store.db.exec(
+      'CREATE TEMP TABLE writes(n INTEGER); INSERT INTO writes VALUES(0); CREATE TEMP TRIGGER track AFTER UPDATE OF vector ON chunks BEGIN UPDATE writes SET n=n+1; END;',
+    );
+    const second = await knowledge.index(doc.id);
+    assert.equal(calls, 1);
+    assert.equal(second.encoded, 0);
+    assert.equal(second.filled, 0);
+    assert.equal(second.skipped, second.chunks);
+    assert.equal((store.db.prepare('SELECT n FROM writes').get() as any).n, 0);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('automatic scan respects configured interval while explicit synchronization bypasses it', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scan-interval-'));
+  const root = join(dir, 'docs');
+  const data = join(dir, 'data');
+  await mkdir(data);
+  await mkdir(root);
+  const store = new Store(join(data, 'db.sqlite'));
+  const embedding: any = {
+    enabled: () => true,
+    fingerprint: () => 'fixture',
+    encode: async (texts: string[]) => texts.map(() => [1, 0]),
+  };
+  const knowledge = new Knowledge(store, embedding);
+  let parsed = 0;
+  const manager = new KnowledgeMaintenance(
+    store,
+    knowledge,
+    embedding,
+    data,
+    undefined,
+    async () => {
+      parsed++;
+      return 'Parsed fixture ' + parsed;
+    },
+  );
+  try {
+    manager.saveSources({
+      id: 'general',
+      enabled: true,
+      paths: [root],
+      target: 'fixture',
+      scanIntervalSeconds: 3600,
+    });
+    await writeFile(join(root, 'one.txt'), 'one');
+    await manager.tick(false);
+    assert.equal(parsed, 1);
+    await writeFile(join(root, 'two.txt'), 'two');
+    await manager.tick(false);
+    assert.equal(parsed, 1);
+    manager.synchronize('general');
+    await manager.tick(false);
+    assert.equal(parsed, 2);
+    const before = store.get<any>('knowledge-watch', 'general');
+    manager.saveSources({
+      id: 'general',
+      enabled: true,
+      paths: [root],
+      target: 'fixture',
+      scanIntervalSeconds: 7200,
+    });
+    const after = store.get<any>('knowledge-watch', 'general');
+    assert.equal(after.scanIntervalSeconds, 7200);
+    assert.equal(after.revision, before.revision);
+    assert.deepEqual(after.issues, before.issues);
+  } finally {
+    await manager.close();
+    knowledge.close();
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

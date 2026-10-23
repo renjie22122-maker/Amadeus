@@ -165,3 +165,13 @@ Waiting happens **before** the existing job deadline starts. The job stays queue
 Models load onto CPU initially. Under pressure or after 120 seconds without inference, the monitor moves inactive models to CPU under the inference lock and clears unused CUDA cache. Host weights and tokenizers stay resident for reuse; this is GPU memory release, not full RAM eviction. Native calls already executing cannot be preempted, and a small CUDA context may remain. No application names or process-killing rules are used. CPU inference defaults to four PyTorch threads. It cannot guarantee zero contention with other applications.
 
 Optional `resources` in the private retrieval config supports `minFreeVramMiB`, `maxGpuUtilPercent`, `recoverySeconds`, `idleReleaseSeconds`, and `cpuThreads`; restart the independent RAG service after changing them. Existing launchers already start the monitor with the service; no extra startup task is needed. Install the updated RAG requirements for host telemetry (`psutil`). Resource policy tests run in both CI platforms.
+
+## Knowledge maintenance panel
+
+Source scanning, current-model vector coverage, the last manual backfill job, and LightRAG progress are separate. Backfill checks current documents but does not encode or rewrite valid vectors. Jobs count skipped documents, filled documents/chunks and actually encoded chunks. Older jobs without counters cannot establish whether computation repeated. Historical 74/74 task counts are not current coverage.
+
+Configure automatic scanning from 30 to 86400 seconds; scheduling can add one 30-second tick. Manual synchronization bypasses the interval. Pause stops subsequent graph batches while allowing current writes to finish. Manual continuation and persistent automatic-continuation controls retain completed work.
+
+Document browsing provides name/source/ID search, current/historical/missing-vector/identical-text filters, sorting and 25-item pages. Preview loads five chunks at a time without vectors. Identical extracted-text hashes identify review candidates, never automatic merges. Removing library entries does not remove source files; maintenance may import them again.
+
+Revision editing offers opt-in trailing-space, repeated-blank-line and control-character cleanup of pasted revision text. Compare before/after, apply to draft, optionally undo, then explicitly save a new version. Trailing spaces may carry Markdown semantics. No automatic OCR correction, header removal, table merging, repeated-paragraph removal or reconstruction from overlapping chunks. Historical versions and citations remain.

@@ -1,3 +1,4 @@
+import { DocumentCleaning } from './DocumentCleaning';
 import { memoryDecayPolicy, type DecayPolicy } from '../../shared/memory-decay';
 import { memoryConversation } from '../../shared/memory-scope';
 import { useEffect, useState } from 'react';
@@ -663,6 +664,7 @@ export function DocumentVersion({ document: d, go, zh }: any) {
                 : 'Paste new document text; the old version remains for historical queries'
             }
           />
+          <DocumentCleaning text={text} onApply={setText} zh={zh} />
           <button
             disabled={!text.trim()}
             onClick={() =>

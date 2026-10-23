@@ -153,9 +153,23 @@ export function mediaRoutes(app: FastifyInstance, runtime: Runtime) {
       409,
     );
     const abort = new AbortController();
-    const close = () => abort.abort();
+    let release: (() => void) | undefined;
+    const close = () => {
+      abort.abort();
+      release?.();
+    };
     reply.raw.once('close', close);
     try {
+      release = await media.speechAdmission.acquire(
+        new URL(connection.baseUrl).origin,
+        c.id,
+        abort.signal,
+        media.speechCapacity(connection),
+      );
+      if (abort.signal.aborted) {
+        release();
+        throw new Error('Read aloud cancelled');
+      }
       const response = await fetch(endpoints.speech, {
         method: 'POST',
         headers,
@@ -184,7 +198,10 @@ export function mediaRoutes(app: FastifyInstance, runtime: Runtime) {
         .header('X-Accel-Buffering', 'no')
         .header('X-Read-Aloud-Request-Id', randomUUID())
         .header('X-Read-Aloud-Text-SHA256', createHash('sha256').update(a.text).digest('hex'));
-      return reply.send(Readable.fromWeb(response.body as any));
+      const stream = Readable.fromWeb(response.body as any);
+      stream.once('end', () => release?.());
+      stream.once('error', close);
+      return reply.send(stream);
     } catch (error) {
       close();
       reply.raw.off('close', close);

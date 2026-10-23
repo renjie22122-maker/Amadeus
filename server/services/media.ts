@@ -1,3 +1,4 @@
+import { SpeechAdmission } from './speech-admission.js';
 import { listLocalVoices } from './local-voice-presets.js';
 import { localVoiceConfig } from './local-voice.js';
 import { mediaCapabilityTarget, mediaReferenceBudget } from '../../shared/media-capabilities.js';
@@ -25,6 +26,10 @@ import {
   type MediaRequest,
 } from './media-adapters.js';
 export class MediaService {
+  readonly speechAdmission = new SpeechAdmission();
+  private queuedControllers = new Map<string, AbortController>();
+  private closing = false;
+  private remoteSpeechLeases = new Map<string, () => void>();
   private busy = new Set<string>();
   private pending = new Set<Promise<unknown>>();
   private timer?: ReturnType<typeof setInterval>;
@@ -43,11 +48,58 @@ export class MediaService {
           error:
             'Submission was interrupted. Check the provider dashboard; it will not be resubmitted automatically.',
         });
+    for (const job of this.store.list<MediaJob>('media-job')) {
+      if (job.kind === 'speech' && job.remoteId && ['queued', 'running'].includes(job.status)) {
+        const controller = new AbortController();
+        this.queuedControllers.set(job.id, controller);
+        this.track(
+          this.speechAdmission
+            .acquire(new URL(job.baseUrl).origin, job.conversationId, controller.signal)
+            .then((release) => {
+              this.queuedControllers.delete(job.id);
+              const current = this.store.get<MediaJob>('media-job', job.id);
+              if (!this.closing && ['queued', 'running'].includes(current.status))
+                this.remoteSpeechLeases.set(job.id, release);
+              else release();
+            })
+            .catch(() => {
+              this.queuedControllers.delete(job.id);
+            }),
+        );
+      }
+    }
+    for (const record of this.store
+      .list<any>('speech-dispatch')
+      .sort((a, b) => a.enqueuedAt - b.enqueuedAt)) {
+      const job = this.store.maybe<MediaJob>('media-job', record.id);
+      if (job?.status === 'queued') {
+        try {
+          const connection = this.connection(job.connectionId);
+          assert(
+            record.fingerprint === this.fingerprint(connection),
+            'MEDIA_CHANGED',
+            'Queued service configuration changed; submit a newly approved request.',
+          );
+          this.dispatch(job, connection, record.options);
+        } catch {
+          this.save({
+            ...job,
+            status: 'failed',
+            error: 'Queued service configuration changed or unavailable; request approval again.',
+          });
+          this.store.remove('speech-dispatch', record.id);
+        }
+      } else this.store.remove('speech-dispatch', record.id);
+    }
     this.timer = setInterval(() => void this.tick(), 5000);
     this.timer.unref();
     void this.tick();
   }
   async close() {
+    this.closing = true;
+    for (const controller of this.queuedControllers.values()) controller.abort();
+    for (const release of this.remoteSpeechLeases.values()) release();
+    this.remoteSpeechLeases.clear();
     if (this.timer) clearInterval(this.timer);
     await Promise.allSettled([...this.pending]);
   }
@@ -298,6 +350,10 @@ export class MediaService {
     };
   }
   private save(j: MediaJob) {
+    if (['completed', 'failed', 'cancelled', 'unknown'].includes(j.status)) {
+      this.remoteSpeechLeases.get(j.id)?.();
+      this.remoteSpeechLeases.delete(j.id);
+    }
     j.updatedAt = Date.now();
     this.store.put('media-job', j);
     this.store.event(j.conversationId, j.runId || null, 'media.updated', { job: this.public(j) });
@@ -437,7 +493,7 @@ export class MediaService {
       origin: new URL(c.baseUrl).origin,
       baseUrl: c.baseUrl,
       prompt: args.prompt,
-      status: 'submitting',
+      status: c.kind === 'speech' ? 'queued' : 'submitting',
       createdAt: Date.now(),
       updatedAt: Date.now(),
       estimatedUsd: c.estimatedUsd,
@@ -445,13 +501,70 @@ export class MediaService {
       outputs: [],
     };
     this.store.transaction(() => {
+      if (c.kind === 'speech')
+        this.store.put('speech-dispatch', {
+          id: j.id,
+          enqueuedAt: Date.now(),
+          options,
+          fingerprint: this.fingerprint(c),
+        });
       this.save(j);
       args.prepared?.(j.id);
     });
+    this.dispatch(j, c, options, args.audio);
+    return this.public(j);
+  }
+  speechCapacity(c: MediaConnection) {
+    return c.capabilities?.execution?.target === mediaCapabilityTarget(c)
+      ? c.capabilities.execution.maxConcurrent
+      : 1;
+  }
+  private fingerprint(c: MediaConnection) {
+    return createHash('sha256').update(JSON.stringify(c)).digest('hex');
+  }
+  private dispatch(
+    j: MediaJob,
+    c: MediaConnection,
+    options: Record<string, unknown>,
+    audio?: { bytes: Buffer; mime: string; name: string },
+  ) {
+    const controller = new AbortController();
+    if (j.kind === 'speech') this.queuedControllers.set(j.id, controller);
     const task = (async () => {
+      let release: (() => void) | undefined;
       this.busy.add(j.id);
       try {
-        const result = await submitMedia(c, args.prompt, options, args.audio, this.request);
+        if (j.kind === 'speech') {
+          release = await this.speechAdmission.acquire(
+            new URL(c.baseUrl).origin,
+            j.conversationId,
+            controller.signal,
+            this.speechCapacity(c),
+          );
+          if (controller.signal.aborted) return;
+          this.queuedControllers.delete(j.id);
+          assert(
+            this.fingerprint(this.connection(c.id)) === this.fingerprint(c),
+            'MEDIA_CHANGED',
+            'Service configuration changed while queued.',
+          );
+          j.status = 'submitting';
+          this.save(j);
+        }
+        let result;
+        for (let attempt = 0; ; attempt++) {
+          try {
+            result = await submitMedia(c, j.prompt, options, audio, this.request);
+            break;
+          } catch (error) {
+            if ((error as any)?.code !== 'MEDIA_VOICE_BUSY' || attempt >= 5) throw error;
+            j.error = 'Voice service busy; awaiting admission.';
+            this.save(j);
+            await new Promise((resolve) =>
+              setTimeout(resolve, (error as any).retryAfterMs || 2000),
+            );
+          }
+        }
         Object.assign(j, {
           remoteId: result.remoteId,
           statusUrl: result.statusUrl,
@@ -459,25 +572,36 @@ export class MediaService {
           cancelUrl: result.cancelUrl,
         });
         if (result.remoteId) {
+          if (release) {
+            this.remoteSpeechLeases.set(j.id, release);
+            release = undefined;
+          }
           j.status = 'queued';
           this.save(j);
         } else await this.finish(j, result);
       } catch (error) {
+        if (controller.signal.aborted) return;
         j.status = this.store.maybe('media-result', j.id)
           ? 'running'
-          : ['MEDIA_HTTP', 'MEDIA_PROVIDER'].includes((error as any)?.code)
+          : ['MEDIA_HTTP', 'MEDIA_PROVIDER', 'MEDIA_VOICE_BUSY', 'MEDIA_CHANGED'].includes(
+                (error as any)?.code,
+              )
             ? 'failed'
             : 'unknown';
-        j.error = ['MEDIA_HTTP', 'MEDIA_PROVIDER'].includes((error as any)?.code)
+        j.error = ['MEDIA_HTTP', 'MEDIA_PROVIDER', 'MEDIA_VOICE_BUSY', 'MEDIA_CHANGED'].includes(
+          (error as any)?.code,
+        )
           ? String((error as Error).message)
           : 'Submission outcome is unknown. Check provider records before creating another job.';
         this.save(j);
       } finally {
+        release?.();
+        this.queuedControllers.delete(j.id);
+        if (!(this.closing && j.status === 'queued')) this.store.remove('speech-dispatch', j.id);
         this.busy.delete(j.id);
       }
     })();
     this.track(task);
-    return this.public(j);
   }
   async tick() {
     for (const j of this.store
@@ -486,7 +610,7 @@ export class MediaService {
         (j) =>
           ['queued', 'running'].includes(j.status) && (!j.nextPollAt || j.nextPollAt <= Date.now()),
       )) {
-      if (this.busy.has(j.id)) continue;
+      if (this.busy.has(j.id) || this.store.maybe('speech-dispatch', j.id)) continue;
       this.busy.add(j.id);
       const task = (async () => {
         try {
@@ -622,6 +746,13 @@ export class MediaService {
   }
   async cancel(key: string, conversationId: string) {
     const j = this.get(key, conversationId);
+    if (j.status === 'queued' && this.store.maybe('speech-dispatch', j.id)) {
+      this.queuedControllers.get(j.id)?.abort();
+      this.store.remove('speech-dispatch', j.id);
+      j.status = 'cancelled';
+      this.save(j);
+      return this.public(j);
+    }
     assert(
       ['queued', 'running'].includes(j.status),
       'MEDIA_STATE',

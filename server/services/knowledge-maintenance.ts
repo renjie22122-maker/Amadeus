@@ -44,6 +44,7 @@ export interface KnowledgeWatch {
   enabled: boolean;
   paths: string[];
   target: string;
+  scanIntervalSeconds?: number;
   revision: number;
   status?: string;
   progress?: KnowledgeProgress;
@@ -91,7 +92,7 @@ export class KnowledgeMaintenance {
     private parse?: (path: string) => Promise<string>,
   ) {}
   start() {
-    this.timer = setInterval(() => void this.tick(), 30000);
+    this.timer = setInterval(() => void this.tick(false), 30000);
     this.timer.unref();
   }
   async close() {
@@ -100,8 +101,8 @@ export class KnowledgeMaintenance {
     clearInterval(this.timer);
     await this.task;
   }
-  tick() {
-    return (this.task ||= this.scan().finally(() => {
+  tick(force = true) {
+    return (this.task ||= this.scan(force).finally(() => {
       this.task = undefined;
     }));
   }
@@ -147,8 +148,15 @@ export class KnowledgeMaintenance {
         const doc = this.store.maybe<any>('document', job.documents[n]);
         try {
           this.store.put('knowledge-batch', { ...job, status: 'running', currentFile: doc?.name });
-          if (doc?.scope === job.id && doc.validUntil == null)
-            await this.knowledge.index(doc.id, allowed);
+          if (doc?.scope === job.id && doc.validUntil == null) {
+            const result = await this.knowledge.index(doc.id, allowed);
+            job.skipped = (job.skipped || 0) + (result.filled === 0 ? 1 : 0);
+            job.filledDocuments = (job.filledDocuments || 0) + (result.filled > 0 ? 1 : 0);
+            job.filledChunks = (job.filledChunks || 0) + result.filled;
+            job.encodedChunks = (job.encodedChunks || 0) + result.encoded;
+            job.elapsedMs = (job.elapsedMs || 0) + result.elapsedMs;
+            job.encodingMs = (job.encodingMs || 0) + result.encodingMs;
+          }
         } catch (e: any) {
           job.failed++;
           job.error = String(e.message || e).slice(0, 500);
@@ -172,11 +180,21 @@ export class KnowledgeMaintenance {
   saveSources(
     input: Pick<
       KnowledgeWatch,
-      'id' | 'enabled' | 'paths' | 'target' | 'graphProfileId' | 'graphTarget'
+      | 'id'
+      | 'enabled'
+      | 'paths'
+      | 'target'
+      | 'graphProfileId'
+      | 'graphTarget'
+      | 'scanIntervalSeconds'
     >,
   ) {
     const old = this.store.maybe<KnowledgeWatch>('knowledge-watch', input.id);
     const paths = [...new Set(input.paths)];
+    const scanIntervalSeconds = Math.max(
+      30,
+      Math.min(86400, input.scanIntervalSeconds ?? old?.scanIntervalSeconds ?? 30),
+    );
     if (
       old &&
       old.enabled === input.enabled &&
@@ -185,11 +203,12 @@ export class KnowledgeMaintenance {
       old.graphProfileId === input.graphProfileId &&
       JSON.stringify([...old.paths].sort()) === JSON.stringify([...paths].sort())
     )
-      return old;
+      return this.store.put('knowledge-watch', { ...old, scanIntervalSeconds });
     const revision = (old?.revision || 0) + 1;
     return this.store.put('knowledge-watch', {
       ...old,
       ...input,
+      scanIntervalSeconds,
       paths,
       revision,
       // Configuration changes invalidate active scans, not per-file failure history.
@@ -259,7 +278,7 @@ export class KnowledgeMaintenance {
       v.target === this.embeddings.fingerprint()
     );
   }
-  private async scan() {
+  private async scan(force = true) {
     // Explicit retrieval consent is checked again inside sync; keep watch ingestion independent.
     try {
       await this.knowledge.syncLightRag();
@@ -278,6 +297,13 @@ export class KnowledgeMaintenance {
       if (w.error?.startsWith('Source exceeds 25 MB:')) w = this.recheck(w.id);
       if ((w.failures || 0) >= 3 && w.failureKind !== 'transient') continue;
       if ((w.nextRetryAt || 0) > Date.now()) continue;
+      if (
+        !force &&
+        w.status !== 'pending' &&
+        !w.nextRetryAt &&
+        Date.now() - (w.updatedAt || 0) < (w.scanIntervalSeconds ?? 30) * 1000
+      )
+        continue;
       const progress: KnowledgeProgress = {
         phase: 'scanning',
         startedAt: Date.now(),
@@ -603,6 +629,8 @@ export class KnowledgeMaintenance {
             },
             issues,
             skipped,
+            scanIntervalSeconds: this.store.maybe<KnowledgeWatch>('knowledge-watch', w.id)
+              ?.scanIntervalSeconds,
             scan: { files: new Set(files).size, updated, unchanged },
             failures: 0,
             failureKind: indexError

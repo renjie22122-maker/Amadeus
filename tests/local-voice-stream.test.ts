@@ -1,3 +1,4 @@
+import { SpeechAdmission } from '../server/services/speech-admission.js';
 import { mediaCapabilityTarget } from '../shared/media-capabilities.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,6 +22,8 @@ test('native read-aloud proxy scopes access, requires capability and does not cr
       },
     },
     media: {
+      speechAdmission: new SpeechAdmission(),
+      speechCapacity: () => 1,
       connection: () => ({
         id: 'custom-stream-provider',
         model: 'custom-voice',

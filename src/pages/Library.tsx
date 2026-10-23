@@ -1,3 +1,4 @@
+import { DocumentBrowser } from '../components/DocumentBrowser';
 import { MemoryCreate } from '../components/MemoryCreate';
 import { MemoryList } from '../components/MemoryList';
 import { SkillPackagesPanel } from '../components/SkillPackagesPanel';
@@ -5,10 +6,10 @@ import { KnowledgeScopePicker } from '../components/KnowledgeScopePicker';
 import { libraryConversations } from '../library-scopes';
 import { MemoryDefaults } from '../components/MemoryDefaults';
 import { KnowledgeAutomation } from '../components/KnowledgeAutomation';
-import { MemoryWorkbench, DocumentVersion } from '../components/MemoryWorkbench';
+import { MemoryWorkbench } from '../components/MemoryWorkbench';
 import { SkillClassificationPanel } from '../components/SkillClassificationPanel';
 import { SkillPicker } from '../components/SkillPicker';
-import { FileText, Plus, Search, Trash2, Upload } from 'lucide-react';
+import { Plus, Search, Upload } from 'lucide-react';
 import { useRef, useState, useEffect } from 'react';
 import { api } from '../api';
 export function Library({ page, state, selected, t, refresh, notify }: any) {
@@ -207,55 +208,15 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
               </div>
             ))}
           </section>
-          {state.documents
-            .filter((d: any) => !scope || d.scope === scope)
-            .map((d: any) => (
-              <article className="panel row" key={d.id}>
-                <button
-                  disabled={!text || !scope}
-                  onClick={() =>
-                    go(() => api('/knowledge/feedback', { scope, query: text, documentId: d.id }))
-                  }
-                >
-                  {t('settings') === 'Settings'
-                    ? 'Correct source for this query'
-                    : '标记为当前查询的正确来源'}
-                </button>
-                <FileText size={20} />
-                <div className="grow">
-                  <strong>{d.name}</strong>
-                  <p className="muted">
-                    {d.characters.toLocaleString()} characters · {d.scope}
-                  </p>
-                  <DocumentVersion document={d} go={go} zh={t('settings') !== 'Settings'} />
-                </div>
-                {(state.settings.embedding.backend === 'local' ||
-                  state.settings.embedding.model) && (
-                  <button
-                    disabled={busy || indexStatuses[d.id]?.status === 'indexed'}
-                    onClick={() =>
-                      go(async () => {
-                        const r = await api('/knowledge/' + d.id + '/index', {});
-                        notify('Indexed ' + r.chunks + ' chunks');
-                      })
-                    }
-                  >
-                    {indexStatuses[d.id]?.status === 'indexed'
-                      ? t('settings') === 'Settings'
-                        ? 'Vectors ready'
-                        : '已建立向量索引'
-                      : t('settings') === 'Settings'
-                        ? 'Index pending vectors'
-                        : '补齐待处理向量'}
-                    {indexStatuses[d.id] &&
-                      ` · ${indexStatuses[d.id].completed}/${indexStatuses[d.id].total}`}
-                  </button>
-                )}
-                <button onClick={() => go(() => api('/knowledge/' + d.id, undefined, 'DELETE'))}>
-                  <Trash2 size={16} />
-                </button>
-              </article>
-            ))}
+          <DocumentBrowser
+            key={scope}
+            documents={state.documents.filter((d: any) => !scope || d.scope === scope)}
+            statuses={indexStatuses}
+            query={results.length ? text : ''}
+            scope={scope}
+            zh={t('settings') !== 'Settings'}
+            go={go}
+          />
         </>
       ) : (
         <>

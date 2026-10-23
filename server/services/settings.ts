@@ -131,6 +131,12 @@ const schema = z.object({
             estimatedUsd: z.number().nonnegative().nullable().default(null),
             capabilities: z
               .object({
+                execution: z
+                  .object({
+                    target: z.string().max(4000),
+                    maxConcurrent: z.number().int().min(1).max(8),
+                  })
+                  .optional(),
                 transcriptionPreview: z
                   .object({
                     protocol: z.literal('audio-snapshot-v1'),

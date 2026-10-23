@@ -388,3 +388,125 @@ test('media intent and recovery binding persist before provider submission', asy
   assert.equal(f.store.unknownEffects('chat').length, 1);
   f.store.close();
 });
+
+test('speech submissions queue fairly, cancel before dispatch, and stay conversation scoped', async () => {
+  const f = await fixture();
+  f.config.save({
+    ...f.config.get(),
+    media: { ...f.config.get().media, connections: [connection('openai-speech', 'speech')] },
+  });
+  f.store.put('conversation', { id: 'other' });
+  let release!: () => void;
+  const barrier = new Promise<void>((r) => {
+    release = r;
+  });
+  const seen: string[] = [];
+  const media = new MediaService(f.store, f.config, f.dir, async (_url, init) => {
+    const input = JSON.parse(String(init.body)).input;
+    seen.push(input);
+    if (input === 'first') await barrier;
+    return new Response(Buffer.from('fixture audio'), { headers: { 'Content-Type': 'audio/wav' } });
+  });
+  const submit = (conversationId: string, prompt: string) =>
+    media.submit({
+      connectionId: 'service',
+      conversationId,
+      prompt,
+      operationKey: prompt,
+    });
+  try {
+    const first = await submit('chat', 'first');
+    const second = await submit('chat', 'second');
+    const cancelled = await submit('chat', 'cancelled');
+    const other = await submit('other', 'other');
+    assert.equal(second.status, 'queued');
+    assert.equal(other.status, 'queued');
+    assert.throws(() => media.get(second.id, 'other'), /another conversation/);
+    await media.cancel(cancelled.id, 'chat');
+    release();
+    // close preserves waiting jobs, so wait for completion before shutdown.
+    const end = Date.now() + 5000;
+    while (media.get(second.id, 'chat').status !== 'completed') {
+      assert(Date.now() < end);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.deepEqual(seen, ['first', 'other', 'second']);
+    assert.equal(media.get(first.id, 'chat').status, 'completed');
+    assert.equal(media.get(cancelled.id, 'chat').status, 'cancelled');
+    assert.equal(f.store.list('speech-dispatch').length, 0);
+  } finally {
+    release();
+    await media.close();
+    f.store.close();
+  }
+});
+test('only explicit local VOICE_BUSY is retryable, generic 429 remains an error', async () => {
+  const c = { ...connection('openai-speech', 'speech'), baseUrl: 'http://127.0.0.1:8812/v1' };
+  await assert.rejects(
+    mediaHttp(
+      c,
+      c.baseUrl + '/audio/speech',
+      {},
+      async () =>
+        new Response(JSON.stringify({ error: 'VOICE_BUSY: not accepted' }), {
+          status: 429,
+          headers: { 'Retry-After': '3' },
+        }),
+    ),
+    (e: any) => e.code === 'MEDIA_VOICE_BUSY' && e.retryAfterMs === 3000,
+  );
+  await assert.rejects(
+    mediaHttp(
+      c,
+      c.baseUrl + '/audio/speech',
+      {},
+      async () => new Response(JSON.stringify({ error: 'quota exceeded' }), { status: 429 }),
+    ),
+    (e: any) => e.code === 'MEDIA_HTTP',
+  );
+});
+
+test('restart resumes only undispatched speech and never replays an uncertain submission', async () => {
+  const f = await fixture();
+  f.config.save({
+    ...f.config.get(),
+    media: { ...f.config.get().media, connections: [connection('openai-speech', 'speech')] },
+  });
+  const first = new MediaService(f.store, f.config, f.dir, async () => {
+    throw Error('must not send');
+  });
+  const lease = await first.speechAdmission.acquire('https://media.example', 'blocker');
+  const queued = await first.submit({
+    connectionId: 'service',
+    conversationId: 'chat',
+    prompt: 'resume',
+    operationKey: 'resume',
+  });
+  assert.equal(queued.status, 'queued');
+  await first.close();
+  lease();
+  assert(f.store.maybe('speech-dispatch', queued.id));
+  f.store.put('media-job', {
+    ...f.store.get<any>('media-job', queued.id),
+    id: 'uncertain',
+    status: 'submitting',
+  });
+  let requests = 0;
+  const restored = new MediaService(f.store, f.config, f.dir, async () => {
+    requests++;
+    return new Response(Buffer.from('audio'), { headers: { 'Content-Type': 'audio/wav' } });
+  });
+  try {
+    restored.start();
+    const end = Date.now() + 5000;
+    while (restored.get(queued.id, 'chat').status !== 'completed') {
+      assert(Date.now() < end);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(requests, 1);
+    assert.equal(restored.get('uncertain', 'chat').status, 'unknown');
+  } finally {
+    await restored.close();
+    f.store.close();
+  }
+});

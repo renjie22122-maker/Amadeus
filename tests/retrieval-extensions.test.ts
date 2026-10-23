@@ -316,3 +316,40 @@ test('LightRAG explicit scoped recovery preserves batch and never restarts activ
   state = 'completed';
   assert.equal((await kb.syncLightRag()).status, 'synced');
 });
+
+test('LightRAG pause and manual continuation preserve completed content and scope', async (t) => {
+  const store = new Store(':memory:');
+  let submissions = 0;
+  const baseUrl = await service(t, (path) => {
+    if (path === '/documents/texts') {
+      submissions++;
+      return { jobId: 'batch', status: 'processing' };
+    }
+    return { status: 'completed' };
+  });
+  const light: any = { enabled: true, baseUrl, scope: 'general', mode: 'mix' };
+  light.authorizedTarget = retrievalTarget('lightRag', light);
+  const kb = new Knowledge(store, undefined, () => ({ lightRag: light }));
+  t.after(() => {
+    kb.close();
+    store.close();
+  });
+  kb.import('general', 'first', 'First source with useful content.');
+  kb.controlLightRag('general', { paused: true });
+  assert.equal((await kb.syncLightRag()).status, 'paused');
+  assert.equal(submissions, 0);
+  assert.throws(() => kb.controlLightRag('private', { paused: false }), /authorized/);
+  kb.controlLightRag('general', { paused: false, autoContinue: false });
+  assert.equal((await kb.syncLightRag()).status, 'ready');
+  await kb.syncLightRag('general');
+  assert.equal(submissions, 1);
+  await kb.syncLightRag();
+  const completed = kb.lightRagStatus('general').completed;
+  kb.import('general', 'second', 'A different source requiring graph extraction.');
+  await kb.syncLightRag();
+  assert.equal(submissions, 1);
+  assert.equal(kb.lightRagStatus('general').completed, completed);
+  await kb.syncLightRag('general');
+  assert.equal(submissions, 2);
+  assert.equal(kb.lightRagStatus('general').autoContinue, false);
+});

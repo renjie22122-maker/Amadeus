@@ -97,12 +97,21 @@ export class Knowledge {
   }
   async indexStatusesAsync(scope: string) {
     const statuses: ReturnType<Knowledge['indexStatuses']> = {};
+    const current = new Set(
+      this.store
+        .list<any>('document')
+        .filter((doc) => doc.scope === scope && documentAt(doc, Date.now()))
+        .map((doc) => doc.id),
+    );
+    for (const id of current)
+      statuses[id] = { completed: 0, total: 0, invalid: 0, status: 'pending' };
     const rows = this.store.db
       .prepare('SELECT document_id,vector FROM chunks WHERE scope=?')
       .iterate(scope);
     let visited = 0;
     for (const row of rows as Iterable<any>) {
       if (++visited % 64 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+      if (!current.has(row.document_id)) continue;
       const item = this.vectorStatuses([row])[row.document_id];
       const old = (statuses[row.document_id] ||= {
         completed: 0,
@@ -276,6 +285,10 @@ export class Knowledge {
       .all(key) as any[];
     assert(rows.length, 'NOT_FOUND', 'Document not found');
     onProgress?.({ completed: 0, total: rows.length });
+    const startedAt = Date.now();
+    let filled = 0,
+      encoded = 0,
+      encodingMs = 0;
     for (let i = 0; i < rows.length; i += 16) {
       const batch = rows
         .slice(i, i + 16)
@@ -294,9 +307,11 @@ export class Knowledge {
           }
         });
       if (!batch.length) {
+        if (i % 256 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
         onProgress?.({ completed: Math.min(i + 16, rows.length), total: rows.length });
         continue;
       }
+      filled += batch.length;
       const vectors: number[][] = [];
       for (const row of batch) {
         assert(
@@ -318,7 +333,10 @@ export class Knowledge {
             }
           })
           .find((v) => v?.model === fingerprint);
+        if (!cached) encoded++;
+        const encodingStarted = Date.now();
         vectors.push(cached?.values || (await this.embeddings!.encode([row.text]))[0]);
+        if (!cached) encodingMs += Date.now() - encodingStarted;
       }
       assert(
         allowed() && this.embeddings!.fingerprint() === fingerprint,
@@ -337,7 +355,15 @@ export class Knowledge {
       onProgress?.({ completed: Math.min(i + 16, rows.length), total: rows.length });
     }
     onProgress?.({ completed: rows.length, total: rows.length });
-    return { chunks: rows.length, model: this.embeddings!.fingerprint() };
+    return {
+      chunks: rows.length,
+      filled,
+      encoded,
+      skipped: rows.length - filled,
+      elapsedMs: Date.now() - startedAt,
+      encodingMs,
+      model: this.embeddings!.fingerprint(),
+    };
   }
   async hybrid(
     scopes: string[],
@@ -774,6 +800,21 @@ export class Knowledge {
   }
   private lightSyncBusy = false;
   private lightProgressPoll = new Map<string, number>();
+  controlLightRag(scope: string, change: { paused?: boolean; autoContinue?: boolean }) {
+    const c = this.retrieval().lightRag;
+    assert(
+      c?.enabled && c.scope === scope && c.authorizedTarget === retrievalTarget('lightRag', c),
+      'LIGHTRAG_SCOPE',
+      'Select the authorized graph scope first.',
+    );
+    const id = createHash('sha256').update(retrievalTarget('lightRag', c)).digest('hex');
+    const old = this.store.maybe<any>('lightrag-control', id) || {
+      paused: false,
+      autoContinue: true,
+    };
+    this.store.put('lightrag-control', { ...old, ...change, id });
+    return this.lightRagStatus(scope);
+  }
   lightRagStatus(scope: string) {
     const c = this.retrieval().lightRag;
     if (!c?.enabled || c.scope !== scope) return { status: 'disabled' };
@@ -800,7 +841,19 @@ export class Knowledge {
         .catch(() => {})
         .finally(() => this.lightProgressPoll.set(id, Date.now()));
     }
-    return value;
+    const control = this.store.maybe<any>('lightrag-control', id) || {
+      paused: false,
+      autoContinue: true,
+    };
+    return {
+      ...value,
+      ...control,
+      status: control.paused
+        ? value.jobId && ['processing', 'queued'].includes(value.status)
+          ? 'pausing'
+          : 'paused'
+        : value.status,
+    };
   }
   async syncLightRag(recoveryScope?: string) {
     const c = this.retrieval().lightRag;
@@ -876,7 +929,11 @@ export class Knowledge {
             });
           }
         }
-        if (recover && job.status === 'unknown') {
+        if (
+          recover &&
+          !this.store.maybe<any>('lightrag-control', id)?.paused &&
+          job.status === 'unknown'
+        ) {
           assert(
             Array.isArray(previous.batch) &&
               previous.batch.length > 0 &&
@@ -951,6 +1008,13 @@ export class Knowledge {
         )
         .filter(Boolean);
       if (!batch.length) return { status: 'synced', completed: completed.size, total: rows.length };
+      const control = this.store.maybe<any>('lightrag-control', id);
+      if (control?.paused || (!recover && control?.autoContinue === false))
+        return {
+          status: control.paused ? 'paused' : 'ready',
+          completed: completed.size,
+          total: rows.length,
+        };
       // Save intent before sending; an unknown submission is never blindly replayed.
       this.store.put('lightrag-sync', { id, completed: [...completed], status: 'unknown' });
       const result = await retrievalPost('lightRag', c, '/documents/texts', {

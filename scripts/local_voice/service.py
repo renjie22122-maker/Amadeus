@@ -158,6 +158,8 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Cache-Control", "no-store")
+            if status == 429:
+                self.send_header("Retry-After", "30")
             self.end_headers()
             self.wfile.write(payload)
 
@@ -194,7 +196,7 @@ def create_server(config, host="127.0.0.1", port=8812, config_path=None):
                 if not 0 < length <= MAX_BODY:
                     return self.reply(413, {"error": "Audio upload must be at most 25 MiB"})
                 if not lock.acquire(blocking=False):
-                    return self.reply(429, {"error": "VOICE_BUSY: another local voice request is running; retry explicitly later"})
+                    return self.reply(429, {"error": "VOICE_BUSY: another local voice request is running; request was not accepted"})
                 state.update(busy=True, device=None, reason=None)
                 try:
                     if cleanup_deleted_voices(config_path):

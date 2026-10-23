@@ -32,6 +32,7 @@ export interface MediaConnection {
   defaults: Record<string, unknown>;
   estimatedUsd: number | null;
   capabilities?: {
+    execution?: { target: string; maxConcurrent: number };
     readAloud?: { protocol: 'wav-ndjson-v1'; target: string };
     transcriptionPreview?: { protocol: 'audio-snapshot-v1'; target: string };
     references?: {
