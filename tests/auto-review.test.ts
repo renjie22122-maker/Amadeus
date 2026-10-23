@@ -456,3 +456,33 @@ test('malformed assessment gets one format repair without weakening gates', asyn
     f.store.close();
   }
 });
+
+test('concurrent malformed reviews share one bounded repair and count usage once', async () => {
+  const f = await setup();
+  let calls = 0;
+  try {
+    const reviewer = new AutoReview(f.store, f.config, () => ({
+      complete: async () => {
+        const count = ++calls;
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return {
+          message: { role: 'assistant', content: count === 1 ? 'invalid' : approved() },
+          usage: { input: 100, output: 3, cached: 0, measured: true },
+        };
+      },
+    }));
+    const signal = new AbortController().signal;
+    const results = await Promise.all([
+      reviewer.review(f.run, {}, signal),
+      reviewer.review(f.run, {}, signal),
+    ]);
+    assert.equal(calls, 2);
+    assert.ok(results.every((r) => r.decision === 'allow'));
+    assert.equal(
+      results.reduce((n, r) => n + (r.usage?.input || 0), 0),
+      200,
+    );
+  } finally {
+    f.store.close();
+  }
+});

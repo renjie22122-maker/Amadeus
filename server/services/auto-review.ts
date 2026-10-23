@@ -242,39 +242,63 @@ export class AutoReview {
         } catch {
           // Repair invalid formatting once; never retry a valid negative assessment.
           record.formatRepairAttempts = 1;
-          const repaired = await boundedReview(
-            this.provider(profile).complete({
-              profile,
-              tools: [],
-              signal: activeSignal,
-              onText: () => {},
-              messages: [
-                {
-                  role: 'system',
-                  content:
-                    REVIEW_PROMPT +
-                    '\nYour previous response did not validate. Return only the exact JSON assessment schema with enum strings and numeric humanMessages IDs. Do not return decision/allow fields. Reassess the same evidence; uncertainty must remain uncertainty.',
-                },
-                { role: 'user', content },
-              ],
-            }),
-            activeSignal,
+          const repairFlight = this.flights.get(
+            signal,
+            reviewHash(
+              'format-repair:' + initialStamp + run.id + JSON.stringify(profile) + content,
+            ),
+            record.id,
+            () =>
+              this.pool.run(
+                activeSignal,
+                () =>
+                  boundedReview(
+                    this.provider(profile).complete({
+                      profile,
+                      tools: [],
+                      signal: activeSignal,
+                      onText: () => {},
+                      messages: [
+                        {
+                          role: 'system',
+                          content:
+                            REVIEW_PROMPT +
+                            '\nYour previous response did not validate. Return only the exact JSON assessment schema with enum strings and numeric humanMessages IDs. Do not return decision/allow fields. Reassess the same evidence; uncertainty must remain uncertainty.',
+                        },
+                        { role: 'user', content },
+                      ],
+                    }),
+                    activeSignal,
+                  ),
+                run.conversationId,
+              ),
           );
-          record.repairUsage = repaired.usage;
-          if (!flight.joined)
+          const repaired = await boundedReview(repairFlight.work, activeSignal);
+          if (repairFlight.joined) record.sharedRepairId = repairFlight.owner;
+          else {
+            record.repairUsage = repaired.usage;
+            const prior = record.usage;
             record.usage = {
-              ...result.usage,
-              input: result.usage.input + repaired.usage.input,
-              output: result.usage.output + repaired.usage.output,
-              cached: result.usage.cached + repaired.usage.cached,
-              measured: result.usage.measured && repaired.usage.measured,
+              input: (prior?.input || 0) + repaired.usage.input,
+              output: (prior?.output || 0) + repaired.usage.output,
+              cached: (prior?.cached || 0) + repaired.usage.cached,
+              measured: (!prior || prior.measured) && repaired.usage.measured,
             };
-          if (record.estimatedUsd != null && repaired.usage.measured)
-            record.estimatedUsd +=
-              (Math.max(0, repaired.usage.input - repaired.usage.cached) * prices.input! +
-                repaired.usage.output * prices.output! +
-                repaired.usage.cached * prices.cached!) /
-              1e6;
+            if (
+              repaired.usage.measured &&
+              prices.input != null &&
+              prices.output != null &&
+              prices.cached != null &&
+              (!prior || record.estimatedUsd != null)
+            )
+              record.estimatedUsd =
+                (record.estimatedUsd || 0) +
+                (Math.max(0, repaired.usage.input - repaired.usage.cached) * prices.input +
+                  repaired.usage.output * prices.output +
+                  repaired.usage.cached * prices.cached) /
+                  1e6;
+            else record.estimatedUsd = null;
+          }
           if (repaired.message.calls?.length) throw Error('Reviewer may not call tools.');
           parsed = parse(repaired.message.content);
         }
