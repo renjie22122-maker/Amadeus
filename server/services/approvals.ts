@@ -69,6 +69,47 @@ export class Inputs {
             review.decision === 'ask' ? review.assessment?.clarification || null : null,
         };
         signal.throwIfAborted();
+        if (
+          review.decision === 'ask' &&
+          review.replan &&
+          !review.failureCode &&
+          !payload.forceHuman &&
+          !payload.forceManual &&
+          !run.recoveryOnly &&
+          this.store.get<any>('conversation', run.conversationId).permission === 'auto'
+        ) {
+          const attempts = this.store
+            .list<any>('review-replan')
+            .filter((row) => row.runId === run.id);
+          const evidenceKey = review.cache?.requestHash;
+          // No action is executed. Repeated unchanged evidence and exhausted budgets go to the human.
+          if (
+            attempts.length < 3 &&
+            evidenceKey &&
+            !attempts.some((row) => row.evidenceKey === evidenceKey)
+          ) {
+            const notice = {
+              id: id(),
+              runId: run.id,
+              conversationId: run.conversationId,
+              reviewId: review.id,
+              evidenceKey,
+              kind: review.replan.kind,
+              instruction: review.replan.instruction,
+              at: Date.now(),
+            };
+            this.store.put('review-replan', notice);
+            this.store.event(run.conversationId, run.id, 'approval.evidence_requested', notice);
+            throw new NotStartedError(
+              'REVIEW_NEEDS_EVIDENCE',
+              'This operation has NOT started and is NOT approved. Independent review requests ' +
+                review.replan.kind +
+                ': ' +
+                review.replan.instruction +
+                ' Use only existing permissions for bounded inspection or a safer proposal; re-submit only with changed evidence. Do not bypass review or repeat the same operation. At most three evidence-repair opportunities per run; unresolved cases require human review.',
+            );
+          }
+        }
         if (review.decision === 'allow') {
           item.status = 'answered';
           item.answer = 'Approved by automatic reviewer: ' + review.reason;

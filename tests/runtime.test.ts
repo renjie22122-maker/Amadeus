@@ -1,6 +1,6 @@
 import { AppError } from '../server/core/errors.js';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -2484,6 +2484,90 @@ test('scheduled wake-up is labelled and never consumes unsent user attachments',
     assert.deepEqual(event.data.attachments, []);
     assert.equal(f.store.get<any>('attachment', 'draft').messageEventId, undefined);
     assert.equal(modelInput.includes('UNSENT_PRIVATE_DRAFT_SENTINEL'), false);
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});
+
+test('automatic evidence repair continues the real tool loop without a human approval', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'review-loop-'));
+  await writeFile(join(root, 'context.txt'), 'Expected result is verified.');
+  let steps = 0,
+    reviews = 0;
+  const f = await setup({
+    complete: async (req) => {
+      if (req.messages[0]?.content.includes('independent action authorization assessor')) {
+        reviews++;
+        const assessment = {
+          risk: 'low',
+          authorization: 'explicit',
+          evidence: [0],
+          bounded: true,
+          effectsKnown: reviews > 1,
+          sensitiveData: false,
+          securityChange: false,
+          reason: 'Need the scoped context before editing.',
+          ...(reviews === 1
+            ? {
+                remediation: {
+                  kind: 'inspect',
+                  instruction:
+                    'Read context.txt in the current project, then propose the requested file.',
+                },
+              }
+            : {}),
+        };
+        return result(JSON.stringify(assessment));
+      }
+      steps++;
+      if (steps === 1 || steps === 3)
+        return result('', [
+          {
+            id: 'write-' + steps,
+            name: 'write_file',
+            arguments: { path: 'output.txt', content: 'verified' },
+          },
+        ]);
+      if (steps === 2) {
+        await assert.rejects(readFile(join(root, 'output.txt')));
+        assert.ok(
+          req.messages.some(
+            (m) => m.role === 'tool' && m.content.includes('REVIEW_NEEDS_EVIDENCE'),
+          ),
+        );
+        return result('', [
+          { id: 'inspect', name: 'read_file', arguments: { path: 'context.txt' } },
+        ]);
+      }
+      return result('Done.');
+    },
+  });
+  try {
+    f.store.put('project', { id: 'p', folders: [root] });
+    f.store.put('conversation', {
+      ...f.store.get<any>('conversation', 'chat'),
+      projectId: 'p',
+      permission: 'auto',
+    });
+    const run = f.runtime.start(
+      'chat',
+      'Use context.txt to create output.txt with the requested result.',
+    );
+    await until(
+      () =>
+        ['completed', 'failed', 'waiting_approval'].includes(
+          f.store.get<any>('run', run.id).status,
+        ),
+      10000,
+    );
+    assert.equal(f.store.get<any>('run', run.id).status, 'completed');
+    assert.equal(reviews, 2);
+    assert.equal(steps, 4);
+    assert.equal(await readFile(join(root, 'output.txt'), 'utf8'), 'verified');
+    assert.equal(f.store.list<any>('input').filter((q) => q.status === 'pending').length, 0);
+    assert.equal(f.store.list<any>('review-replan').length, 1);
+    assert.equal(f.store.unknownEffects('chat').length, 0);
   } finally {
     await f.runtime.shutdown();
     f.store.close();

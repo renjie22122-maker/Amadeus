@@ -4,7 +4,7 @@
 
 Reviewed: 2026-10-23.
 
-Policy version in code: `2026-10-23.1`. This is Amadeus's implementation, not a claim to reproduce private Codex internals.
+Policy version in code: `2026-10-23.2`. This is Amadeus's implementation, not a claim to reproduce private Codex internals.
 
 ## Decision path
 
@@ -43,3 +43,11 @@ Media connections optionally declare USD response amount paths or billable-unit 
 Language-model streaming already requests terminal usage and distinguishes input/cache/output pricing per million tokens. Explicit provider cache misses are now retained too. Pricing is configured; measured token usage does not imply a measured monetary charge. DeepSeek [usage schema](https://api-docs.deepseek.com/api/create-chat-completion/), fal [pricing API](https://fal.ai/docs/platform-apis/v1/models/pricing), and MiniMax [video task creation](https://platform.minimax.io/docs/api-reference/video-generation-v2-create) illustrate different contracts. No prices are hard-coded here.
 
 Validation: synthetic billing/usage fixtures, budget boundaries, file preview/staleness and reviewer repair tests. This does not establish a live-provider approval false-positive rate or validate every vendor's billing account API.
+
+## Bounded evidence repair before human escalation
+
+A valid independent assessment can request inspect/revise/wait for an already authorized task whose material effects remain unresolved. The original operation is not started or approved. The host returns a not-started tool result to the executing agent, which may collect evidence or propose a smaller operation using existing permissions. Every resubmission is reviewed independently. There is no automatic shell execution, permission grant or background sleep created by this mechanism.
+
+At most three repair notices per run are persisted. Identical unchanged review evidence goes straight to the existing human path; counters survive restart. Missing consent, high/critical risk, sensitive transfers, security changes, forced human rules, recovery uncertainty, failed reviewer calls and changed authorization are excluded. This lowers unnecessary interruptions without claiming that every task can finish without a person. Model compliance and the available inspection tools still determine whether the agent resolves the missing facts.
+
+Public design references: [OpenAI Auto-review research](https://alignment.openai.com/auto-review/) separates execution from authorization, supplies rejection rationale and limits repeated denials; [Claude Code modes](https://code.claude.com/docs/en/permission-modes) distinguish classifier review from bypass and retain escalation thresholds; [ChatGPT Agent safety](https://help.openai.com/en/articles/11752874-chatgpt-agent) documents consequential-action confirmation. These are design references, not shared implementation or promised approval rates. Amadeus still has more conservative deterministic high-risk gates and has not replicated their OS sandbox or production evaluations.

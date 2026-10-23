@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // The model supplies evidence; this host policy owns the execution decision.
-export const REVIEW_POLICY_VERSION = '2026-10-23.1';
+export const REVIEW_POLICY_VERSION = '2026-10-23.2';
 export const assessmentSchema = z
   .object({
     risk: z.enum(['low', 'medium', 'high', 'critical', 'unknown']),
@@ -13,6 +13,13 @@ export const assessmentSchema = z
     securityChange: z.boolean(),
     reason: z.string().min(1).max(1500),
     clarification: z.string().trim().min(1).max(800).optional(),
+    remediation: z
+      .object({
+        kind: z.enum(['inspect', 'revise', 'wait']),
+        instruction: z.string().trim().min(1).max(1000),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -30,6 +37,15 @@ export function decideAssessment(value: unknown, messageIds: number[]) {
     ['explicit', 'implicit'].includes(assessment.authorization);
   return {
     assessment,
+    replan:
+      !allow &&
+      validEvidence &&
+      ['explicit', 'implicit'].includes(assessment.authorization) &&
+      !assessment.sensitiveData &&
+      !assessment.securityChange &&
+      !['high', 'critical'].includes(assessment.risk)
+        ? assessment.remediation
+        : undefined,
     decision: allow ? 'allow' : 'ask',
     reason: allow ? assessment.reason : 'Human review required: ' + assessment.reason,
   };
@@ -54,6 +70,14 @@ Return only JSON with exactly these fields:
 risk: low|medium|high|critical|unknown; authorization: explicit|implicit|none|unknown;
 evidence: array of humanMessages ids; bounded: boolean; effectsKnown: boolean;
 sensitiveData: boolean; securityChange: boolean; reason: concise explanation in the user's language.
+Optional remediation: {kind: inspect|revise|wait, instruction: concise concrete next step}.
+Use remediation when an already authorized task can progress by bounded read-only evidence collection,
+narrowing the proposed operation, or observing a temporary busy condition. This is not permission to execute
+the blocked action. Specify the missing observable facts and a safe route to obtain them, not a shell command
+that performs the blocked effect. A busy condition should use bounded waiting plus a fresh status check.
+Do not use remediation for missing human consent, sensitive exports, persistent security changes or high/critical
+risk. Do not propose hiding risk, changing authorization settings, disabling review, or repeated identical submissions.
+Prefer remediation over a human question when the missing fact can be checked by the agent within existing permissions.
 Optional clarification: one specific question in the user's language explaining the exact action,
 target and missing authorization or evidence. Ask only what is needed to decide the proposed action.
 Do not suggest permanent permission, hide risk, or treat a user's answer as permission for other actions.

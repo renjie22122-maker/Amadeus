@@ -200,7 +200,7 @@ test('new instructions, configuration or changed action invalidate approval', as
       const result = await reviewer.review(f.run, payload, new AbortController().signal);
       assert.equal(result.decision, 'ask');
       assert.match(result.reason, /changed/);
-      assert.equal(result.policyVersion, '2026-10-23.1');
+      assert.equal(result.policyVersion, '2026-10-23.2');
     } finally {
       f.store.close();
     }
@@ -484,5 +484,96 @@ test('concurrent malformed reviews share one bounded repair and count usage once
     );
   } finally {
     f.store.close();
+  }
+});
+
+test('evidence repairs return to the agent without approval or side effects and stop at three', async () => {
+  const f = await setup();
+  let count = 0;
+  try {
+    const inputs = new Inputs(f.store, async () => ({
+      id: 'r' + count,
+      decision: 'ask',
+      cache: { requestHash: 'evidence' + count++ },
+      replan: {
+        kind: 'inspect',
+        instruction: 'Read the target process ownership and active task status.',
+      },
+    }));
+    for (let n = 0; n < 3; n++) {
+      await assert.rejects(
+        inputs.request(
+          f.run,
+          'approval',
+          { command: 'scoped-operation' },
+          new AbortController().signal,
+        ),
+        /REVIEW_NEEDS_EVIDENCE|NOT started/,
+      );
+      assert.equal(f.store.list<any>('input').length, 0);
+      assert.equal(f.store.get<any>('run', f.run.id).status, 'running');
+    }
+    assert.equal(f.store.list<any>('review-replan').length, 3);
+    const pending = inputs.request(
+      f.run,
+      'approval',
+      { command: 'scoped-operation' },
+      new AbortController().signal,
+    );
+    const rejected = assert.rejects(pending, /User denied/);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const item = f.store.list<any>('input')[0];
+    assert.equal(item.status, 'pending');
+    inputs.answer(item.id, 'No', false);
+    await rejected;
+  } finally {
+    f.store.close();
+  }
+});
+test('unchanged evidence cannot repeatedly defer a human decision', async () => {
+  const f = await setup();
+  try {
+    const inputs = new Inputs(f.store, async () => ({
+      decision: 'ask',
+      cache: { requestHash: 'same' },
+      replan: { kind: 'revise', instruction: 'Use a narrower target.' },
+    }));
+    await assert.rejects(
+      inputs.request(f.run, 'approval', {}, new AbortController().signal),
+      /NOT started/,
+    );
+    const pending = inputs.request(f.run, 'approval', {}, new AbortController().signal);
+    const rejected = assert.rejects(pending, /User denied/);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    inputs.answer(f.store.list<any>('input')[0].id, 'No', false);
+    await rejected;
+    assert.equal(f.store.list<any>('review-replan').length, 1);
+  } finally {
+    f.store.close();
+  }
+});
+test('remediation is never an authorization and excludes high risk and missing consent', async () => {
+  const { decideAssessment } = await import('../server/services/review-policy.js');
+  const base = {
+    ...JSON.parse(approved()),
+    risk: 'unknown',
+    effectsKnown: false,
+    remediation: { kind: 'inspect', instruction: 'Inspect scoped source.' },
+  };
+  const fixable = decideAssessment(base, [0]);
+  assert.equal(fixable.decision, 'ask');
+  assert.equal(fixable.replan?.kind, 'inspect');
+  for (const change of [
+    { risk: 'high' },
+    { risk: 'critical' },
+    { authorization: 'none' },
+    { authorization: 'unknown' },
+    { securityChange: true },
+    { sensitiveData: true },
+    { evidence: [99] },
+  ]) {
+    const review = decideAssessment({ ...base, ...change }, [0]);
+    assert.equal(review.decision, 'ask');
+    assert.equal(review.replan, undefined);
   }
 });

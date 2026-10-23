@@ -349,10 +349,12 @@ export class AutoReview {
     }
     if (this.store.get<Conversation>('conversation', run.conversationId).permission !== 'auto') {
       record.decision = 'ask';
+      delete record.replan;
       record.reason = 'Permission mode changed while reviewing.';
     }
     if (contextStamp() !== initialStamp || JSON.stringify(payload) !== actionSnapshot) {
       record.decision = 'ask';
+      delete record.replan;
       record.reason =
         'Authorization context or action changed during review; review again with current evidence.';
     }
@@ -360,7 +362,9 @@ export class AutoReview {
       ? 'aborted'
       : record.decision === 'allow'
         ? 'approved'
-        : 'needs_human';
+        : record.replan
+          ? 'needs_evidence'
+          : 'needs_human';
     record.durationMs = Date.now() - record.at;
     if (signal.aborted) {
       this.store.put('approval-review', record);
