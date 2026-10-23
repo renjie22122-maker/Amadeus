@@ -404,7 +404,7 @@ test('retry state survives worker replacement, backs off and stops after five at
   }
 });
 
-test('extraction has an independent supported reasoning budget without modifying chat settings', async () => {
+test('extraction respects configured reasoning and output budget without a hidden cap', async () => {
   const f = await fixture();
   const original = f.config.profile();
   f.config.save({
@@ -421,8 +421,8 @@ test('extraction has an independent supported reasoning budget without modifying
   });
   const learning = new MemoryLearning(f.store, f.config, () => ({
     complete: async (request) => {
-      assert.equal(request.profile.reasoning, 'none');
-      assert.equal(request.profile.maxOutputTokens, 8192);
+      assert.equal(request.profile.reasoning, 'high');
+      assert.equal(request.profile.maxOutputTokens, 32000);
       return response([f.item]);
     },
   }));
@@ -445,6 +445,37 @@ test('decimal source IDs normalize without weakening exact evidence checks', asy
     await learning.tick();
     assert.equal(f.store.list<any>('memory-learning')[0].status, 'completed');
     assert.equal(f.store.list<any>('memory')[0].sourceEventId, f.item.eventId);
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});
+
+test('output truncation reduces the next batch without advancing unfinished sources', async () => {
+  const f = await fixture();
+  const sizes: number[] = [];
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async (request) => {
+      sizes.push(JSON.parse(request.messages[1].content).messages.length);
+      if (sizes.length === 1)
+        throw Object.assign(new Error('truncated'), {
+          code: 'MODEL_INCOMPLETE',
+          finishReason: 'length',
+        });
+      return response([]);
+    },
+  }));
+  try {
+    const now = Date.now();
+    await learning.tick(now);
+    assert.equal(f.store.list<any>('memory-learning')[0].reason, 'output_limit');
+    await learning.tick(now + 31000);
+    await learning.tick(now + 62000);
+    assert.deepEqual(sizes, [2, 1, 1]);
+    assert.equal(
+      f.store.list<any>('memory-source-progress').filter((p) => p.status === 'completed').length,
+      2,
+    );
   } finally {
     await learning.close();
     f.store.close();
