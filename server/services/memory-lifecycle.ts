@@ -1,3 +1,4 @@
+import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { memoryPartition, memoryConversation } from '../../shared/memory-scope.js';
 import { createHash } from 'node:crypto';
 import { Store, id } from '../storage/store.js';
@@ -78,6 +79,16 @@ export class MemoryLifecycle {
     return after;
   }
   evidenceValid(m: Memory) {
+    const sourceId = m.sourceConversationId || /^chat:(.+)#event:\d+$/.exec(m.source)?.[1];
+    const source = sourceId ? this.store.maybe<any>('conversation', sourceId) : undefined;
+    if (
+      source &&
+      (source.remoteChatOnly || source.remoteMemoryOnly) &&
+      m.scope !== conversationMemoryScope(source)
+    )
+      return false;
+    if (m.scope.startsWith('chat:') && (!source || m.scope !== conversationMemoryScope(source)))
+      return false;
     if (m.kind !== 'experience') return true;
     return (
       !!m.evidence?.length &&
@@ -85,7 +96,7 @@ export class MemoryLifecycle {
       m.evidence.every((e) => {
         const event = this.store.events(e.conversationId).find((x) => x.id === e.eventId);
         const conversation = this.store.maybe<any>('conversation', e.conversationId);
-        const scope = conversation?.projectId ? 'project:' + conversation.projectId : 'user';
+        const scope = conversation ? conversationMemoryScope(conversation) : 'user';
         return (
           scope === m.scope &&
           event?.type === 'tool.completed' &&
@@ -96,6 +107,8 @@ export class MemoryLifecycle {
     );
   }
   create(m: Memory) {
+    if (m.scope.startsWith('chat:'))
+      m = { ...m, recallScope: 'conversation', applicability: 'conversation' };
     if (m.sourceConversationId && m.sourceEventId != null)
       assert(
         !this.store.maybe(
@@ -258,6 +271,10 @@ export class MemoryLifecycle {
       'Memory changed. Refresh before editing.',
     );
     const next = { ...old, ...patch, id: old.id, scope: old.scope, revision: old.revision + 1 };
+    if (next.scope.startsWith('chat:')) {
+      next.recallScope = 'conversation';
+      next.applicability = 'conversation';
+    }
     if (next.entityId) this.entity(next.scope, next.entityId);
     assert(
       next.validUntil == null || next.validUntil > (next.validFrom ?? next.createdAt),

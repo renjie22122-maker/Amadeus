@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { memoryReach } from '../../shared/memory-scope.js';
+import { conversationMemoryScope, memoryReach } from '../../shared/memory-scope.js';
 import type { Conversation, Memory, Run } from '../../shared/types.js';
 import { assert } from '../core/errors.js';
 import { Store, id } from '../storage/store.js';
@@ -24,11 +24,17 @@ export function memoryRoutes(
     memories: MemoryIndex;
   },
 ) {
+  const chatScopeValid = (scope: string) => {
+    if (!scope.startsWith('chat:')) return false;
+    const c = store.maybe<Conversation>('conversation', scope.slice(5));
+    return !!c && conversationMemoryScope(c) === scope;
+  };
   app.post('/api/memories/index', async (req) => {
     const { scope } = z.object({ scope: z.string().optional() }).parse(req.body || {});
     assert(
       !scope ||
         scope === 'user' ||
+        chatScopeValid(scope) ||
         (scope.startsWith('project:') && store.maybe('project', scope.slice(8))),
       'SCOPE',
       'Select a valid memory scope.',
@@ -66,7 +72,9 @@ export function memoryRoutes(
   };
   function checkMemoryScope(scope: string) {
     assert(
-      scope === 'user' || (scope.startsWith('project:') && store.maybe('project', scope.slice(8))),
+      scope === 'user' ||
+        chatScopeValid(scope) ||
+        (scope.startsWith('project:') && store.maybe('project', scope.slice(8))),
       'SCOPE',
       'Select a valid memory scope.',
     );
@@ -204,7 +212,13 @@ export function memoryRoutes(
       })
       .parse(req.body);
     checkMemoryScope(d.scope);
-    return graph.search([d.scope], d.query, d.asOf, d.depth);
+    return graph.search(
+      [d.scope],
+      d.query,
+      d.asOf,
+      d.depth,
+      d.scope.startsWith('chat:') ? d.scope.slice(5) : undefined,
+    );
   });
   app.post('/api/memories/search', async (req) => {
     const d = z
@@ -213,10 +227,11 @@ export function memoryRoutes(
     checkMemoryScope(d.scope);
     return memories.recall(
       d.query,
-      d.scope === 'user' ? null : d.scope.slice(8),
+      d.scope.startsWith('project:') ? d.scope.slice(8) : null,
       new AbortController().signal,
       d.scope === 'user',
       d.asOf,
+      d.scope.startsWith('chat:') ? d.scope.slice(5) : undefined,
     );
   });
   app.post('/api/memories', async (req) => {
@@ -233,6 +248,7 @@ export function memoryRoutes(
       .parse(req.body);
     assert(
       data.scope === 'user' ||
+        chatScopeValid(data.scope) ||
         (data.scope.startsWith('project:') && store.maybe('project', data.scope.slice(8))),
       'SCOPE',
       'Select a valid memory scope.',
@@ -242,7 +258,7 @@ export function memoryRoutes(
       assert(
         chat &&
           !store.list<Run>('run').some((r) => r.conversationId === chat.id && r.parentRunId) &&
-          (chat.projectId ? 'project:' + chat.projectId : 'user') === data.scope,
+          conversationMemoryScope(chat) === data.scope,
         'MEMORY_SCOPE',
         'Choose an original conversation in this storage group.',
       );
@@ -274,10 +290,20 @@ export function memoryRoutes(
   app.get<{ Querystring: { scope: string } }>('/api/memory-policy', async (req) => {
     const scope = req.query.scope;
     assert(
-      scope === 'user' || (scope.startsWith('project:') && store.maybe('project', scope.slice(8))),
+      scope === 'user' ||
+        chatScopeValid(scope) ||
+        (scope.startsWith('project:') && store.maybe('project', scope.slice(8))),
       'SCOPE',
       'Invalid memory scope.',
     );
+    if (chatScopeValid(scope)) {
+      const c = store.get<Conversation>('conversation', scope.slice(5));
+      return {
+        id: scope,
+        enabled: c.automaticMemory === true,
+        targets: [c.memoryGenerationTarget],
+      };
+    }
     return store.maybe('memory-policy', scope) || { id: scope, enabled: false, targets: [] };
   });
   app.post('/api/memory-policy', async (req) => {
@@ -286,10 +312,19 @@ export function memoryRoutes(
       .parse(req.body);
     assert(
       d.scope === 'user' ||
+        chatScopeValid(d.scope) ||
         (d.scope.startsWith('project:') && store.maybe('project', d.scope.slice(8))),
       'SCOPE',
       'Invalid memory scope.',
     );
+    if (chatScopeValid(d.scope)) {
+      const c = store.get<Conversation>('conversation', d.scope.slice(5));
+      store.put('conversation', {
+        ...c,
+        ...inheritedMemory(store, config, { ...c, automaticMemory: d.enabled }),
+      });
+      return { id: d.scope, enabled: d.enabled };
+    }
     const profile = config.profile(d.profileId),
       target = memoryTarget(profile),
       old = store.maybe<any>('memory-policy', d.scope);
@@ -300,6 +335,8 @@ export function memoryRoutes(
     });
     for (const c of store.list<Conversation>('conversation'))
       if (
+        !c.remoteChatOnly &&
+        !c.remoteMemoryOnly &&
         c.memoryPolicy === 'inherit' &&
         (c.projectId ? 'project:' + c.projectId : 'user') === d.scope
       )

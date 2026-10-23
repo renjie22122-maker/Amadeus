@@ -3,8 +3,11 @@ import { api } from '../api';
 export function MemoryDefaults({ scope, state, zh, notify }: any) {
   const [enabled, setEnabled] = useState(false),
     [busy, setBusy] = useState(false);
+  const chat = scope.startsWith('chat:')
+    ? state.conversations.find((c: any) => c.id === scope.slice(5))
+    : undefined;
   const profile = state.settings.profiles.find(
-    (p: any) => p.id === state.settings.defaultProfileId,
+    (p: any) => p.id === (chat?.profileId || state.settings.defaultProfileId),
   );
   useEffect(() => {
     let live = true;
@@ -19,7 +22,15 @@ export function MemoryDefaults({ scope, state, zh, notify }: any) {
   }, [scope]);
   return (
     <section className="panel">
-      <h3>{zh ? '本范围的新对话默认设置' : 'New-chat defaults for this scope'}</h3>
+      <h3>
+        {chat
+          ? zh
+            ? '本接入聊天自动记忆'
+            : 'Automatic memory for this external chat'
+          : zh
+            ? '本范围的新对话默认设置'
+            : 'New-chat defaults for this scope'}
+      </h3>
       <label className="checkbox">
         <input
           type="checkbox"
@@ -41,9 +52,13 @@ export function MemoryDefaults({ scope, state, zh, notify }: any) {
             }
           }}
         />
-        {zh
-          ? '新对话自动管理记忆，现有继承设置的对话同步更新'
-          : 'Automatic memory for new chats and existing inheriting chats'}
+        {chat
+          ? zh
+            ? '仅在这个接入聊天内自动学习与召回，不扩大范围'
+            : 'Learn and recall only within this external chat'
+          : zh
+            ? '新对话自动管理记忆，现有继承设置的对话同步更新'
+            : 'Automatic memory for new chats and existing inheriting chats'}
       </label>
       <p className="muted">
         {zh

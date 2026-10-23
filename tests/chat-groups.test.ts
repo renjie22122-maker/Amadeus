@@ -86,7 +86,8 @@ test('ordinary chat has web and media but cannot gain host tools by setting perm
     skillIds: ['private'],
   } as any);
   assert.equal(c.projectId, null);
-  assert.equal(c.memory, false);
+  assert.equal(c.memory, true);
+  assert.equal(c.includeUserMemory, false);
   assert.deepEqual(c.skillIds, []);
   assert(socialChatTools.has('fetch_url'));
   assert(socialChatTools.has('transcribe_media'));
@@ -101,10 +102,10 @@ test('ordinary chat has web and media but cannot gain host tools by setting perm
     'write_file',
     'mcp_call',
     'spawn_agent',
-    'recall_memories',
     'find_skills',
   ])
     assert.equal(capabilityDecision(ctx, tool, 'read').allowed, false, tool);
+  assert.equal(capabilityDecision(ctx, 'recall_memories', 'read').allowed, true);
   assert.equal(capabilityDecision(ctx, 'web_search', 'network').allowed, true);
 });
 test('ordinary conversation is freshly created, not a copied project/history', (t) => {
@@ -128,7 +129,8 @@ test('ordinary conversation is freshly created, not a copied project/history', (
   const c = store.get<any>('conversation', saved.conversationId);
   assert.equal(c.remoteChatOnly, true);
   assert.equal(c.remoteSharedKnowledge, true);
-  assert.equal(c.memory, false);
+  assert.equal(c.memory, true);
+  assert.equal(c.includeUserMemory, false);
   assert.equal(c.projectId, null);
   assert.deepEqual(store.events(c.id), []);
 });
@@ -362,7 +364,8 @@ test('verified invitation creates isolated ordinary route once and never revives
   assert.equal(created.sharedKnowledge, false);
   assert.equal(created.allGroupMembers, true);
   assert.notEqual(created.conversationId, c.conversationId);
-  assert.equal(store.get<any>('conversation', created.conversationId).memory, false);
+  assert.equal(store.get<any>('conversation', created.conversationId).memory, true);
+  assert.equal(store.get<any>('conversation', created.conversationId).remoteMemoryOnly, true);
   channels.pause(created.id);
   assert.equal(channels.enrollInvitedGroup(c, e), undefined);
   assert.equal(channels.get(created.id).enabled, false);
@@ -874,7 +877,8 @@ test('friend requests require controller review, deduplicate and create isolated
   assert.equal(friend.autoInviteGroups, false);
   assert.notEqual(friend.conversationId, c.conversationId);
   const conversation: any = store.get('conversation', friend.conversationId);
-  assert.equal(conversation.memory, false);
+  assert.equal(conversation.memory, true);
+  assert.equal(conversation.remoteMemoryOnly, true);
   assert.equal(conversation.projectId, null);
   assert(!conversation.allowedTools.includes('run_command'));
   review.observe(c, event('998', 'second'));

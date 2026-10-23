@@ -1,3 +1,4 @@
+import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { memoryAssessment } from './memory-assessment.js';
 import { manageAutomaticMemory } from './memory-automatic.js';
 import { createHash } from 'node:crypto';
@@ -36,7 +37,7 @@ export async function reviewMemoryCandidates(
   sensitive: (s: string) => boolean,
   life = new MemoryLifecycle(store),
 ) {
-  const scope = c.projectId ? 'project:' + c.projectId : 'user';
+  const scope = conversationMemoryScope(c);
   const current = () => store.list<Memory>('memory').filter((m) => m.scope === scope);
   const activeStamp = () =>
     JSON.stringify(
@@ -76,6 +77,15 @@ export async function reviewMemoryCandidates(
       .events(c.id, 0, 'user.message')
       .filter((e) => !e.data.scheduledTrigger)
       .find((e) => e.id === eventId);
+    if (scope.startsWith('chat:')) {
+      const origin = store.events(c.id, 0, 'chat.origin').find((o) => e && o.runId === e.runId);
+      return origin?.data.senderId
+        ? '[Platform sender ' +
+            origin.data.senderId +
+            ']\n' +
+            (origin.data.memoryMessages || []).join('\n')
+        : '';
+    }
     return String(e?.data.content || e?.data.text || '');
   };
   const selected: { m: Memory; source: string; eventId: number; stamp: string }[] = [];

@@ -1,8 +1,19 @@
-import type { Memory } from './types.js';
+import type { Conversation, Memory } from './types.js';
+export function conversationMemoryScope(
+  c: Pick<Conversation, 'projectId'> &
+    Partial<Pick<Conversation, 'id' | 'remoteChatOnly' | 'remoteMemoryOnly'>>,
+) {
+  return c.remoteChatOnly || c.remoteMemoryOnly
+    ? 'chat:' + c.id
+    : c.projectId
+      ? 'project:' + c.projectId
+      : 'user';
+}
 export function memoryConversation(m: Memory) {
   return m.sourceConversationId || /^chat:(.+)#event:\d+$/.exec(m.source)?.[1];
 }
 export function memoryReach(m: Memory): 'conversation' | 'scope' {
+  if (m.scope.startsWith('chat:')) return 'conversation';
   if (m.recallScope && m.recallScope !== 'auto') return m.recallScope;
   if (m.applicability === 'scope') return 'scope';
   if (m.applicability === 'conversation' || m.applicability === 'uncertain') return 'conversation';
@@ -12,6 +23,12 @@ export function memoryReach(m: Memory): 'conversation' | 'scope' {
     : 'scope';
 }
 export function memoryAccessible(m: Memory, conversationId?: string) {
+  if (m.scope.startsWith('chat:'))
+    return (
+      !!conversationId &&
+      m.scope === 'chat:' + conversationId &&
+      memoryConversation(m) === conversationId
+    );
   return (
     memoryReach(m) === 'scope' || (!!conversationId && memoryConversation(m) === conversationId)
   );

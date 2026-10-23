@@ -1,3 +1,4 @@
+import { MemoryLifecycle } from './memory-lifecycle.js';
 import { remoteConversationStyle } from './chat-style.js';
 import { installChatMediaGrants, mediaFingerprint } from './chat-media-grant.js';
 import { installChatTranscriptions, continueChatTranscription } from './chat-transcription.js';
@@ -79,6 +80,7 @@ export class ChatConnections {
       .exec(`CREATE TABLE IF NOT EXISTS chat_approval(code TEXT PRIMARY KEY,connection_id TEXT NOT NULL,input_id TEXT UNIQUE NOT NULL,
       run_id TEXT NOT NULL,digest TEXT NOT NULL,expires_at INTEGER NOT NULL,revision INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);`);
     for (const [table, column, definition] of [
+      ['chat_inbox', 'memory_text', 'TEXT'],
       ['chat_inbox', 'media', 'TEXT'],
       ['chat_inbox', 'sender_id', 'TEXT'],
       ['chat_inbox', 'attachment_ids', "TEXT NOT NULL DEFAULT '[]'"],
@@ -97,6 +99,44 @@ export class ChatConnections {
     store.db.prepare("UPDATE chat_inbox SET state='media-failed' WHERE state='downloading'").run();
     // A crash after send may have delivered it. Never silently replay uncertain sends.
     store.db.prepare("UPDATE chat_outbox SET state='uncertain' WHERE state='sending'").run();
+    // Only refresh previously valid bindings. Never revive stale grants or paused connections.
+    for (const connection of this.list()) {
+      const c = store.maybe<Conversation>('conversation', connection.conversationId);
+      if (!c || c.remoteMemoryOnly) continue;
+      let valid = false;
+      try {
+        valid = connection.authorizedTarget === this.target(c.id);
+      } catch {}
+      this.isolateMemory(c);
+      if (valid)
+        store.put('chat-connection', { ...connection, authorizedTarget: this.target(c.id) });
+    }
+  }
+  private isolateMemory(c: Conversation) {
+    if (c.remoteMemoryOnly) return;
+    const isolated = { ...c, remoteMemoryOnly: true, automaticMemory: true };
+    let profile;
+    try {
+      profile = this.runtime.config.profile(c.profileId);
+    } catch {}
+    this.store.put('conversation', {
+      ...isolated,
+      memoryPolicy: 'inherit',
+      memory: true,
+      generateMemory: !!profile,
+      includeUserMemory: false,
+      memoryGenerationTarget: profile
+        ? (profile.id || c.profileId) + '|' + profile.baseUrl
+        : undefined,
+    });
+    // Legacy memories stay recorded but cannot be recalled or silently promoted.
+    for (const m of this.store.list<any>('memory')) {
+      if (
+        (m.sourceConversationId === c.id || m.source?.startsWith('chat:' + c.id + '#event:')) &&
+        !m.scope.startsWith('chat:')
+      )
+        new MemoryLifecycle(this.store).update(m.id, { active: false }, m.revision);
+    }
   }
   list() {
     return this.store.list<ChatConnection>('chat-connection');
@@ -398,6 +438,14 @@ export class ChatConnections {
         );
       }
     }
+    assert(
+      !this.list().some(
+        (connection) => connection.id !== key && connection.conversationId === data.conversationId,
+      ),
+      'CHAT_MEMORY_ISOLATION',
+      'Each chat connection needs its own conversation.',
+    );
+    this.isolateMemory(this.store.get<Conversation>('conversation', data.conversationId));
     const next: ChatConnection = {
       ...data,
       id: key,
@@ -544,6 +592,7 @@ export class ChatConnections {
         'DELETE FROM chat_received WHERE connection_id=? AND (at<? OR rowid NOT IN (SELECT rowid FROM chat_received WHERE connection_id=? ORDER BY at DESC,rowid DESC LIMIT 40))',
       )
       .run(c.id, now - 86400000, c.id);
+    const memoryText = m.text;
     let helpRequested =
       !m.media?.length &&
       !m.mentionedIds?.length &&
@@ -603,7 +652,9 @@ export class ChatConnections {
         null,
         null,
       );
-    this.store.db.prepare('UPDATE chat_inbox SET sender_id=? WHERE id=?').run(m.senderId, keyId);
+    this.store.db
+      .prepare('UPDATE chat_inbox SET sender_id=?,memory_text=? WHERE id=?')
+      .run(m.senderId, memoryText, keyId);
     if (m.media?.length)
       this.store.db
         .prepare('UPDATE chat_inbox SET media=? WHERE id=?')
@@ -1275,9 +1326,12 @@ export class ChatConnections {
           connectionId: c.id,
           transport: c.transport,
           senderId: next.sender_id || c.senderId,
+          memoryMessages: burst
+            .map((row) => row.memory_text)
+            .filter((text) => typeof text === 'string'),
         });
         this.store.db
-          .prepare("UPDATE chat_inbox SET state='running',text='' WHERE id=?")
+          .prepare("UPDATE chat_inbox SET state='running',text='',memory_text=NULL WHERE id=?")
           .run(next.id);
         settleBurst('done');
       } catch {

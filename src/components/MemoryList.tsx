@@ -284,10 +284,16 @@ export function MemoryList({
           <button disabled={busy || !items.length} onClick={() => void perform('local')}>
             {label('Limit to original chats', '仅各自原对话')}
           </button>
-          <button disabled={busy || !items.length} onClick={() => void perform('share')}>
+          <button
+            disabled={scope.startsWith('chat:') || busy || !items.length}
+            onClick={() => void perform('share')}
+          >
             {label('Share in this group', '本范围共享')}
           </button>
-          <button disabled={busy || !items.length} onClick={() => void perform('auto-reach')}>
+          <button
+            disabled={scope.startsWith('chat:') || busy || !items.length}
+            onClick={() => void perform('auto-reach')}
+          >
             {label('Use automatic reach', '恢复自动范围')}
           </button>
           <button disabled={busy || !items.length} onClick={() => void perform('deactivate')}>

@@ -1,3 +1,4 @@
+import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { prepareFileReview, reviewableFileMutation } from '../services/file-review.js';
 import { restrictedChat } from '../services/chat-access.js';
 import { installChatTools } from './chat-tools.js';
@@ -315,6 +316,7 @@ export class ToolRegistry {
       !admission.allowed ||
       currentConversation.permission !== admittedConversation.permission ||
       currentConversation.remoteChatOnly !== admittedConversation.remoteChatOnly ||
+      currentConversation.remoteMemoryOnly !== admittedConversation.remoteMemoryOnly ||
       currentConversation.remoteSharedKnowledge !== admittedConversation.remoteSharedKnowledge ||
       JSON.stringify(executionSettings(ctx.config.get(), currentConversation)) !==
         admittedSettings ||
@@ -994,12 +996,14 @@ export function tools() {
   const memoryScopes = (c: ToolContext) =>
     c.conversation.memory === false
       ? []
-      : c.conversation.projectId
-        ? [
-            'project:' + c.conversation.projectId,
-            ...(c.conversation.includeUserMemory ? ['user'] : []),
-          ]
-        : ['user'];
+      : c.conversation.remoteChatOnly || c.conversation.remoteMemoryOnly
+        ? [conversationMemoryScope(c.conversation)]
+        : c.conversation.projectId
+          ? [
+              'project:' + c.conversation.projectId,
+              ...(c.conversation.includeUserMemory ? ['user'] : []),
+            ]
+          : ['user'];
   registry.add({
     name: 'inspect_retrieval_status',
     description:
@@ -1063,6 +1067,9 @@ export function tools() {
             c.store.list<Memory>('memory').filter((m) => memoryScopes(c).includes(m.scope)),
             a.asOf,
           ),
+          c.conversation.remoteChatOnly || c.conversation.remoteMemoryOnly
+            ? conversationMemoryScope(c.conversation)
+            : undefined,
         ),
       ),
   });
@@ -1124,7 +1131,7 @@ export function tools() {
       }),
     }),
     run: (a, c) => {
-      const scope = c.conversation.projectId ? 'project:' + c.conversation.projectId : 'user';
+      const scope = conversationMemoryScope(c.conversation);
       assert(
         new KnowledgeGraph(c.store).supported(scope, a.evidence, Date.now()),
         'ENTITY_EVIDENCE',
@@ -1187,7 +1194,7 @@ export function tools() {
       text(
         new KnowledgeGraph(c.store).put({
           ...a,
-          scope: c.conversation.projectId ? 'project:' + c.conversation.projectId : 'user',
+          scope: conversationMemoryScope(c.conversation),
           active: false,
           validFrom: Date.now(),
           validUntil: null,
@@ -1229,7 +1236,7 @@ export function tools() {
     run: (a, c) => {
       const memory: Memory = {
         id: id(),
-        scope: c.conversation.projectId ? 'project:' + c.conversation.projectId : 'user',
+        scope: conversationMemoryScope(c.conversation),
         content: a.content,
         source: a.source,
         sourceConversationId: c.conversation.id,

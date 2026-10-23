@@ -22,13 +22,16 @@ export function recallMemories(
   semantic = new Map<string, number>(),
   conversationId?: string,
   activityAges = new Map<string, number>(),
+  isolatedScope?: string,
 ) {
   const queryTerms = terms(query);
   const eligible = memories.filter(
     (m) =>
       memoryValid(m, now) &&
       memoryAccessible(m, conversationId) &&
-      (m.scope === 'user' || (!!projectId && m.scope === 'project:' + projectId)),
+      (isolatedScope
+        ? m.scope === isolatedScope
+        : m.scope === 'user' || (!!projectId && m.scope === 'project:' + projectId)),
   );
   const frequency = new Map<string, number>();
   for (const m of eligible)

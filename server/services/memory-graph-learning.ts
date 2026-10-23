@@ -1,3 +1,4 @@
+import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { Conversation, Memory, Profile } from '../../shared/types.js';
@@ -34,7 +35,7 @@ export async function learnMemoryGraph(
   if (!allowed()) return;
   const life = new MemoryLifecycle(store),
     graph = new KnowledgeGraph(store);
-  const scope = c.projectId ? 'project:' + c.projectId : 'user';
+  const scope = conversationMemoryScope(c);
   const keyFor = (m: Memory) =>
     createHash('sha256')
       .update(

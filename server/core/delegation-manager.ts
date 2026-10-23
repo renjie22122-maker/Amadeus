@@ -330,6 +330,7 @@ export class DelegationManager {
           execution: c.execution,
           knowledge: c.knowledge,
           memory: c.memory,
+          remoteMemoryOnly: c.remoteMemoryOnly || c.remoteChatOnly,
           includeUserMemory: c.includeUserMemory,
           skillIds: child.skillIds.filter((id) => c.skillIds.includes(id)),
           teamStrategy: c.teamStrategy,

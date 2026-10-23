@@ -1,3 +1,4 @@
+import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { createHash } from 'node:crypto';
 import type { Run, Memory } from '../../shared/types.js';
 import { Store } from '../storage/store.js';
@@ -71,7 +72,7 @@ export class MemoryChecks {
       .filter((c) => {
         if (c.runId !== run.id) return false;
         const m = this.store.maybe<Memory>('memory', c.memoryId);
-        const scope = conversation.projectId ? 'project:' + conversation.projectId : 'user';
+        const scope = conversationMemoryScope(conversation);
         return (
           m &&
           m.scope === scope &&

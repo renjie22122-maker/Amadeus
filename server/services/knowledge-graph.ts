@@ -1,3 +1,4 @@
+import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { terms } from './memory-retrieval.js';
 import { memoryAccessible } from '../../shared/memory-scope.js';
 import { Store, id } from '../storage/store.js';
@@ -48,7 +49,7 @@ export class KnowledgeGraph {
       );
     }
     const c = this.store.maybe<any>('conversation', e.conversationId || '');
-    const scoped = c?.projectId ? 'project:' + c.projectId : 'user';
+    const scoped = c ? conversationMemoryScope(c) : 'user';
     const row =
       c &&
       (this.store.db

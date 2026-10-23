@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Conversation, Memory } from '../../shared/types';
-import { memoryReach } from '../../shared/memory-scope';
+import { conversationMemoryScope, memoryReach } from '../../shared/memory-scope';
 import { api } from '../api';
 
 export function MemoryCreate({
@@ -16,9 +16,7 @@ export function MemoryCreate({
   zh: boolean;
   go: (fn: () => Promise<unknown>) => Promise<void>;
 }) {
-  const chats = conversations.filter(
-    (c) => (c.projectId ? 'project:' + c.projectId : 'user') === scope,
-  );
+  const chats = conversations.filter((c) => conversationMemoryScope(c) === scope);
   const [source, setSource] = useState(
     chats.some((c) => c.id === currentConversationId) ? currentConversationId! : '',
   );
@@ -67,7 +65,9 @@ export function MemoryCreate({
           >
             <option value="auto">{label('Automatic assessment', '自动：按内容评估')}</option>
             <option value="conversation">{label('Original conversation only', '仅原对话')}</option>
-            <option value="scope">{label('Shared in this storage scope', '本存储范围共享')}</option>
+            <option value="scope" disabled={scope.startsWith('chat:')}>
+              {label('Shared in this storage scope', '本存储范围共享')}
+            </option>
           </select>
         </label>
         <label>

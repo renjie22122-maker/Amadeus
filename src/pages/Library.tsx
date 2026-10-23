@@ -1,3 +1,4 @@
+import { conversationMemoryScope } from '../../shared/memory-scope';
 import { DocumentBrowser } from '../components/DocumentBrowser';
 import { MemoryCreate } from '../components/MemoryCreate';
 import { MemoryList } from '../components/MemoryList';
@@ -17,9 +18,7 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
   const current = selectable.find((c: any) => c.id === selected);
   const [scope, setScope] = useState(
     page === 'memories' || page === 'memory'
-      ? state.conversations.find((c: any) => c.id === selected)?.projectId
-        ? 'project:' + state.conversations.find((c: any) => c.id === selected).projectId
-        : 'user'
+      ? conversationMemoryScope(current || { projectId: null })
       : current
         ? current.projectId
           ? 'project:' + current.projectId
@@ -225,7 +224,7 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
               <label>
                 {t('settings') === 'Settings' ? 'Storage scope' : '存储范围'}
                 <select
-                  value={scope.startsWith('project:') ? scope : 'user'}
+                  value={scope.startsWith('project:') || scope.startsWith('chat:') ? scope : 'user'}
                   onChange={(e) => setScope(e.target.value)}
                 >
                   <option value="user">
@@ -236,9 +235,24 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
                       {p.name}
                     </option>
                   ))}
+                  {selectable
+                    .filter((c: any) => c.remoteChatOnly || c.remoteMemoryOnly)
+                    .map((c: any) => (
+                      <option key={c.id} value={'chat:' + c.id}>
+                        {t('settings') === 'Settings' ? 'External chat · ' : '接入聊天 · '}
+                        {c.title}
+                      </option>
+                    ))}
                 </select>
               </label>
             </div>
+            {scope.startsWith('chat:') && (
+              <p>
+                {t('settings') === 'Settings'
+                  ? 'Automatic memory stays in this chat. No sharing with local chats, projects, other private peers or groups.'
+                  : '自动记忆仅供这个私聊或群聊使用，与本地普通对话、项目及其他私聊和群双向隔离。'}
+              </p>
+            )}
             <MemoryCreate
               key={scope}
               scope={scope}
@@ -249,7 +263,7 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
             />
           </section>
           <MemoryDefaults
-            scope={scope.startsWith('project:') ? scope : 'user'}
+            scope={scope.startsWith('project:') || scope.startsWith('chat:') ? scope : 'user'}
             state={state}
             zh={t('settings') !== 'Settings'}
             notify={notify}
@@ -258,7 +272,9 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
             disabled={busy}
             onClick={() =>
               go(() =>
-                api('/memories/index', { scope: scope.startsWith('project:') ? scope : 'user' }),
+                api('/memories/index', {
+                  scope: scope.startsWith('project:') || scope.startsWith('chat:') ? scope : 'user',
+                }),
               )
             }
           >
@@ -280,7 +296,11 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
               {t('settings') === 'Settings' ? 'Background memory activity' : '后台记忆处理记录'}
             </summary>
             {(state.memoryLearning || [])
-              .filter((j: any) => j.scope === (scope.startsWith('project:') ? scope : 'user'))
+              .filter(
+                (j: any) =>
+                  j.scope ===
+                  (scope.startsWith('project:') || scope.startsWith('chat:') ? scope : 'user'),
+              )
               .map((j: any) => (
                 <p key={j.id}>
                   {new Date(j.at).toLocaleString()} · {j.status} · {j.added || 0}{' '}
@@ -293,7 +313,7 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
             memories={state.memories}
             conversations={state.conversations}
             key={scope}
-            scope={scope.startsWith('project:') ? scope : 'user'}
+            scope={scope.startsWith('project:') || scope.startsWith('chat:') ? scope : 'user'}
             go={go}
             zh={t('settings') !== 'Settings'}
           />
@@ -302,7 +322,7 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
             key={scope}
             memories={state.memories}
             conversations={state.conversations}
-            scope={scope.startsWith('project:') ? scope : 'user'}
+            scope={scope.startsWith('project:') || scope.startsWith('chat:') ? scope : 'user'}
             zh={t('settings') !== 'Settings'}
             go={go}
           />

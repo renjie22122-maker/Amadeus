@@ -158,6 +158,8 @@ export interface SubagentModels {
 }
 export interface Conversation {
   remoteChatOnly?: boolean;
+  /** External chat memory is always isolated to this conversation. */
+  remoteMemoryOnly?: boolean;
   remoteSharedKnowledge?: boolean;
   subagentModels?: SubagentModels | null;
   titleGeneration?: { runId: string; state: 'pending' | 'attempted' | 'done' | 'manual' };

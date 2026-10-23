@@ -79,7 +79,8 @@ export function MemoryDetails({ memory: m, go, zh }: any) {
       <label>
         {zh ? '召回范围' : 'Recall scope'}
         <select
-          value={reach}
+          disabled={m.scope.startsWith('chat:')}
+          value={m.scope.startsWith('chat:') ? 'conversation' : reach}
           onChange={(e) => setReach(e.target.value as 'conversation' | 'scope')}
         >
           <option value="auto">{zh ? '自动：按内容评估' : 'Automatic assessment'}</option>

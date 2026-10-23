@@ -1,10 +1,14 @@
 import { validVector } from './vector-record.js';
 import { AppError } from '../core/errors.js';
 import { memoryActivity } from './memory-activity.js';
-import { memoryAccessible } from '../../shared/memory-scope.js';
+import {
+  conversationMemoryScope,
+  memoryAccessible,
+  memoryConversation,
+} from '../../shared/memory-scope.js';
 import { memoryValid, MemoryLifecycle } from './memory-lifecycle.js';
 import { createHash } from 'node:crypto';
-import type { Memory } from '../../shared/types.js';
+import type { Conversation, Memory } from '../../shared/types.js';
 import { Store } from '../storage/store.js';
 import { Embeddings, cosine } from './embedding.js';
 import { recallMemories } from './memory-retrieval.js';
@@ -69,10 +73,24 @@ export class MemoryIndex {
     asOf = Date.now(),
     conversationId?: string,
   ) {
+    const conversation = conversationId
+      ? this.store.maybe<Conversation>('conversation', conversationId)
+      : undefined;
+    const isolatedScope =
+      conversation && (conversation.remoteChatOnly || conversation.remoteMemoryOnly)
+        ? conversationMemoryScope(conversation)
+        : undefined;
+    const domainAllowed = (m: Memory) => {
+      if (isolatedScope) return m.scope === isolatedScope;
+      const origin = memoryConversation(m);
+      const source = origin ? this.store.maybe<Conversation>('conversation', origin) : undefined;
+      return !m.scope.startsWith('chat:') && !source?.remoteChatOnly && !source?.remoteMemoryOnly;
+    };
     const memories = this.store
         .list<Memory>('memory')
         .filter(
           (m) =>
+            domainAllowed(m) &&
             (includeUserMemory || m.scope !== 'user') &&
             memoryAccessible(m, conversationId) &&
             new MemoryLifecycle(this.store).evidenceValid(m),
@@ -81,7 +99,9 @@ export class MemoryIndex {
     const eligible = memories.filter(
       (m) =>
         memoryValid(m, asOf) &&
-        (m.scope === 'user' || (!!projectId && m.scope === 'project:' + projectId)),
+        (isolatedScope
+          ? m.scope === isolatedScope
+          : m.scope === 'user' || (!!projectId && m.scope === 'project:' + projectId)),
     );
     let invalidVectors = 0;
     const vectors = eligible
@@ -117,6 +137,7 @@ export class MemoryIndex {
       .list<Memory>('memory')
       .filter(
         (m) =>
+          domainAllowed(m) &&
           (includeUserMemory || m.scope !== 'user') &&
           memoryAccessible(m, conversationId) &&
           new MemoryLifecycle(this.store).evidenceValid(m),
@@ -132,6 +153,7 @@ export class MemoryIndex {
         scores,
         conversationId,
         memoryActivity(this.store, current, asOf),
+        isolatedScope,
       ),
       method,
       fallback,
