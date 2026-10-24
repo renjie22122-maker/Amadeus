@@ -124,6 +124,7 @@ export function findTools(specs: ToolSpec[], query: string, offset: number, limi
 
 // Discover a workflow's adjacent tools together; availability is still filtered by specs().
 const toolFamilies = [
+  ['inspect_problem_frame', 'update_problem_frame'],
   [
     'run_python',
     'extract_media_audio',

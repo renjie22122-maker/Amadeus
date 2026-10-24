@@ -1,4 +1,9 @@
 import { collaborationPolicy } from '../services/collaboration-policy.js';
+import {
+  problemFrameInput,
+  inspectProblemFrame,
+  updateProblemFrame,
+} from '../services/problem-framing.js';
 import { installTeamCollaboration } from './team-collaboration.js';
 import {
   recoveryContract,
@@ -28,6 +33,24 @@ import type { ToolRegistry } from './registry.js';
 import { TaskBoard, taskInput, rootRun } from '../services/task-board.js';
 export function installPlanning(registry: ToolRegistry) {
   installTeamCollaboration(registry);
+  registry.add({
+    name: 'inspect_problem_frame',
+    effect: 'read',
+    parallelSafe: true,
+    description:
+      'Inspect this run problem definition, hypotheses, evidence and investigation reassessment point. Null means no frame; simple tasks need none. Model judgments are not established facts.',
+    schema: z.object({}),
+    run: (_a, c) => ({ content: JSON.stringify(inspectProblemFrame(c.store, c.run)) }),
+  });
+  registry.add({
+    name: 'update_problem_frame',
+    effect: 'coordinate',
+    atomic: true,
+    description:
+      'Record or revise an underspecified task investigation before engineering planning. Separate explicit requirements, assumptions, unknowns and falsifiable hypotheses; cite actual tool-result event IDs from this run. Preserve requirements when evidence changes. Budget counts subsequent observed tool calls and cannot be reset by revisions; reviewDue calls for a decision, never automatic termination. Plan requires evidence and acceptance, not user approval. No permissions or task completion change.',
+    schema: problemFrameInput,
+    run: (a, c) => ({ content: JSON.stringify(updateProblemFrame(c.store, c.run, a)) }),
+  });
   registry.add({
     name: 'prepare_recovery_action',
     effect: 'coordinate',

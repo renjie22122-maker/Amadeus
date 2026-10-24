@@ -25,6 +25,6 @@ export function planningPolicy(store: Store, run: Run) {
     delegations: delegated,
     planningRequired: false,
     guidance:
-      'For complex work propose typed tasks with contracts, preview_plan, then create_plan. Reassess after new requirements. Simple answers need no plan. Classification is evidence-based guidance, not a semantic oracle or permission grant.',
+      'For underspecified work first discover update_problem_frame: separate requirements, assumptions, hypotheses and observed evidence before selecting changes. For complex work propose typed tasks with contracts, preview_plan, then create_plan. Reassess after new requirements. Simple answers need no plan. Classification is evidence-based guidance, not a semantic oracle or permission grant.',
   };
 }
