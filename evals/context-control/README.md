@@ -32,3 +32,34 @@ The original strict string grader mislabeled JSON-encoded correct actions. Grade
 v2 separates formatting from semantic action, rejects conflicting choices, and
 regrades the preserved responses without new API calls. Remaining failures are
 retained. This run does not establish a success-rate improvement.
+
+## Context preparation regression checks
+
+Detailed team procedures now load when team tools are discovered, a team is active,
+or host/creative mode is explicitly selected. The initial prompt keeps a short
+capability entry and the existing permission rules. This replaces 4,458 characters
+with 501 before activation (3,957 fewer characters, not a measured token saving).
+Disabled memory omits its management instructions. Existing `context.cache_observed`
+events report request component sizes; `context.guidance_loaded` records procedure
+activation without copying prompt contents into the event.
+
+Compaction retains one latest runtime snapshot, task snapshot and workflow procedure
+after retained history. Superseded projections are excluded from summarization;
+original user requirements, tool groups and trust/source ledgers remain protected.
+Before compaction, normal steps remain append-only to preserve reusable prefixes.
+
+`tests/context-guidance.test.ts`, context reuse tests and runtime tests exercise
+discovery, permissions, snapshot ordering and retained evidence without live models.
+These checks establish payload reduction and state consistency, not improved intent
+understanding. Evaluate that separately with repeated, matched-model engineering
+tasks, including vague goals, evidence that changes the diagnosis, and unavailable
+target services. Compare actual request settings, tool outcomes and first divergent
+decisions; do not attribute a same-model difference to an unmeasured mechanism.
+
+The runtime also supplies a timestamped initial clock observation and the read-only
+`read_clock` tool. It returns UTC, an explicit IANA timezone (or labelled host
+timezone), time since this run was created, and time in its latest recorded status.
+Elapsed time includes waits and downtime; it is not productive or CPU time. Missing
+timestamps or backwards clock movement yield unknown durations, not invented values.
+Use the tool at decision checkpoints, and existing scheduling tools for wake-ups.
+`tests/runtime-clock.test.ts` covers conversion, scope, permissions and clock anomalies.

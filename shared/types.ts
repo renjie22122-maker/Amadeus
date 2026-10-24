@@ -30,6 +30,7 @@ export interface ModelMessage {
   contextKind?:
     | 'runtime-snapshot'
     | 'runtime-advice'
+    | 'workflow-guidance'
     | 'task-snapshot'
     | 'source-ledger'
     | 'history-handoff'

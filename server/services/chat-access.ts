@@ -2,6 +2,7 @@ import type { ChatConnection, ChatIncoming } from '../../shared/chat-connections
 import type { Conversation } from '../../shared/types.js';
 // Explicit capabilities, not effect=read (which can include private files and credentials).
 export const socialChatTools = new Set([
+  'read_clock',
   'inspect_schedules',
   'schedule_followup',
   'pause_scheduled_followup',

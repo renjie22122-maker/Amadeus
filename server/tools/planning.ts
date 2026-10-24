@@ -1,4 +1,10 @@
 import { collaborationPolicy } from '../services/collaboration-policy.js';
+import { runtimeClock } from '../services/runtime-clock.js';
+import {
+  problemFrameInput,
+  inspectProblemFrame,
+  updateProblemFrame,
+} from '../services/problem-framing.js';
 import { installTeamCollaboration } from './team-collaboration.js';
 import {
   recoveryContract,
@@ -28,6 +34,33 @@ import type { ToolRegistry } from './registry.js';
 import { TaskBoard, taskInput, rootRun } from '../services/task-board.js';
 export function installPlanning(registry: ToolRegistry) {
   installTeamCollaboration(registry);
+  registry.add({
+    name: 'read_clock',
+    effect: 'read',
+    parallelSafe: true,
+    description:
+      'Read current UTC/local time and this run wall elapsed time, including waits. Optional IANA timeZone; default is execution-host timezone, not necessarily the user timezone. No sleep, wake-up, deadline enforcement or productive-time inference. Use at meaningful checkpoints, not polling.',
+    schema: z.object({ timeZone: z.string().trim().min(1).max(100).optional() }),
+    run: (a, c) => ({ content: JSON.stringify(runtimeClock(c.store, c.run, a.timeZone)) }),
+  });
+  registry.add({
+    name: 'inspect_problem_frame',
+    effect: 'read',
+    parallelSafe: true,
+    description:
+      'Inspect this run optional problem definition, evidence, verification gaps and investigation reassessment point. Null means no frame. Model judgments are not established facts.',
+    schema: z.object({}),
+    run: (_a, c) => ({ content: JSON.stringify(inspectProblemFrame(c.store, c.run)) }),
+  });
+  registry.add({
+    name: 'update_problem_frame',
+    effect: 'coordinate',
+    atomic: true,
+    description:
+      'Optionally retain a complex investigation: objective, explicit requirements, assumptions, unknowns, acceptance and unavailable checks (verificationGaps). Cite tool-result event IDs from this run in decisionEvidence or hypotheses. Feature work need not invent defect hypotheses. Explain removed requirements or changed objectives in changeReason. Budget is a fixed reassessment point, never automatic termination. No permissions or completion gates change. Keep total input within 16000 characters.',
+    schema: problemFrameInput,
+    run: (a, c) => ({ content: JSON.stringify(updateProblemFrame(c.store, c.run, a)) }),
+  });
   registry.add({
     name: 'prepare_recovery_action',
     effect: 'coordinate',

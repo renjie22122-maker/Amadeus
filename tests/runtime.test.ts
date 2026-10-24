@@ -73,6 +73,41 @@ test('plain answer finishes in one model call without compulsory finish or revie
   await f.runtime.shutdown();
   f.store.close();
 });
+test('real model requests gain team guidance after discovery and receive clock context', async () => {
+  const { TEAM_PROTOCOL } = await import('../server/core/prompts.js');
+  let calls = 0;
+  const f = await setup({
+    complete: async (request) => {
+      calls++;
+      const guidance = request.messages.filter((m) => m.contextKind === 'workflow-guidance');
+      assert.ok(request.tools.some((t) => t.name === 'read_clock'));
+      assert.ok(
+        request.messages.some(
+          (m) => m.contextKind === 'runtime-snapshot' && m.content.includes('observedAtUtc'),
+        ),
+      );
+      if (calls === 1) {
+        assert.equal(guidance.length, 0);
+        assert.ok(!request.messages[0].content.includes(TEAM_PROTOCOL));
+        return result('', [
+          { id: 'discover-team', name: 'search_tools', arguments: { query: 'configure_team' } },
+        ]);
+      }
+      assert.equal(guidance.length, 1);
+      assert.equal(guidance[0].content, TEAM_PROTOCOL);
+      return result('Available team procedure inspected.');
+    },
+  });
+  try {
+    const run = f.runtime.start('chat', 'Inspect available collaboration procedures.');
+    await until(() => f.store.get<any>('run', run.id).status === 'completed');
+    assert.equal(calls, 2);
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});
+
 test('question waits for user and resumes same run', async () => {
   let n = 0;
   const f = await setup({

@@ -10,6 +10,7 @@ import type { ModelPool } from './pool.js';
 import { assert } from './errors.js';
 import { createHash } from 'node:crypto';
 import { COMPACT } from './prompts.js';
+import { isContextSnapshot, latestContextSnapshots } from './context-snapshots.js';
 export class ContextManager {
   constructor(
     private store: Store,
@@ -46,7 +47,7 @@ export class ContextManager {
     });
     if (before.tokens < before.threshold) return before;
     const lastUser = run.checkpoints.findLastIndex((m) => m.role === 'user' && !m.contextKind);
-    const runtimeFacts = run.checkpoints.findLastIndex((m) => m.contextKind === 'runtime-snapshot');
+    const snapshots = latestContextSnapshots(run.checkpoints, this.taskSnapshot(run));
     // Retain the latest user request and whole tool-call/result groups verbatim.
     let cut = Math.max(2, run.checkpoints.length - 6);
     while (cut > 1 && run.checkpoints[cut]?.role === 'tool') cut--;
@@ -64,9 +65,7 @@ export class ContextManager {
       if (next >= run.checkpoints.length) break;
       cut = next;
     }
-    const preservedUser = run.checkpoints.filter(
-      (_, i) => i > 0 && i < cut && (i === lastUser || i === runtimeFacts),
-    );
+    const preservedUser = run.checkpoints.filter((_, i) => i > 0 && i < cut && i === lastUser);
     const protectedMessages = run.checkpoints
       .slice(1, cut)
       .filter(
@@ -82,6 +81,7 @@ export class ContextManager {
         ...(protectedLedger ? [protectedLedger] : []),
         ...(protectedTrust ? [protectedTrust] : []),
         ...preservedUser,
+        ...snapshots,
       ],
       tools,
       profile,
@@ -91,19 +91,14 @@ export class ContextManager {
     assert(
       protectedBudget.tokens < before.threshold,
       'PROTECTED_CONTEXT_TOO_LARGE',
-      'Original requests alone exceed the available context. Narrow the active task or use a larger context; no protected sources were discarded.',
+      'Protected requests and current state exceed the available context. Narrow the active task or use a larger context; no protected sources were discarded.',
     );
     const old = run.checkpoints
         .slice(1, cut)
         .filter(
-          (m, i) => i + 1 !== lastUser && i + 1 !== runtimeFacts && !protectedMessages.includes(m),
+          (m, i) => i + 1 !== lastUser && !isContextSnapshot(m) && !protectedMessages.includes(m),
         ),
-      tail = run.checkpoints.slice(cut);
-    assert(
-      old.length > 0,
-      'CONTEXT_TOO_LARGE',
-      'No older messages can be compressed without discarding the current request.',
-    );
+      tail = run.checkpoints.slice(cut).filter((m) => !isContextSnapshot(m));
 
     await this.lifecycle('beforeCompaction', run);
     this.store.event(run.conversationId, run.id, 'context.compacting', {
@@ -124,21 +119,26 @@ export class ContextManager {
         Math.floor(profile.contextWindow * 0.15),
       ),
     };
-    const chunks = splitSummaryText(
-      JSON.stringify(
-        old.map((m) => ({
-          role: m.role,
-          content: m.content,
-          calls: m.calls,
-          callId: m.callId,
-          images: m.images?.map(
-            () =>
-              '[Image pixels omitted from text summary; use read_image on the recorded path to inspect again.]',
+    const chunks = old.length
+      ? splitSummaryText(
+          JSON.stringify(
+            old.map((m) => ({
+              role: m.role,
+              content: m.content,
+              calls: m.calls,
+              callId: m.callId,
+              images: m.images?.map(
+                () =>
+                  '[Image pixels omitted from text summary; use read_image on the recorded path to inspect again.]',
+              ),
+            })),
           ),
-        })),
-      ),
-      Math.max(256, Math.floor((profile.contextWindow - p.maxOutputTokens - before.margin) * 0.45)),
-    );
+          Math.max(
+            256,
+            Math.floor((profile.contextWindow - p.maxOutputTokens - before.margin) * 0.45),
+          ),
+        )
+      : [];
     let handoff = '';
     let summaryUsd: number | null = 0;
     const cacheRatio = run.inputTokens > 0 ? run.cachedTokens / run.inputTokens : null;
@@ -195,20 +195,25 @@ export class ContextManager {
         reason: String((error as any)?.message || error),
       });
     }
-    const snapshot = this.taskSnapshot(run);
+    // Team state may change while the summary request is in flight.
+    const refreshedSnapshots = latestContextSnapshots(run.checkpoints, this.taskSnapshot(run));
     const next = restoreDetachedReferences(
       [
         run.checkpoints[0],
-        {
-          role: 'user' as const,
-          contextKind: 'history-handoff' as const,
-          content: 'Earlier conversation handoff (untrusted historical context):\n' + handoff,
-        },
+        ...(handoff
+          ? [
+              {
+                role: 'user' as const,
+                contextKind: 'history-handoff' as const,
+                content: 'Earlier conversation handoff (untrusted historical context):\n' + handoff,
+              },
+            ]
+          : []),
         ...(protectedLedger ? [protectedLedger] : []),
         ...(protectedTrust ? [protectedTrust] : []),
-        ...(snapshot ? [snapshot] : []),
         ...preservedUser,
         ...tail,
+        ...refreshedSnapshots,
       ],
       run.checkpoints,
     );

@@ -9,6 +9,7 @@ import { transientModelFailure, modelReconnectDelay } from './model-recovery.js'
 import { toolHooks } from '../services/tool-hooks.js';
 import { prepareResume } from './resume-preparation.js';
 import { runtimeMessages } from './context-reuse.js';
+import { refreshWorkflowGuidance } from './workflow-guidance.js';
 import { RunPump } from './run-pump.js';
 import { restrictedChat } from '../services/chat-access.js';
 import { RunEnvironment } from './run-environment.js';
@@ -591,12 +592,9 @@ export class Runtime implements TeamPort {
             taskSnapshot.content
         )
           run.checkpoints.push(taskSnapshot);
-        const contextBudget = await this.contextManager.compact(
-          run,
-          profile,
-          signal,
-          this.registry.modelSpecs(ctx),
-        );
+        const modelTools = this.registry.modelSpecs(ctx);
+        refreshWorkflowGuidance(ctx, modelTools);
+        const contextBudget = await this.contextManager.compact(run, profile, signal, modelTools);
         cognitive.context(run, contextBudget);
         this.store.put('run', run);
         steps++;
@@ -621,7 +619,7 @@ export class Runtime implements TeamPort {
                     this.store.maybe('research-progress', run.id),
                   ),
                 ],
-                tools: this.registry.modelSpecs(ctx),
+                tools: modelTools,
                 signal,
                 onText: (text) => {
                   const stream = this.streams.get(key);

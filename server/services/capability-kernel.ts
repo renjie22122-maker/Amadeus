@@ -15,6 +15,7 @@ export function capabilityDecision(ctx: ToolContext, name: string, effect: ToolS
     [
       !!ctx.store?.maybe('chat-proactive-run', ctx.run.id) &&
         ![
+          'read_clock',
           'inspect_chat',
           'list_chat_members',
           'read_chat_media',
