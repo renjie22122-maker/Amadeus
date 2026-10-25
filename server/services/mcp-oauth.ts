@@ -21,6 +21,7 @@ type Saved = {
   tokens?: OAuthTokens;
   discovery?: OAuthDiscoveryState;
   redirect: string;
+  loginId?: string;
 };
 type Flow = {
   server: Server;
@@ -206,6 +207,15 @@ export class McpOAuth {
     assert(saved?.tokens, 'MCP_OAUTH_LOGIN', 'Sign in through MCP settings before connecting.');
     return this.provider(server, saved);
   }
+  recoveryIdentity(server: Server) {
+    const saved = this.load(server);
+    assert(
+      saved?.tokens && saved.loginId,
+      'MCP_OAUTH_IDENTITY',
+      'Sign in before creating recoverable tasks.',
+    );
+    return saved.loginId;
+  }
   status(server: Server) {
     return {
       configured: !!server.oauth?.enabled,
@@ -296,6 +306,7 @@ export class McpOAuth {
         'MCP_CHANGED',
         'MCP settings changed during login.',
       );
+      flow.saved.loginId = randomBytes(32).toString('hex');
       this.save(flow.server, flow.saved);
     } catch {
       throw new Error('OAuth token exchange failed. Start a new login.');

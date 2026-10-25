@@ -135,6 +135,7 @@ test('OAuth discovery, DCR, PKCE exchange, issuer/state rejection, persisted ref
   const callback = await login();
   await manager.finish(callback, () => server);
   assert.equal(exchanges, 1);
+  const loginIdentity = manager.recoveryIdentity(server);
   assert.ok(registrations >= 1);
   await assert.rejects(
     manager.finish(callback, () => server),
@@ -162,6 +163,7 @@ test('OAuth discovery, DCR, PKCE exchange, issuer/state rejection, persisted ref
     await hub.close();
   }
   assert.equal(refreshes, 1);
+  assert.equal(manager.recoveryIdentity(server), loginIdentity);
   assert.equal((await manager.forConnection(server)!.tokens())?.access_token, 'refreshed-secret');
   assert.equal(manager.status({ ...server, url: base + '/different' }).signedIn, false);
   const changed = await login();
@@ -169,7 +171,11 @@ test('OAuth discovery, DCR, PKCE exchange, issuer/state rejection, persisted ref
     manager.finish(changed, () => ({ ...server, enabled: false })),
     /changed/,
   );
+  const freshLogin = await login();
+  await manager.finish(freshLogin, () => server);
+  assert.notEqual(manager.recoveryIdentity(server), loginIdentity);
   manager.logout(server);
+  assert.throws(() => manager.recoveryIdentity(server));
   assert.equal(manager.status(server).signedIn, false);
   assert.equal(new McpOAuth(directory, codec).status(server).signedIn, false);
 });

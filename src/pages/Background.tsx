@@ -85,7 +85,25 @@ export function BackgroundPage({ state, zh, notify, openConversation }: any) {
             >
               {zh ? '查看结果' : 'Inspect result'}
             </button>{' '}
-            {job.status === 'running' && (
+            {job.resumable && job.status !== 'running' && (
+              <button
+                onClick={() =>
+                  act(() =>
+                    api(
+                      '/mcp/jobs/' +
+                        encodeURIComponent(job.conversationId) +
+                        '/' +
+                        encodeURIComponent(job.id) +
+                        '/resume',
+                      {},
+                    ),
+                  )
+                }
+              >
+                {zh ? '续接已有任务' : 'Resume existing task'}
+              </button>
+            )}
+            {(job.status === 'running' || job.resumable) && (
               <button
                 onClick={() =>
                   act(() =>

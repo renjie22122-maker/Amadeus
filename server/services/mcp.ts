@@ -11,7 +11,9 @@ import { validMcpUrl, validMcpHeader } from '../../shared/mcp.js';
 import type { Settings } from '../../shared/types.js';
 import { assert } from '../core/errors.js';
 import { McpOAuth } from './mcp-oauth.js';
-import { McpJobs } from './mcp-jobs.js';
+import { setTimeout as delay } from 'node:timers/promises';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { McpJobs, MCP_SUSPEND, type Recovery, type Job, type TaskUpdate } from './mcp-jobs.js';
 import type { Store } from '../storage/store.js';
 export class McpHub {
   readonly oauth?: McpOAuth;
@@ -28,6 +30,102 @@ export class McpHub {
     { client: Client; transport: Transport; fingerprint: string }
   >();
   private closing = false;
+  private resumeSessions = new Map<string, Recovery>();
+  recoveryBinding(server: Settings['mcp'][number]) {
+    return createHash('sha256')
+      .update(
+        JSON.stringify([
+          server,
+          this.credentials(server),
+          server.oauth?.enabled ? this.oauth?.recoveryIdentity(server) : null,
+        ]),
+      )
+      .digest('hex');
+  }
+  async followTask(
+    server: Settings['mcp'][number],
+    job: Job,
+    signal: AbortSignal,
+    update: (task: TaskUpdate) => void,
+    validate: () => void = () => {},
+  ) {
+    validate();
+    const recovery = job.recovery!;
+    assert(
+      recovery.protocol === '2025-11-25' && recovery.binding === this.recoveryBinding(server),
+      'MCP_RECOVERY_CHANGED',
+      'Server or login identity changed; restore original settings before resuming.',
+    );
+    assert(
+      server.enabled &&
+        (server.allowedTools === undefined || server.allowedTools.includes(job.tool)),
+      'MCP_RECOVERY_DENIED',
+      'Task server or tool is disabled.',
+    );
+    const scope = 'recovery:' + job.conversationId + ':' + job.id;
+    const key = JSON.stringify([server.id, scope]);
+    this.resumeSessions.set(key, recovery);
+    let client: Client | undefined;
+    let cancellationSent = false;
+    try {
+      client = await this.connect(server, scope);
+      validate();
+      const taskId = job.remoteTask!.taskId;
+      if (signal.aborted && signal.reason !== MCP_SUSPEND) {
+        cancellationSent = true;
+        await client.experimental.tasks.cancelTask(taskId, { timeout: 5000 });
+        return;
+      }
+      const options = { signal, timeout: (server.toolTimeoutSeconds ?? 120) * 1000 };
+      for (;;) {
+        signal.throwIfAborted();
+        validate();
+        let task;
+        for (let attempt = 0; ; attempt++) {
+          try {
+            validate();
+            task = await client.experimental.tasks.getTask(taskId, options);
+            break;
+          } catch (error) {
+            if (
+              signal.aborted ||
+              attempt >= 3 ||
+              (error as any)?.code === -32602 ||
+              (error as any)?.code === 'MCP_RECOVERY_DENIED'
+            )
+              throw error;
+            await delay(1000 * 2 ** attempt, undefined, { signal });
+          }
+        }
+        assert(task.taskId === taskId, 'MCP_TASK_ID', 'Task identity mismatch.');
+        validate();
+        update({ taskId, status: task.status });
+        if (['completed', 'failed', 'cancelled'].includes(task.status))
+          return await client.experimental.tasks.getTaskResult(
+            taskId,
+            CallToolResultSchema,
+            options,
+          );
+        assert(
+          task.status !== 'input_required',
+          'MCP_TASK_INPUT',
+          'Remote task needs input; automatic following paused.',
+        );
+        await delay(Math.max(1000, Math.min(task.pollInterval ?? 5000, 2147483647)), undefined, {
+          signal,
+        });
+      }
+    } catch (error) {
+      if (client && !cancellationSent && signal.aborted && signal.reason !== MCP_SUSPEND)
+        await client.experimental.tasks
+          .cancelTask(job.remoteTask!.taskId, { timeout: 5000 })
+          .catch(() => {});
+      throw error;
+    } finally {
+      this.resumeSessions.delete(key);
+      await client?.close().catch(() => {});
+    }
+  }
   private connecting = new Map<string, { fingerprint: string; promise: Promise<Client> }>();
   private credentials(server: Settings['mcp'][number]) {
     const read = (name: string) => {
@@ -147,6 +245,7 @@ export class McpHub {
     const transport =
       server.transport === 'http'
         ? new StreamableHTTPClientTransport(new URL(server.url!), {
+            sessionId: this.resumeSessions.get(key)?.sessionId,
             authProvider: this.oauth?.forConnection(server),
             fetch: server.oauth?.enabled
               ? (input, init) => {
@@ -191,6 +290,9 @@ export class McpHub {
             cwd: server.cwd,
             stderr: 'pipe',
           });
+    const resumed = this.resumeSessions.get(key);
+    if (resumed && transport instanceof StreamableHTTPClientTransport)
+      transport.setProtocolVersion(resumed.protocol);
     // Remote server stderr may contain credentials. Do not mirror it into chat or logs.
     if (transport instanceof StdioClientTransport) transport.stderr?.on('data', () => {});
     const client = new Client({ name: 'Amadeus', version: '0.1.0' });
@@ -245,9 +347,10 @@ export class McpHub {
     args: Record<string, unknown>,
     signal: AbortSignal,
     scope = 'global',
-    onTask?: (task: { taskId: string; status: string }) => void,
+    onTask?: (task: TaskUpdate) => void,
   ) {
     signal.throwIfAborted();
+    const binding = onTask ? this.recoveryBinding(server) : undefined;
     assert(
       server.allowedTools === undefined || server.allowedTools.includes(name),
       'MCP_TOOL_DENIED',
@@ -281,13 +384,29 @@ export class McpHub {
         )) {
           if (message.type === 'taskCreated' || message.type === 'taskStatus') {
             taskId = message.task.taskId;
-            onTask?.({ taskId, status: message.task.status });
+            const connection = this.clients.get(JSON.stringify([server.id, scope]));
+            onTask?.({
+              taskId,
+              status: message.task.status,
+              ...(connection
+                ? {
+                    recovery: {
+                      binding: binding!,
+                      sessionId:
+                        connection.transport instanceof StreamableHTTPClientTransport
+                          ? connection.transport.sessionId
+                          : undefined,
+                      protocol: '2025-11-25',
+                    },
+                  }
+                : {}),
+            });
           } else if (message.type === 'result') return message.result;
           else if (message.type === 'error') throw message.error;
         }
         throw new Error('MCP task ended without a result.');
       } catch (error) {
-        if (taskId && boundedSignal.aborted)
+        if (taskId && boundedSignal.aborted && signal.reason !== MCP_SUSPEND)
           await client.experimental.tasks.cancelTask(taskId, { timeout: 5000 }).catch(() => {});
         throw error;
       }
@@ -320,6 +439,7 @@ export class McpHub {
     await Promise.allSettled([...this.clients.values()].map((c) => c.client.close()));
     this.clients.clear();
     this.closing = !reopen;
+    if (reopen) this.jobs?.reopen();
   }
   async catalog(
     server: Settings['mcp'][number],

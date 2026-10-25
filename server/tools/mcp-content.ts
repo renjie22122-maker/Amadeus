@@ -88,9 +88,9 @@ export function installMcpContent(registry: ToolRegistry) {
     name: 'mcp_job',
     effect: 'read',
     description:
-      'List, inspect or wait for an existing background MCP call in this conversation. Never resubmits the original call. Use mcp_cancel_job to request cancellation.',
+      'List, inspect, resume following or wait for an existing background MCP call in this conversation. Never resubmits the original call. Use mcp_cancel_job to request cancellation.',
     schema: z.object({
-      operation: z.enum(['list', 'status', 'wait']),
+      operation: z.enum(['list', 'status', 'wait', 'resume']),
       jobId: z.string().optional(),
       waitSeconds: z.number().min(0).max(30).default(0),
     }),
@@ -100,9 +100,11 @@ export function installMcpContent(registry: ToolRegistry) {
       if (a.operation === 'list') return { content: JSON.stringify(c.mcp.jobs.list(scope)) };
       assert(a.jobId, 'MCP_JOB_ID', 'Provide a job ID.');
       const result =
-        a.operation === 'wait'
-          ? await c.mcp.jobs.wait(scope, a.jobId, a.waitSeconds, c.signal)
-          : c.mcp.jobs.get(scope, a.jobId);
+        a.operation === 'resume'
+          ? await c.mcp.jobs.resume(scope, a.jobId)
+          : a.operation === 'wait'
+            ? await c.mcp.jobs.wait(scope, a.jobId, a.waitSeconds, c.signal)
+            : c.mcp.jobs.get(scope, a.jobId);
       return { content: JSON.stringify(result) };
     },
   });

@@ -27,6 +27,12 @@ try {
       },
     ],
   });
+  store.put('conversation', {
+    id: 'fixture',
+    title: 'MCP UI',
+    permission: 'ask',
+    createdAt: Date.now(),
+  });
   store.put('mcp-job', {
     id: 'receipt',
     conversationId: 'fixture',
@@ -35,6 +41,16 @@ try {
     tool: 'fixture-tool',
     status: 'completed',
     result: { content: [{ type: 'text', text: 'durable-result' }] },
+  });
+  store.put('mcp-job', {
+    id: 'recoverable',
+    conversationId: 'fixture',
+    runId: 'run',
+    serverId: 'missing',
+    tool: 'recovery-tool',
+    status: 'unknown',
+    remoteTask: { taskId: 'old-task', status: 'working' },
+    recovery: { binding: 'fixture', protocol: '2025-11-25', sessionId: 'PRIVATE_SESSION_SENTINEL' },
   });
   const runtime = new Runtime(store, config, dir);
   ({ app } = await createApp({ directory: dir, dist: resolve('dist'), runtime }));
@@ -74,9 +90,18 @@ try {
   await page.getByText('fixture-tool · completed').click();
   await page.getByRole('button', { name: 'Inspect result', exact: true }).click();
   await page.getByText(/durable-result/).waitFor();
+  await page.getByText('recovery-tool · unknown').click();
+  const response = page.waitForResponse((r) => r.url().endsWith('/recoverable/resume'));
+  await page.getByRole('button', { name: 'Resume existing task', exact: true }).click();
+  assert.equal((await response).status(), 200);
+  await page.getByText(/Recovery blocked by changed/).waitFor();
+  assert.equal(
+    (await page.locator('body').innerText()).includes('PRIVATE_SESSION_SENTINEL'),
+    false,
+  );
   assert.deepEqual(errors, []);
   console.log(
-    'MCP settings, OAuth status, example import and background result UI passed. No third-party account login was performed.',
+    'MCP settings, OAuth status, example import, background results and resume UI passed. No third-party account login was performed.',
   );
 } finally {
   await browser?.close();

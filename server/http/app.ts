@@ -59,6 +59,7 @@ export async function createApp(options: { directory: string; dist?: string; run
     skills = new Skills(store);
   const chatConnections = new ChatConnections(store, runtime, directory);
   const chatTransports = new ChatTransports(chatConnections);
+  runtime.mcp.jobs?.recover();
   runtime.startTeamMaintenance();
   const { memoryLearning, knowledgeEmbedding, maintenance, scheduledWork } =
     startMaintenanceServices(store, config, runtime, directory);
@@ -179,7 +180,16 @@ export async function createApp(options: { directory: string; dist?: string; run
       error: j.error,
       updatedAt: j.updatedAt,
     })),
-    mcp: store.list<any>('mcp-job').map(({ result, ...job }) => job),
+    mcp: store
+      .list<any>('mcp-job')
+      .map(({ result, recovery, ...job }) => ({
+        ...job,
+        resumable:
+          !!recovery &&
+          !!job.remoteTask &&
+          job.status !== 'completed' &&
+          !job.cancellationRequested,
+      })),
     teams: store.list<any>('team-space').map((j) => ({ id: j.id, status: j.status })),
   }));
 

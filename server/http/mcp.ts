@@ -10,6 +10,10 @@ export function mcpRoutes(app: FastifyInstance, runtime: Runtime) {
     '/api/mcp/jobs/:conversationId/:jobId/cancel',
     async (req) => runtime.mcp.jobs!.cancel(req.params.conversationId, req.params.jobId),
   );
+  app.post<{ Params: { conversationId: string; jobId: string } }>(
+    '/api/mcp/jobs/:conversationId/:jobId/resume',
+    async (req) => runtime.mcp.jobs!.resume(req.params.conversationId, req.params.jobId),
+  );
   const server = (id: string) => {
     const value = runtime.config.get().mcp.find((s) => s.id === id);
     assert(value, 'MCP_SERVER', 'MCP server not found.');

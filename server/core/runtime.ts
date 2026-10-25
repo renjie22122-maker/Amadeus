@@ -962,6 +962,7 @@ export class Runtime implements TeamPort {
     this.execution.stopAccepting();
     clearInterval(this.maintenanceTimer);
     await this.maintenanceTask;
+    await this.mcp.jobs?.close(); // Detach remote tasks before run cancellation propagates.
     for (const key of this.execution.keys()) this.stop(key, true, false);
     await this.execution.drained();
     await this.schedulingTask;

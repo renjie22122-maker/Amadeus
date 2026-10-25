@@ -1,12 +1,16 @@
 import type { Run } from '../../shared/types.js';
 import { Store, id } from '../storage/store.js';
-import { assert } from '../core/errors.js';
+import { assert, AppError } from '../core/errors.js';
 import { EventEmitter } from 'node:events';
-type Job = {
+export const MCP_SUSPEND = Symbol('mcp-suspend');
+export type Recovery = { binding: string; sessionId?: string; protocol: string };
+export type TaskUpdate = { taskId: string; status: string; recovery?: Recovery };
+export type Job = {
   id: string;
   conversationId: string;
   runId: string;
   serverId: string;
+  projectId?: string;
   tool: string;
   status: 'running' | 'completed' | 'unknown';
   createdAt: number;
@@ -15,10 +19,34 @@ type Job = {
   result?: unknown;
   remoteTask?: { taskId: string; status: string };
   note?: string;
+  recovery?: Recovery;
+  cancellationRequested?: boolean;
 };
 export class McpJobs {
+  private closed = false;
+  reopen() {
+    this.closed = false;
+  }
   private events = new EventEmitter();
-  private active = new Map<string, { controller: AbortController; promise: Promise<void> }>();
+  private active = new Map<
+    string,
+    { controller: AbortController; promise: Promise<void>; job: Job }
+  >();
+  private resumeCall?: (
+    job: Job,
+    signal: AbortSignal,
+    update: (task: TaskUpdate) => void,
+  ) => Promise<any>;
+  configureRecovery(call: NonNullable<McpJobs['resumeCall']>) {
+    this.resumeCall = call;
+  }
+  private publicJob({ recovery, ...job }: Job) {
+    return {
+      ...job,
+      resumable:
+        !!recovery && !!job.remoteTask && job.status !== 'completed' && !job.cancellationRequested,
+    };
+  }
   constructor(private store: Store) {
     this.events.setMaxListeners(100);
     for (const job of store.list<Job>('mcp-job').filter((j) => j.status === 'running')) {
@@ -35,13 +63,13 @@ export class McpJobs {
       'MCP_JOB_SCOPE',
       'MCP job belongs to another conversation.',
     );
-    return job;
+    return this.publicJob(job);
   }
   list(scope: string) {
     return this.store
       .list<Job>('mcp-job')
       .filter((j) => j.conversationId === scope)
-      .map(({ result, ...job }) => job);
+      .map(({ result, ...job }) => this.publicJob(job));
   }
   running(runId: string) {
     return this.store
@@ -52,19 +80,18 @@ export class McpJobs {
     run: Run,
     serverId: string,
     tool: string,
-    call: (
-      signal: AbortSignal,
-      update: (task: { taskId: string; status: string }) => void,
-    ) => Promise<any>,
+    call: (signal: AbortSignal, update: (task: TaskUpdate) => void) => Promise<any>,
     signal: AbortSignal,
   ) {
     signal.throwIfAborted();
+    assert(!this.closed, 'MCP_CLOSING', 'MCP jobs are shutting down.');
     assert(this.active.size < 32, 'MCP_JOB_LIMIT', 'Too many active MCP jobs.');
     const job: Job = {
       id: id(),
       conversationId: run.conversationId,
       runId: run.id,
       serverId,
+      projectId: this.store.get<any>('conversation', run.conversationId).projectId,
       tool,
       status: 'running',
       createdAt: Date.now(),
@@ -79,14 +106,24 @@ export class McpJobs {
       });
       this.store.put('mcp-job', job);
     });
+    this.execute(job, call, signal);
+    return this.get(job.conversationId, job.id);
+  }
+  private execute(
+    job: Job,
+    call: (signal: AbortSignal, update: (task: TaskUpdate) => void) => Promise<any>,
+    signal: AbortSignal,
+  ) {
     const controller = new AbortController(),
-      abort = () => controller.abort();
+      abort = () => controller.abort(signal.reason);
     signal.addEventListener('abort', abort, { once: true });
     const promise = Promise.resolve().then(async () => {
       try {
         controller.signal.throwIfAborted();
         const result = await call(controller.signal, (task) => {
-          job.remoteTask = task;
+          const { recovery, ...remoteTask } = task;
+          job.remoteTask = remoteTask;
+          if (recovery) job.recovery = recovery;
           job.updatedAt = Date.now();
           this.store.put('mcp-job', job);
         });
@@ -100,14 +137,34 @@ export class McpJobs {
                 preview: serialized.slice(0, 256000),
                 totalCharacters: serialized.length,
               };
-        job.status = result?.isError ? 'unknown' : 'completed';
-        if (job.status === 'completed')
-          this.store.endEffect(job.effectId, serialized.slice(0, 20000));
-      } catch {
+        job.status =
+          result?.isError || ['failed', 'cancelled'].includes(job.remoteTask?.status || '')
+            ? 'unknown'
+            : 'completed';
+        if (job.status === 'completed') {
+          delete job.note;
+          this.store.transaction(() => {
+            this.store.endEffect(job.effectId, serialized.slice(0, 20000));
+            this.store.put('mcp-job', job);
+          });
+        }
+      } catch (error) {
         job.status = 'unknown';
-        job.note = controller.signal.aborted
-          ? 'Cancellation requested; remote effects may already have occurred.'
-          : 'Call failed or timed out; remote outcome unknown. Inspect before retrying.';
+        if (controller.signal.aborted && controller.signal.reason !== MCP_SUSPEND)
+          job.cancellationRequested = true;
+        job.note =
+          controller.signal.reason === MCP_SUSPEND
+            ? 'Following suspended. Resume the existing remote task; never submit it again.'
+            : controller.signal.aborted
+              ? 'Cancellation requested; remote effects may already have occurred.'
+              : error instanceof AppError && error.code === 'MCP_TASK_INPUT'
+                ? 'Remote task requires input. Following paused; no input was fabricated.'
+                : error instanceof AppError &&
+                    ['MCP_RECOVERY_CHANGED', 'MCP_RECOVERY_DENIED'].includes(error.code)
+                  ? 'Recovery blocked by changed configuration, credentials or permissions. Restore the original context before following.'
+                  : (error as any)?.code === -32602
+                    ? 'Server no longer recognizes this task; outcome unknown. Never submit it again automatically.'
+                    : 'Following failed or timed out; remote outcome unknown. Resume following after checking the server; never replay the call.';
       } finally {
         signal.removeEventListener('abort', abort);
         this.active.delete(job.id);
@@ -128,12 +185,8 @@ export class McpJobs {
         }
       }
     });
-    this.active.set(job.id, { controller, promise });
+    this.active.set(job.id, { controller, promise, job });
     if (signal.aborted) abort();
-    return {
-      ...job,
-      note: 'Background execution started. Inspect this job; do not launch the call again.',
-    };
   }
   async wait(scope: string, key: string, seconds: number, signal: AbortSignal) {
     this.get(scope, key);
@@ -168,7 +221,19 @@ export class McpJobs {
   }
   async cancel(scope: string, key: string) {
     this.get(scope, key);
-    this.active.get(key)?.controller.abort();
+    const job = this.store.get<Job>('mcp-job', key);
+    job.cancellationRequested = true;
+    this.store.put('mcp-job', job);
+    const active = this.active.get(key);
+    if (active) {
+      active.job.cancellationRequested = true;
+      active.controller.abort();
+    } else if (job.recovery && job.remoteTask && this.resumeCall && job.status !== 'completed') {
+      const controller = new AbortController();
+      controller.abort();
+      // Recovery adapter interprets this as an explicit remote cancellation, never a submission.
+      await this.resumeCall(job, controller.signal, () => {}).catch(() => {});
+    }
     return {
       ...this.get(scope, key),
       cancellationRequested: true,
@@ -182,8 +247,51 @@ export class McpJobs {
     for (const job of this.list(scope))
       if (job.status === 'running') await this.cancel(scope, job.id);
   }
+  async resume(scope: string, key: string) {
+    assert(
+      this.store.maybe('conversation', scope),
+      'MCP_JOB_SCOPE',
+      'Conversation no longer exists.',
+    );
+    assert(!this.closed, 'MCP_CLOSING', 'MCP jobs are shutting down.');
+    this.get(scope, key);
+    if (this.active.has(key)) return this.get(scope, key);
+    const job = this.store.get<Job>('mcp-job', key);
+    assert(
+      job.recovery &&
+        job.remoteTask &&
+        !job.cancellationRequested &&
+        job.status !== 'completed' &&
+        this.resumeCall,
+      'MCP_RESUME',
+      'No resumable remote task. Never replay the original call.',
+    );
+    assert(this.active.size < 32, 'MCP_JOB_LIMIT', 'Too many active MCP jobs.');
+    job.status = 'running';
+    job.note = 'Following existing remote task; original call is never resubmitted.';
+    this.store.put('mcp-job', job);
+    this.execute(
+      job,
+      (signal, update) => this.resumeCall!(job, signal, update),
+      new AbortController().signal,
+    );
+    return this.get(scope, key);
+  }
+  recover() {
+    for (const job of this.store.list<Job>('mcp-job')) {
+      if (
+        job.recovery &&
+        job.remoteTask &&
+        job.status !== 'completed' &&
+        !job.cancellationRequested &&
+        this.store.maybe('conversation', job.conversationId)
+      )
+        void this.resume(job.conversationId, job.id).catch(() => {});
+    }
+  }
   async close() {
-    for (const task of this.active.values()) task.controller.abort();
+    this.closed = true;
+    for (const task of this.active.values()) task.controller.abort(MCP_SUSPEND);
     await Promise.allSettled([...this.active.values()].map((t) => t.promise));
   }
 }
