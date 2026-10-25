@@ -10,8 +10,19 @@ import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv
 import { validMcpUrl, validMcpHeader } from '../../shared/mcp.js';
 import type { Settings } from '../../shared/types.js';
 import { assert } from '../core/errors.js';
+import { McpOAuth } from './mcp-oauth.js';
+import { McpJobs } from './mcp-jobs.js';
+import type { Store } from '../storage/store.js';
 export class McpHub {
-  constructor(private stateDirectory?: string) {}
+  readonly oauth?: McpOAuth;
+  readonly jobs?: McpJobs;
+  constructor(
+    private stateDirectory?: string,
+    store?: Store,
+  ) {
+    if (stateDirectory) this.oauth = new McpOAuth(join(stateDirectory, 'oauth'));
+    if (store) this.jobs = new McpJobs(store);
+  }
   private clients = new Map<
     string,
     { client: Client; transport: Transport; fingerprint: string }
@@ -82,6 +93,11 @@ export class McpHub {
     credentials: ReturnType<McpHub['credentials']>,
   ) {
     assert(server.enabled, 'MCP_DISABLED', 'MCP server is not enabled.');
+    assert(
+      !server.oauth?.enabled || this.oauth,
+      'MCP_OAUTH_UNAVAILABLE',
+      'OAuth credential storage is unavailable.',
+    );
     const old = this.clients.get(key);
     if (old?.fingerprint === fingerprint) return old.client;
     if (old) {
@@ -131,6 +147,16 @@ export class McpHub {
     const transport =
       server.transport === 'http'
         ? new StreamableHTTPClientTransport(new URL(server.url!), {
+            authProvider: this.oauth?.forConnection(server),
+            fetch: server.oauth?.enabled
+              ? (input, init) => {
+                  const url = input instanceof Request ? input.url : String(input);
+                  // OAuth metadata/token requests are short; MCP response streams may run much longer.
+                  return url === server.url
+                    ? fetch(input, { ...init, redirect: 'error' })
+                    : this.oauth!.fetch(input, init);
+                }
+              : undefined,
             requestInit: {
               redirect: 'error',
               headers: {
@@ -219,6 +245,7 @@ export class McpHub {
     args: Record<string, unknown>,
     signal: AbortSignal,
     scope = 'global',
+    onTask?: (task: { taskId: string; status: string }) => void,
   ) {
     signal.throwIfAborted();
     assert(
@@ -242,12 +269,33 @@ export class McpHub {
       'MCP_ARGUMENTS',
       'MCP arguments do not match the advertised input schema.',
     );
-    return client.callTool({ name, arguments: args }, undefined, {
-      timeout: (server.toolTimeoutSeconds ?? 120) * 1000,
-      signal,
-    });
+    const timeout = (server.toolTimeoutSeconds ?? 120) * 1000;
+    const boundedSignal = AbortSignal.any([signal, AbortSignal.timeout(timeout)]);
+    if (tool.execution?.taskSupport === 'required' || tool.execution?.taskSupport === 'optional') {
+      let taskId: string | undefined;
+      try {
+        for await (const message of client.experimental.tasks.callToolStream(
+          { name, arguments: args },
+          undefined,
+          { signal: boundedSignal, timeout, task: {} },
+        )) {
+          if (message.type === 'taskCreated' || message.type === 'taskStatus') {
+            taskId = message.task.taskId;
+            onTask?.({ taskId, status: message.task.status });
+          } else if (message.type === 'result') return message.result;
+          else if (message.type === 'error') throw message.error;
+        }
+        throw new Error('MCP task ended without a result.');
+      } catch (error) {
+        if (taskId && boundedSignal.aborted)
+          await client.experimental.tasks.cancelTask(taskId, { timeout: 5000 }).catch(() => {});
+        throw error;
+      }
+    }
+    return client.callTool({ name, arguments: args }, undefined, { timeout, signal });
   }
   async closeScope(scope: string) {
+    await this.jobs?.closeScope(scope);
     for (const [key, pending] of this.connecting)
       if (JSON.parse(key)[1] === scope) await pending.promise.catch(() => {});
     for (const [key, connection] of this.clients)
@@ -256,10 +304,60 @@ export class McpHub {
         this.clients.delete(key);
       }
   }
-  async close() {
+  async closeServer(id: string) {
+    for (const [key, pending] of this.connecting)
+      if (JSON.parse(key)[0] === id) await pending.promise.catch(() => {});
+    for (const [key, connection] of this.clients)
+      if (JSON.parse(key)[0] === id) {
+        await connection.client.close();
+        this.clients.delete(key);
+      }
+  }
+  async close(reopen = false) {
     this.closing = true;
+    await this.jobs?.close();
     await Promise.allSettled([...this.connecting.values()].map((x) => x.promise));
     await Promise.allSettled([...this.clients.values()].map((c) => c.client.close()));
     this.clients.clear();
+    this.closing = !reopen;
+  }
+  async catalog(
+    server: Settings['mcp'][number],
+    kind: 'resources' | 'templates' | 'prompts',
+    cursor: string | undefined,
+    scope: string,
+    signal: AbortSignal,
+  ) {
+    signal.throwIfAborted();
+    const client = await this.connect(server, scope),
+      options = { signal, timeout: (server.startupTimeoutSeconds ?? 20) * 1000 };
+    if (kind === 'resources') return client.listResources({ cursor }, options);
+    if (kind === 'templates') return client.listResourceTemplates({ cursor }, options);
+    return client.listPrompts({ cursor }, options);
+  }
+  async readResource(
+    server: Settings['mcp'][number],
+    uri: string,
+    scope: string,
+    signal: AbortSignal,
+  ) {
+    signal.throwIfAborted();
+    return (await this.connect(server, scope)).readResource(
+      { uri },
+      { signal, timeout: (server.toolTimeoutSeconds ?? 120) * 1000 },
+    );
+  }
+  async getPrompt(
+    server: Settings['mcp'][number],
+    name: string,
+    args: Record<string, string>,
+    scope: string,
+    signal: AbortSignal,
+  ) {
+    signal.throwIfAborted();
+    return (await this.connect(server, scope)).getPrompt(
+      { name, arguments: args },
+      { signal, timeout: (server.toolTimeoutSeconds ?? 120) * 1000 },
+    );
   }
 }

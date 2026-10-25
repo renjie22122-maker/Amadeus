@@ -66,6 +66,9 @@ export function findTools(specs: ToolSpec[], query: string, offset: number, limi
     辩论: 'team discussion limits challenge',
     通讯: 'message agent team',
     浏览器: 'browser mcp',
+    资源: 'mcp resource',
+    提示模板: 'mcp prompt',
+    后台: 'background mcp job',
     桌面: 'computer mcp',
     截图: 'screenshot image mcp',
     网页: 'web fetch',
@@ -125,6 +128,7 @@ export function findTools(specs: ToolSpec[], query: string, offset: number, limi
 
 // Discover a workflow's adjacent tools together; availability is still filtered by specs().
 const toolFamilies = [
+  ['mcp_tools', 'mcp_call', 'mcp_content', 'mcp_job', 'mcp_cancel_job'],
   ['inspect_problem_frame', 'update_problem_frame'],
   [
     'run_python',

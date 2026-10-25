@@ -284,6 +284,7 @@ export class Runtime implements TeamPort {
     assert(run, 'NO_ACTIVE_RUN', 'No running task.', 409);
     const queued = this.recordUserMessage(conversationId, run.id, message, true);
     this.background.wake(conversationId);
+    this.mcp.jobs?.wake(conversationId);
     this.steering.set(run.id, [...(this.steering.get(run.id) || []), queued]);
   }
   private recordUserMessage(
@@ -818,6 +819,15 @@ export class Runtime implements TeamPort {
               );
               signal.throwIfAborted();
             }
+            continue;
+          }
+          if (this.mcp.jobs?.running(run.id).length) {
+            await Promise.all(
+              this.mcp.jobs
+                .running(run.id)
+                .map((job) => this.mcp.jobs!.wait(run.conversationId, job.id, 30, signal)),
+            );
+            signal.throwIfAborted();
             continue;
           }
           await toolHooks(ctx, 'beforeTaskComplete', 'task');

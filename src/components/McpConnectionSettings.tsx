@@ -1,4 +1,5 @@
 import type { Settings } from '../../shared/types';
+import { McpOAuthSettings } from './McpOAuthSettings';
 
 type Server = Settings['mcp'][number];
 export function McpConnectionSettings({
@@ -26,6 +27,7 @@ export function McpConnectionSettings({
       )}
       {server.transport === 'http' ? (
         <>
+          <McpOAuthSettings server={server} update={update} zh={zh} />
           <label>
             {zh ? '服务地址' : 'Endpoint'}
             <input
@@ -38,6 +40,7 @@ export function McpConnectionSettings({
             {zh ? '令牌环境变量名（可选）' : 'Token environment variable (optional)'}
             <input
               value={server.bearerTokenEnv || ''}
+              disabled={server.oauth?.enabled}
               placeholder="MCP_ACCESS_TOKEN"
               onChange={(e) => update({ bearerTokenEnv: e.target.value || undefined })}
             />

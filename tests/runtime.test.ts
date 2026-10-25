@@ -73,6 +73,125 @@ test('plain answer finishes in one model call without compulsory finish or revie
   await f.runtime.shutdown();
   f.store.close();
 });
+
+test('MCP background call permits independent reasoning and finalization waits for the original receipt', async () => {
+  let calls = 0,
+    executions = 0,
+    release!: (value: any) => void;
+  const pending = new Promise<any>((resolve) => {
+    release = resolve;
+  });
+  const f = await setup({
+    complete: async () => {
+      calls++;
+      if (calls === 1)
+        return result('', [
+          {
+            id: 'mcp-bg',
+            name: 'mcp_call',
+            arguments: {
+              serverId: 'fixture',
+              tool: 'slow',
+              arguments: {},
+              reason: 'Background fixture',
+              background: true,
+            },
+          },
+        ]);
+      return result('Independent reasoning finished.');
+    },
+  });
+  f.config.save({
+    ...f.config.get(),
+    mcp: [{ id: 'fixture', name: 'Fixture', command: 'fake', args: [], enabled: true }],
+  });
+  f.runtime.mcp.call = async () => {
+    executions++;
+    return pending;
+  };
+  try {
+    const run = f.runtime.start('chat', 'Run slow MCP work and reason independently');
+    await until(() => f.store.list<any>('input').some((i) => i.status === 'pending'));
+    const input = f.store.list<any>('input').find((i) => i.status === 'pending');
+    assert.equal(executions, 0);
+    f.runtime.inputs.answer(input.id, 'approved', true);
+    await until(() => calls >= 2);
+    assert.equal(f.runtime.mcp.jobs!.running(run.id).length, 1);
+    assert.notEqual(f.store.get<any>('run', run.id).status, 'completed');
+    const before = calls;
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(calls, before, 'No model polling while waiting for completion');
+    release({ content: [{ type: 'text', text: 'done' }] });
+    await until(() => f.store.get<any>('run', run.id).status === 'completed');
+    assert.equal(executions, 1);
+    assert.equal(f.store.unknownEffects('chat').length, 0);
+    assert.equal(f.runtime.mcp.jobs!.list('chat')[0].status, 'completed');
+  } finally {
+    release({ content: [] });
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});
+
+test('MCP OAuth and job HTTP endpoints retain cookie, CSRF and callback state boundaries', async () => {
+  const f = await setup({ complete: async () => result('done') });
+  const { app } = await createApp({ directory: f.dir, runtime: f.runtime });
+  try {
+    f.config.save({
+      ...f.config.get(),
+      mcp: [
+        {
+          id: 'oauth',
+          name: 'OAuth',
+          command: '',
+          args: [],
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.com/mcp',
+          oauth: { enabled: true },
+        },
+      ],
+    });
+    const host = '127.0.0.1:8810';
+    assert.equal(
+      (await app.inject({ method: 'POST', url: '/api/mcp/oauth/oauth/login', headers: { host } }))
+        .statusCode,
+      401,
+    );
+    const boot = await app.inject({ url: '/api/bootstrap', headers: { host } });
+    const cookie = String(boot.headers['set-cookie']).split(';')[0];
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/mcp/oauth/oauth/login',
+          headers: { host, cookie },
+        })
+      ).statusCode,
+      403,
+    );
+    const status = await app.inject({ url: '/api/mcp/oauth/oauth', headers: { host, cookie } });
+    assert.equal(status.json().signedIn, false);
+    const callback = await app.inject({
+      url: '/mcp/oauth/callback?state=forged&code=secret',
+      headers: { host },
+    });
+    assert.equal(callback.statusCode, 400);
+    assert.ok(!callback.body.includes('secret'));
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/mcp/jobs/chat/fake/cancel',
+          headers: { host, cookie },
+        })
+      ).statusCode,
+      403,
+    );
+  } finally {
+    await app.close();
+  }
+});
 test('real model requests gain team guidance after discovery and receive clock context', async () => {
   const { TEAM_PROTOCOL } = await import('../server/core/prompts.js');
   let calls = 0;

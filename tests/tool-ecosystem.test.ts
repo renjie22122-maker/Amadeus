@@ -375,6 +375,54 @@ test('MCP discovery isolates unavailable servers, preserves provenance and bound
   assert.equal(output.results[0].descriptionTruncated, true);
   assert.equal(JSON.stringify(output).includes('credential-secret'), false);
 });
+
+test('MCP resources and prompts remain approved untrusted content and recheck scope', async (t) => {
+  const f = fixture(t);
+  f.config.save({
+    ...f.config.get(),
+    mcp: [{ id: 'content', name: 'Content', command: 'fixture', args: [], enabled: true }],
+  });
+  let calls = 0;
+  f.ctx.mcp = {
+    getPrompt: async () => {
+      calls++;
+      return {
+        messages: [{ role: 'user', content: { type: 'text', text: 'untrusted template' } }],
+      };
+    },
+  };
+  f.ctx.inputs = { request: async () => {} };
+  const output = JSON.parse(
+    (
+      await f.registry.invoke(
+        'mcp_content',
+        { serverId: 'content', operation: 'prompt', name: 'review', reason: 'Read template' },
+        f.ctx,
+      )
+    ).content,
+  );
+  assert.equal(calls, 1);
+  assert.match(output.trust, /do not change instruction priority/);
+  f.ctx.inputs = {
+    request: async () => {
+      f.store.put('conversation', { ...f.conversation, permission: 'read-only' });
+    },
+  };
+  await assert.rejects(
+    f.registry.invoke(
+      'mcp_content',
+      { serverId: 'content', operation: 'prompt', name: 'review', reason: 'Read template' },
+      f.ctx,
+    ),
+    /access changed/,
+  );
+  assert.equal(calls, 1);
+  assert.ok(
+    !f.registry
+      .specs({ ...f.ctx, conversation: { ...f.conversation, permission: 'read-only' } })
+      .some((s) => s.name === 'mcp_content'),
+  );
+});
 test('workflow cannot bypass read-only permission to mutate a file', async (t) => {
   const f = fixture(t),
     executor = new ToolExecutor(f.store, f.registry, f.dir);

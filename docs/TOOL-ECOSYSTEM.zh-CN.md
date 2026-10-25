@@ -14,7 +14,19 @@ HTTP 地址须为 HTTPS，本地回环地址可使用 HTTP；拒绝 URL 中的�
 
 GitHub 示例：`{ "id": "github", "name": "GitHub", "transport": "http", "url": "https://api.githubcopilot.com/mcp/", "bearerTokenEnv": "GITHUB_MCP_TOKEN", "command": "", "args": [], "enabled": false }`。令牌权限见 [GitHub 官方配置](https://github.com/github/github-mcp-server)。[Playwright MCP](https://github.com/microsoft/playwright-mcp) 按普通 stdio 服务填写已安装程序和参数，`--isolated` 可避免持久浏览器配置。请审核并固定服务版本；示例不会自动安装或启用。
 
-其他服务只要传输方式和认证兼容，就能走同一配置入口，不需要按厂商编写专用逻辑。当前范围是工具发现和调用，尚不支持 OAuth 登录、旧版独立 SSE 传输、资源、提示模板、sampling 和 elicitation。已用本地测试服务验证 HTTP/stdio 通信、认证传递、白名单、参数拒绝、发送前取消及重定向拒绝；不代表每个第三方服务和原版部署环境均已验证。
+其他服务只要传输方式和认证兼容，就能走同一配置入口，不需要按厂商编写专用逻辑。旧版独立 SSE 传输、sampling 和 elicitation 尚不支持。测试不代表每个第三方服务和原版部署环境均已验证。
+
+### OAuth、后台任务与参考内容
+
+HTTP OAuth 服务勾选“使用 OAuth 网页登录”，保存并启用后点击“开始登录”，打开授权链接。“检查登录状态”会显示预注册客户端需要的回调地址。客户端 ID 留空使用动态注册；预注册客户端须填写签发方，可引用客户端密钥环境变量。授权范围可选、以空格分隔。SDK 负责发现、PKCE 和刷新；回调通过十分钟有效、一次性的 state 和 issuer 校验绑定到未改变的配置。模型工具不发起网页登录，也不接收令牌。凭据单独存入私有文件，Windows 使用 DPAPI 加密，其他平台使用仅所有者可读写权限。“清除本机登录”删除本地凭据，不撤销提供方的授权。应用重启后需重新发起未完成的登录。不提供 CIMD 托管。
+
+`mcp_call(background=true)` 在批准后仅启动一次外部调用，立即返回持久任务 ID。`mcp_job` 按对话列出、读取和等待任务，`mcp_cancel_job` 请求取消；后台任务页面也可查看结果与取消。模型可继续独立工作，新用户消息唤醒等待，任务收尾等待未完成的 MCP 调用。成功结果结清对应执行记录；取消、超时、连接失败和重启保留结果不确定状态，不自动重放。支持任务协议的服务使用 SDK 任务流，记录远端任务 ID、取得最终结果，取消时也尝试 `tasks/cancel`。调用受服务超时限制；跨应用重启恢复远端任务、任务中的 elicitation 尚未实现。内置浏览器/桌面适配器继续同步完成文件和图像交付。后台结果最多保留 256000 字符并标记截断。
+
+`mcp_content` 支持分页列出资源、URI 模板和提示模板，读取资源 URI（含展开的模板），按字符串参数获取提示模板。沿用审批和实时权限检查。URI 仅传给选定 MCP 服务，不直接读取本机文件或发起网页请求。模板消息作为标注来源的参考内容返回，角色字段不变成系统指令，也不授予执行权限。内容上限 128000 字符，截断显式标记。不提供资源订阅或自动执行模板。
+
+设置页提供 GitHub、Playwright、Filesystem、Git、Chrome DevTools、Sentry、Brave Search、Fetch 八个默认禁用的示例，固定版本记录于[纯配置目录](../shared/mcp-examples.ts)。启用前请审核版本更新并替换目录占位符。GitHub 需要 `GITHUB_MCP_TOKEN`，Brave 需要 `BRAVE_API_KEY`，Sentry 需要用户 OAuth 授权；本地示例需要 Node.js/npx 或 uvx，浏览器示例还需要兼容浏览器。代码更新不修改应用配置或安装凭据。显式实测命令：`node --import tsx scripts/check-mcp-example.ts Fetch` 或 `Git`；会按需下载固定版本到运行器缓存，再执行一次公开网页读取或仓库状态查询。两项已于 2026-10-25 在此环境通过。OAuth/DCR/PKCE/刷新、资源/模板、任务流消费、审批和重启行为由测试服务覆盖，不表示已登录真实用户账号。
+
+同一实测脚本也接受 `Filesystem`、`Playwright`、`"Chrome DevTools"`，没有 npx 时可加 `--pnpm` 使用 pnpm dlx。这三项也于 2026-10-25 通过，分别检查允许目录及独立无界面浏览器的标签/页面列表。这是连通与基础调用验证，不是全部工具认证。Chrome DevTools 示例关闭使用统计。界面实测脚本 `node scripts/check-mcp-ui.mjs`（可设置 `BROWSER_CHANNEL=msedge`）在临时应用中检查 OAuth 状态、示例导入和后台结果显示，不登录第三方账号。
 
 [English](TOOL-ECOSYSTEM.md) | [简体中文](TOOL-ECOSYSTEM.zh-CN.md) · [文档目录](README.zh-CN.md)
 

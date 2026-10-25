@@ -45,7 +45,10 @@ export function deleteConversation(store: Store, directory: string, key: string,
     }[]
   ).map((r) => ({ ...r, value: JSON.parse(r.data) }));
   for (const r of rows)
-    if (chats.has(r.value.conversationId) && ['media-job', 'command-job'].includes(r.kind))
+    if (
+      chats.has(r.value.conversationId) &&
+      ['media-job', 'command-job', 'mcp-job'].includes(r.kind)
+    )
       assert(
         !['submitting', 'queued', 'running', 'waiting_approval'].includes(r.value.status),
         'JOB_ACTIVE',

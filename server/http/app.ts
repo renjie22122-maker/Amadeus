@@ -1,4 +1,5 @@
 import { ChatConnections } from '../services/chat-connections.js';
+import { mcpRoutes } from './mcp.js';
 import { ChatTransports } from '../services/chat-transports.js';
 import { chatConnectionRoutes } from './chat-connections.js';
 import { localVoiceRoutes } from './local-voice.js';
@@ -114,6 +115,7 @@ export async function createApp(options: { directory: string; dist?: string; run
   });
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
   mediaRoutes(app, runtime);
+  mcpRoutes(app, runtime);
   runtime.media.start();
   app.get('/api/health', async () => ({ application: 'Amadeus', version: '0.1.0', ready: true }));
   app.get('/api/bootstrap', async (req, reply) => {
@@ -177,6 +179,7 @@ export async function createApp(options: { directory: string; dist?: string; run
       error: j.error,
       updatedAt: j.updatedAt,
     })),
+    mcp: store.list<any>('mcp-job').map(({ result, ...job }) => job),
     teams: store.list<any>('team-space').map((j) => ({ id: j.id, status: j.status })),
   }));
 
@@ -1025,7 +1028,7 @@ export async function createApp(options: { directory: string; dist?: string; run
       'Stop running tasks before changing model settings.',
     );
     const saved = config.save(req.body);
-    await runtime.mcp.close();
+    await runtime.mcp.close(true);
     return saved;
   });
   const candidate = (raw: any) => {

@@ -2,11 +2,13 @@ import { ScheduledTasks } from './ScheduledTasks';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 export function BackgroundPage({ state, zh, notify, openConversation }: any) {
+  const [mcpResults, setMcpResults] = useState<Record<string, unknown>>({});
   const [data, setData] = useState<any>({
     schedules: [],
     knowledge: [],
     memory: [],
     commands: [],
+    mcp: [],
     teams: [],
     graphs: [],
     evaluations: [],
@@ -52,6 +54,61 @@ export function BackgroundPage({ state, zh, notify, openConversation }: any) {
         reload={load}
         openConversation={openConversation}
       />
+      <section className="panel">
+        <h3>{zh ? 'MCP 后台调用' : 'Background MCP calls'}</h3>
+        {(data.mcp || []).slice(-30).map((job: any) => (
+          <details key={job.id}>
+            <summary>
+              {job.tool} · {job.status}
+            </summary>
+            <p>{job.note || ''}</p>
+            {job.remoteTask && (
+              <p>
+                {job.remoteTask.taskId} · {job.remoteTask.status}
+              </p>
+            )}
+            <button onClick={() => openConversation?.(job.conversationId)}>
+              {zh ? '打开对话' : 'Open conversation'}
+            </button>{' '}
+            <button
+              onClick={() =>
+                act(async () => {
+                  const receipt = await api(
+                    '/mcp/jobs/' +
+                      encodeURIComponent(job.conversationId) +
+                      '/' +
+                      encodeURIComponent(job.id),
+                  );
+                  setMcpResults((old) => ({ ...old, [job.id]: receipt.result }));
+                })
+              }
+            >
+              {zh ? '查看结果' : 'Inspect result'}
+            </button>{' '}
+            {job.status === 'running' && (
+              <button
+                onClick={() =>
+                  act(() =>
+                    api(
+                      '/mcp/jobs/' +
+                        encodeURIComponent(job.conversationId) +
+                        '/' +
+                        encodeURIComponent(job.id) +
+                        '/cancel',
+                      {},
+                    ),
+                  )
+                }
+              >
+                {zh ? '请求取消' : 'Request cancellation'}
+              </button>
+            )}
+            {mcpResults[job.id] !== undefined && (
+              <pre>{JSON.stringify(mcpResults[job.id], null, 2)}</pre>
+            )}
+          </details>
+        ))}
+      </section>
       {(
         ['knowledge', 'memory', 'commands', 'teams', 'graphs', 'evaluations', 'skills'] as const
       ).map((kind) => (

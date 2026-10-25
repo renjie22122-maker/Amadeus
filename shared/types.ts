@@ -141,6 +141,13 @@ export interface Settings {
     command: string;
     args: string[];
     transport?: 'stdio' | 'http';
+    oauth?: {
+      enabled: boolean;
+      clientId?: string;
+      clientSecretEnv?: string;
+      issuer?: string;
+      scopes?: string[];
+    };
     url?: string;
     bearerTokenEnv?: string;
     headersFromHost?: Record<string, string>;

@@ -269,6 +269,18 @@ const schema = z.object({
           name: z.string(),
           command: z.string(),
           transport: z.enum(['stdio', 'http']).optional(),
+          oauth: z
+            .object({
+              enabled: z.boolean(),
+              clientId: z.string().min(1).optional(),
+              clientSecretEnv: z
+                .string()
+                .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+                .optional(),
+              issuer: z.string().url().optional(),
+              scopes: z.array(z.string().min(1)).max(100).optional(),
+            })
+            .optional(),
           cwd: z.string().refine(isAbsolute, 'MCP working directory must be absolute.').optional(),
           startupTimeoutSeconds: z.number().int().min(1).max(120).optional(),
           toolTimeoutSeconds: z.number().int().min(1).max(600).optional(),
@@ -304,7 +316,22 @@ const schema = z.object({
         .refine((s) => s.transport !== 'http' || (!s.builtin && !!s.url && validMcpUrl(s.url)), {
           message:
             'HTTP MCP requires HTTPS (or loopback HTTP), without URL credentials, query or fragment; bundled adapters use stdio.',
-        }),
+        })
+        .refine(
+          (s) =>
+            !s.oauth?.enabled ||
+            (s.transport === 'http' &&
+              !s.bearerTokenEnv &&
+              !Object.keys(s.headersFromHost || {}).some(
+                (k) => k.toLowerCase() === 'authorization',
+              ) &&
+              (!s.oauth.clientId || !!s.oauth.issuer) &&
+              (!s.oauth.clientSecretEnv || !!s.oauth.clientId)),
+          {
+            message:
+              'OAuth needs HTTP, exclusive Authorization, and an issuer for pre-registered clients.',
+          },
+        ),
     )
     .default([]),
 });

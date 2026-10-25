@@ -19,7 +19,7 @@ export function createRuntimeServices(
   resolveProvider: (p: Profile) => ModelProvider,
   filesForConversation: (c: Conversation) => Promise<FileScope>,
 ) {
-  const mcp = new McpHub(join(directory, 'browser-sessions'));
+  const mcp = new McpHub(join(directory, 'browser-sessions'), store);
   const background = new BackgroundCommands(store, (job) => {
     store.put('runtime-inbox', {
       id: job.id,

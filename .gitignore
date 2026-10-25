@@ -52,3 +52,5 @@ build/
 
 !/scripts/rag_resources.py
 !/scripts/run-tests.mjs
+!/scripts/check-mcp-example.ts
+!/scripts/check-mcp-ui.mjs

@@ -41,7 +41,8 @@ export function capabilityDecision(ctx: ToolContext, name: string, effect: ToolS
       'tool-not-in-allowed-set',
     ],
     [
-      ['mcp_tools', 'mcp_call'].includes(name) &&
+      name.startsWith('mcp_') &&
+        name !== 'mcp_job' &&
         (ctx.run.depth > 0 ||
           !!ctx.run.recoveryOnly ||
           ctx.conversation.permission === 'read-only'),

@@ -1,6 +1,7 @@
 import { RetrievalSettings } from '../components/RetrievalSettings';
 import { ToolEcosystemSettings } from '../components/ToolEcosystemSettings';
 import { McpConnectionSettings } from '../components/McpConnectionSettings';
+import { McpExamples } from '../components/McpExamples';
 import { ApprovalSettings } from '../components/ApprovalSettings';
 import { MediaSettings } from '../components/MediaSettings';
 import { matchModel } from '../../shared/model-metadata';
@@ -693,6 +694,10 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
             ? 'Trust the configured executable or remote endpoint before enabling. Discovery and tool calls require approval.'
             : '启用前请确认信任本地程序或远程服务。发现工具和调用工具仍需审批。'}
         </p>
+        <McpExamples
+          zh={t('settings') !== 'Settings'}
+          add={(server) => setValue({ ...value, mcp: [...value.mcp, server] })}
+        />
         {value.mcp.map((server: any, index: number) => (
           <div className="panel" key={server.id}>
             <McpConnectionSettings
