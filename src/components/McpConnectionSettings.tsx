@@ -102,6 +102,99 @@ export function McpConnectionSettings({
           </button>
         </div>
       )}
+      {server.transport !== 'http' && (
+        <label>
+          {zh ? '工作目录（可选，绝对路径）' : 'Working directory (optional, absolute path)'}
+          <input
+            value={server.cwd || ''}
+            onChange={(e) => update({ cwd: e.target.value || undefined })}
+          />
+        </label>
+      )}
+      <label>
+        {zh ? '连接与发现超时（秒）' : 'Connection and discovery timeout (seconds)'}
+        <input
+          type="number"
+          min={1}
+          max={120}
+          value={server.startupTimeoutSeconds ?? 20}
+          onChange={(e) =>
+            update({ startupTimeoutSeconds: e.target.value ? Number(e.target.value) : undefined })
+          }
+        />
+      </label>
+      <label>
+        {zh ? '工具调用超时（秒）' : 'Tool timeout (seconds)'}
+        <input
+          type="number"
+          min={1}
+          max={600}
+          value={server.toolTimeoutSeconds ?? 120}
+          onChange={(e) =>
+            update({ toolTimeoutSeconds: e.target.value ? Number(e.target.value) : undefined })
+          }
+        />
+      </label>
+      {server.transport === 'http' && (
+        <div className="wide">
+          <p>
+            {zh
+              ? '请求头名 → 宿主环境变量名（不填写密钥值）'
+              : 'Header name → host environment variable (never enter secret values)'}
+          </p>
+          {Object.entries(server.headersFromHost || {}).map(([key, value], index) => (
+            <div className="form-grid" key={index}>
+              <input
+                aria-label="HTTP header name"
+                value={key}
+                onChange={(e) =>
+                  update({
+                    headersFromHost: Object.fromEntries(
+                      Object.entries(server.headersFromHost || {}).map(([k, v]) => [
+                        k === key ? e.target.value : k,
+                        v,
+                      ]),
+                    ),
+                  })
+                }
+              />
+              <input
+                aria-label="Header environment variable"
+                value={value}
+                onChange={(e) =>
+                  update({ headersFromHost: { ...server.headersFromHost, [key]: e.target.value } })
+                }
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  update({
+                    headersFromHost: Object.fromEntries(
+                      Object.entries(server.headersFromHost || {}).filter(([k]) => k !== key),
+                    ),
+                  })
+                }
+              >
+                {zh ? '删除' : 'Remove'}
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() =>
+              update({
+                headersFromHost: {
+                  ...server.headersFromHost,
+                  ['X-MCP-Custom-' + Object.keys(server.headersFromHost || {}).length]:
+                    'HOST_VARIABLE',
+                },
+              })
+            }
+          >
+            {zh ? '添加请求头引用' : 'Add header reference'}
+          </button>
+        </div>
+      )}
       <label className="wide">
         <input
           type="checkbox"

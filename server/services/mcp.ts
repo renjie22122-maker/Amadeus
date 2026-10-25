@@ -7,7 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
-import { validMcpUrl } from '../../shared/mcp.js';
+import { validMcpUrl, validMcpHeader } from '../../shared/mcp.js';
 import type { Settings } from '../../shared/types.js';
 import { assert } from '../core/errors.js';
 export class McpHub {
@@ -29,10 +29,26 @@ export class McpHub {
       assert(value, 'MCP_ENV', `Missing host environment variable: ${name}`);
       return value;
     };
+    const headers: Record<string, string> = {};
+    if (server.transport === 'http') {
+      for (const [name, variable] of Object.entries(server.headersFromHost || {})) {
+        assert(validMcpHeader(name), 'MCP_HEADER', 'Reserved or invalid MCP header.');
+        assert(!(name.toLowerCase() in headers), 'MCP_HEADER', 'Duplicate MCP header.');
+        const value = read(variable);
+        assert(!/[\r\n]/.test(value), 'MCP_HEADER', 'MCP header values must be single-line.');
+        headers[name.toLowerCase()] = value;
+      }
+      assert(
+        !(server.bearerTokenEnv && headers.authorization),
+        'MCP_HEADER',
+        'Choose either bearerTokenEnv or an Authorization header reference.',
+      );
+    }
     return server.transport === 'http'
-      ? { token: server.bearerTokenEnv ? read(server.bearerTokenEnv) : undefined, env: {} }
+      ? { token: server.bearerTokenEnv ? read(server.bearerTokenEnv) : undefined, env: {}, headers }
       : {
           token: undefined,
+          headers,
           env: Object.fromEntries(
             Object.entries(server.envFromHost || {}).map(([key, name]) => [key, read(name)]),
           ),
@@ -117,7 +133,10 @@ export class McpHub {
         ? new StreamableHTTPClientTransport(new URL(server.url!), {
             requestInit: {
               redirect: 'error',
-              headers: credentials.token ? { Authorization: `Bearer ${credentials.token}` } : {},
+              headers: {
+                ...credentials.headers,
+                ...(credentials.token ? { Authorization: `Bearer ${credentials.token}` } : {}),
+              },
             },
             reconnectionOptions: {
               maxRetries: 0,
@@ -143,13 +162,14 @@ export class McpHub {
                 ]
               : server.args,
             env,
+            cwd: server.cwd,
             stderr: 'pipe',
           });
     // Remote server stderr may contain credentials. Do not mirror it into chat or logs.
     if (transport instanceof StdioClientTransport) transport.stderr?.on('data', () => {});
     const client = new Client({ name: 'Amadeus', version: '0.1.0' });
     try {
-      await client.connect(transport, { timeout: 20000 });
+      await client.connect(transport, { timeout: (server.startupTimeoutSeconds ?? 20) * 1000 });
     } catch (error) {
       await transport.close().catch(() => {});
       throw error;
@@ -160,13 +180,24 @@ export class McpHub {
     };
     return client;
   }
-  async list(server: Settings['mcp'][number], scope = 'global') {
+  async list(server: Settings['mcp'][number], scope = 'global', signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const client = await this.connect(server, scope);
     const tools: Awaited<ReturnType<Client['listTools']>>['tools'] = [];
     let cursor: string | undefined;
     const seen = new Set<string>();
+    const names = new Set<string>();
     do {
-      const page = await client.listTools(cursor ? { cursor } : {}, { timeout: 20000 });
+      signal?.throwIfAborted();
+      const page = await client.listTools(cursor ? { cursor } : {}, {
+        timeout: (server.startupTimeoutSeconds ?? 20) * 1000,
+        signal,
+      });
+      for (const tool of page.tools) {
+        assert(!names.has(tool.name), 'MCP_CATALOG', 'MCP server advertised duplicate tool names.');
+        names.add(tool.name);
+      }
+      assert(names.size <= 10000, 'MCP_CATALOG', 'MCP catalog exceeds 10000 tools.');
       tools.push(...page.tools);
       cursor = page.nextCursor;
       if (cursor) {
@@ -196,7 +227,7 @@ export class McpHub {
       'MCP tool is outside the configured allowlist.',
     );
     const client = await this.connect(server, scope);
-    const catalog = await this.list(server, scope);
+    const catalog = await this.list(server, scope, signal);
     assert(
       catalog.some((t) => t.name === name),
       'MCP_TOOL_UNKNOWN',
@@ -211,7 +242,10 @@ export class McpHub {
       'MCP_ARGUMENTS',
       'MCP arguments do not match the advertised input schema.',
     );
-    return client.callTool({ name, arguments: args }, undefined, { timeout: 120000, signal });
+    return client.callTool({ name, arguments: args }, undefined, {
+      timeout: (server.toolTimeoutSeconds ?? 120) * 1000,
+      signal,
+    });
   }
   async closeScope(scope: string) {
     for (const [key, pending] of this.connecting)

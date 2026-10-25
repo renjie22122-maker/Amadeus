@@ -1,5 +1,5 @@
 import { migrateLegacyVoice } from '../../shared/media-capabilities.js';
-import { validMcpUrl } from '../../shared/mcp.js';
+import { validMcpUrl, validMcpHeader } from '../../shared/mcp.js';
 import {
   protectSettings,
   restoreSettings,
@@ -269,6 +269,15 @@ const schema = z.object({
           name: z.string(),
           command: z.string(),
           transport: z.enum(['stdio', 'http']).optional(),
+          cwd: z.string().refine(isAbsolute, 'MCP working directory must be absolute.').optional(),
+          startupTimeoutSeconds: z.number().int().min(1).max(120).optional(),
+          toolTimeoutSeconds: z.number().int().min(1).max(600).optional(),
+          headersFromHost: z
+            .record(
+              z.string().refine(validMcpHeader, 'Reserved or invalid MCP header.'),
+              z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+            )
+            .optional(),
           url: z.string().optional(),
           bearerTokenEnv: z
             .string()

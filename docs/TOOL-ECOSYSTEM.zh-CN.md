@@ -2,6 +2,10 @@
 
 ## 通用 MCP 接入
 
+设计参考：[Codex MCP 配置](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)、[Claude Code MCP 发现机制](https://code.claude.com/docs/en/mcp)、[DeepSeek Harness MCP 客户端](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md)。本轮借鉴服务级超时、环境变量请求头、按需描述长度限制、明确的发现失败反馈和重名目录拒绝，不代表功能已全面对齐。
+
+每个服务可设置 `startupTimeoutSeconds`（1–120，默认 20，适用于每次连接/发现请求）、`toolTimeoutSeconds`（1–600，默认 120）和 stdio 的绝对工作目录 `cwd`。`headersFromHost` 将请求头名映射到宿主环境变量名，可用于 API Key；协议和路由请求头保留。Bearer 令牌引用与 Authorization 请求头引用二选一。发现过程单独报告不可用服务，并保留其他已批准服务的结果；`complete: false` 表示结果不完整。取消、审批或权限失败仍终止发现。工具描述最多返回 4096 字符并标记截断，参数 Schema 保持完整。目录拒绝同名工具及超过 10000 个工具；调用时重新发现工具，不依赖过期定义，失败不重放调用。
+
 设置 → MCP 服务支持本地 **stdio**（旧配置默认方式）和 **Streamable HTTP**。添加服务、选择方式、填写配置后手动启用。发现与调用仍经过现有审批、对话隔离和执行记录；工具描述或只读标记不授予权限。HTTP 发现连接远程服务，不启动本地程序。
 
 HTTP 地址须为 HTTPS，本地回环地址可使用 HTTP；拒绝 URL 中的凭据、查询参数、片段和重定向。可选的 `bearerTokenEnv` 填 Amadeus 服务进程可读取的环境变量名。本地服务的 `envFromHost` 将子进程变量名映射到明确选择的宿主变量名，配置不保存密钥值。在服务启动环境中设置变量，变更启动环境后重启服务。这些措施不构成本地程序的沙箱。

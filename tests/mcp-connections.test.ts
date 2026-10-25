@@ -11,7 +11,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { McpHub } from '../server/services/mcp.js';
-import { validMcpUrl } from '../shared/mcp.js';
+import { validMcpUrl, validMcpHeader } from '../shared/mcp.js';
 import type { Settings } from '../shared/types.js';
 
 test('MCP settings persist generic fields and reject invalid HTTP and credential references', async () => {
@@ -29,6 +29,9 @@ test('MCP settings persist generic fields and reject invalid HTTP and credential
       url: 'https://example.com/mcp',
       bearerTokenEnv: 'MCP_TOKEN',
       allowedTools: ['echo'],
+      headersFromHost: { 'X-API-Key': 'MCP_KEY' },
+      startupTimeoutSeconds: 12,
+      toolTimeoutSeconds: 45,
     };
     config.save({ ...config.get(), mcp: [server] });
     assert.deepEqual(new Configuration(path).get().mcp, [server]);
@@ -37,6 +40,10 @@ test('MCP settings persist generic fields and reject invalid HTTP and credential
       { bearerTokenEnv: 'not a variable' },
       { builtin: 'browser' },
       { envFromHost: { TOKEN: 'secret-value!' } },
+      { startupTimeoutSeconds: 0 },
+      { toolTimeoutSeconds: 601 },
+      { cwd: 'relative' },
+      { headersFromHost: { Host: 'MCP_HOST' } },
     ]) {
       assert.throws(() => config.save({ ...config.get(), mcp: [{ ...server, ...patch }] }));
     }
@@ -52,20 +59,29 @@ test('HTTP MCP handshake, credential reference, schema rejection and allowlist e
   });
   const service = new McpServer({ name: 'generic-fixture', version: '1.0' });
   let calls = 0;
+  let slowCalls = 0;
+  service.registerTool('slow', { inputSchema: {} }, async () => {
+    slowCalls++;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return { content: [{ type: 'text', text: 'settled' }] };
+  });
   service.registerTool('echo', { inputSchema: { text: z.string() } }, async ({ text }) => {
     calls++;
     return { content: [{ type: 'text', text }] };
   });
   await service.connect(transport);
   const authorizations: (string | undefined)[] = [];
+  const apiKeys: (string | string[] | undefined)[] = [];
   const http = createServer((req, res) => {
     authorizations.push(req.headers.authorization);
+    apiKeys.push(req.headers['x-api-key']);
     void transport.handleRequest(req, res);
   });
   await new Promise<void>((r) => http.listen(0, '127.0.0.1', r));
   const port = (http.address() as { port: number }).port;
   const hub = new McpHub();
   process.env.AMADEUS_MCP_TEST_TOKEN = 'fixture-secret';
+  process.env.AMADEUS_MCP_TEST_KEY = 'fixture-key';
   const config: Settings['mcp'][number] = {
     id: 'http',
     name: 'HTTP',
@@ -75,15 +91,19 @@ test('HTTP MCP handshake, credential reference, schema rejection and allowlist e
     transport: 'http',
     url: `http://127.0.0.1:${port}/mcp`,
     bearerTokenEnv: 'AMADEUS_MCP_TEST_TOKEN',
+    headersFromHost: { 'X-API-Key': 'AMADEUS_MCP_TEST_KEY' },
+    toolTimeoutSeconds: 1,
   };
   const signal = new AbortController().signal;
   try {
-    assert.equal((await hub.list(config))[0].name, 'echo');
+    assert.ok((await hub.list(config)).some((tool) => tool.name === 'echo'));
     await assert.rejects(hub.call(config, 'echo', { text: 42 }, signal), /schema/);
     assert.equal(calls, 0);
     const result = await hub.call(config, 'echo', { text: 'hello' }, signal);
     assert.equal((result.content as any[])[0].text, 'hello');
     assert.equal(calls, 1);
+    await assert.rejects(hub.call(config, 'slow', {}, signal), /timed out/i);
+    assert.equal(slowCalls, 1);
     await assert.rejects(
       hub.call({ ...config, allowedTools: [] }, 'echo', { text: 'blocked' }, signal),
       /allowlist/,
@@ -91,11 +111,13 @@ test('HTTP MCP handshake, credential reference, schema rejection and allowlist e
     assert.equal(calls, 1);
     assert.ok(authorizations.length > 2);
     assert.ok(authorizations.every((v) => v === 'Bearer fixture-secret'));
+    assert.ok(apiKeys.every((v) => v === 'fixture-key'));
     const aborted = AbortSignal.abort();
     await assert.rejects(hub.call(config, 'echo', { text: 'cancelled' }, aborted));
     assert.equal(calls, 1);
   } finally {
     delete process.env.AMADEUS_MCP_TEST_TOKEN;
+    delete process.env.AMADEUS_MCP_TEST_KEY;
     await hub.close();
     await service.close();
     http.closeAllConnections();
@@ -129,6 +151,9 @@ test('stdio compatibility, filtered discovery and missing credentials fail befor
 });
 
 test('HTTP endpoint policy excludes credential-bearing and insecure remote URLs', () => {
+  assert.equal(validMcpHeader('X-API-Key'), true);
+  for (const header of ['Host', 'Content-Length', 'Mcp-Session-Id', 'bad\r\nheader'])
+    assert.equal(validMcpHeader(header), false);
   for (const url of ['https://example.com/mcp', 'http://127.0.0.1:123/mcp', 'http://[::1]/mcp'])
     assert.equal(validMcpUrl(url), true);
   for (const url of [
@@ -139,6 +164,24 @@ test('HTTP endpoint policy excludes credential-bearing and insecure remote URLs'
     'broken',
   ])
     assert.equal(validMcpUrl(url), false);
+});
+
+test('catalog refresh rejects duplicate names across pages and propagates cancellation', async () => {
+  const hub = new McpHub();
+  const config = { id: 'catalog', name: 'Catalog', command: '', args: [], enabled: true };
+  let calls = 0;
+  hub.connect = async () =>
+    ({
+      listTools: async () => ({
+        tools: [{ name: 'duplicate', inputSchema: { type: 'object' } }],
+        nextCursor: ++calls === 1 ? 'next' : undefined,
+      }),
+    }) as any;
+  await assert.rejects(hub.list(config), /duplicate tool names/);
+  assert.equal(calls, 2);
+  await assert.rejects(hub.list(config, 'global', AbortSignal.abort()));
+  assert.equal(calls, 2);
+  await hub.close();
 });
 
 test('stdio forwards only explicit credential references and reconnects after rotation', async () => {

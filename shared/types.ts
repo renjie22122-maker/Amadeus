@@ -143,8 +143,12 @@ export interface Settings {
     transport?: 'stdio' | 'http';
     url?: string;
     bearerTokenEnv?: string;
+    headersFromHost?: Record<string, string>;
     envFromHost?: Record<string, string>;
     allowedTools?: string[];
+    cwd?: string;
+    startupTimeoutSeconds?: number;
+    toolTimeoutSeconds?: number;
     enabled: boolean;
     capability?: 'general' | 'browser' | 'computer';
     builtin?: 'browser' | 'computer';

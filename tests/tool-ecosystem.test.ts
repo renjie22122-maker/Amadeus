@@ -340,6 +340,41 @@ test('registered artifacts are scoped observations, not verification', async (t)
   const other = { ...f.ctx, run: { ...f.run, conversationId: 'other' } };
   assert.equal(JSON.parse((await f.registry.invoke('list_artifacts', {}, other)).content).total, 0);
 });
+
+test('MCP discovery isolates unavailable servers, preserves provenance and bounds descriptions', async (t) => {
+  const f = fixture(t);
+  f.config.save({
+    ...f.config.get(),
+    mcp: ['bad', 'good'].map((id) => ({ id, name: id, command: 'fake', args: [], enabled: true })),
+  });
+  const approvals: string[] = [];
+  f.ctx.inputs = {
+    request: async (_run: any, _type: any, data: any) => {
+      approvals.push(data.command);
+    },
+  };
+  f.ctx.mcp = {
+    list: async (server: any) => {
+      if (server.id === 'bad') throw new Error('remote response containing credential-secret');
+      return [
+        {
+          name: 'search',
+          description: 'x'.repeat(5000),
+          serverId: 'spoofed',
+          inputSchema: { type: 'object' },
+        },
+      ];
+    },
+  };
+  const output = JSON.parse((await f.registry.invoke('mcp_tools', {}, f.ctx)).content);
+  assert.equal(approvals.length, 2);
+  assert.equal(output.complete, false);
+  assert.equal(output.failures[0].serverId, 'bad');
+  assert.equal(output.results[0].serverId, 'good');
+  assert.equal(output.results[0].description.length, 4096);
+  assert.equal(output.results[0].descriptionTruncated, true);
+  assert.equal(JSON.stringify(output).includes('credential-secret'), false);
+});
 test('workflow cannot bypass read-only permission to mutate a file', async (t) => {
   const f = fixture(t),
     executor = new ToolExecutor(f.store, f.registry, f.dir);
