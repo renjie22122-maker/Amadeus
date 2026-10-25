@@ -1,4 +1,5 @@
 import { migrateLegacyVoice } from '../../shared/media-capabilities.js';
+import { validMcpUrl } from '../../shared/mcp.js';
 import {
   protectSettings,
   restoreSettings,
@@ -262,21 +263,39 @@ const schema = z.object({
     .default({ baseUrl: '', apiKey: '', model: '' }),
   mcp: z
     .array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        command: z.string(),
-        capability: z.enum(['general', 'browser', 'computer']).optional(),
-        builtin: z.enum(['browser', 'computer']).optional(),
-        browser: z
-          .object({
-            allowedHosts: z.array(z.string().regex(/^[a-zA-Z0-9.-]+$/)).max(100),
-            persistSession: z.boolean(),
-          })
-          .optional(),
-        args: z.array(z.string()),
-        enabled: z.boolean(),
-      }),
+      z
+        .object({
+          id: z.string(),
+          name: z.string(),
+          command: z.string(),
+          transport: z.enum(['stdio', 'http']).optional(),
+          url: z.string().optional(),
+          bearerTokenEnv: z
+            .string()
+            .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+            .optional(),
+          envFromHost: z
+            .record(
+              z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+              z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+            )
+            .optional(),
+          allowedTools: z.array(z.string().min(1)).max(1000).optional(),
+          capability: z.enum(['general', 'browser', 'computer']).optional(),
+          builtin: z.enum(['browser', 'computer']).optional(),
+          browser: z
+            .object({
+              allowedHosts: z.array(z.string().regex(/^[a-zA-Z0-9.-]+$/)).max(100),
+              persistSession: z.boolean(),
+            })
+            .optional(),
+          args: z.array(z.string()),
+          enabled: z.boolean(),
+        })
+        .refine((s) => s.transport !== 'http' || (!s.builtin && !!s.url && validMcpUrl(s.url)), {
+          message:
+            'HTTP MCP requires HTTPS (or loopback HTTP), without URL credentials, query or fragment; bundled adapters use stdio.',
+        }),
     )
     .default([]),
 });

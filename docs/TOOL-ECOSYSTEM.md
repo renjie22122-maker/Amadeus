@@ -1,5 +1,17 @@
 # Tool ecosystem
 
+## Generic MCP connections
+
+Settings → MCP servers supports local **stdio** (the default for existing configurations) and **Streamable HTTP**. Add a server, select its connection type, configure it, then explicitly enable it. Discovery and calls retain the existing approval, conversation scope and effect records. Tool descriptions and read-only annotations do not grant permission. HTTP discovery connects remotely rather than starting a host process.
+
+HTTP endpoints must use HTTPS, except loopback HTTP for local services. URLs with credentials, query strings or fragments are rejected; redirects are not followed. Optional `bearerTokenEnv` names an environment variable available to the Amadeus service process. For stdio, `envFromHost` maps child environment names to explicitly selected host environment names. Secret values are not stored in these settings. Set variables in the service's launch environment and restart the service after changing that environment. This does not sandbox a trusted local executable.
+
+`allowedTools` is an optional exact-name allowlist: omitted permits the server's catalog, an empty array permits none. It filters discovery and is enforced again at invocation. Inputs are checked against advertised JSON Schema before dispatch. Credential changes visible in the running process invalidate cached connections. Calls are not automatically replayed after failures; cancellation cannot guarantee that a remote effect did not occur.
+
+Example remote configuration: `{ "id": "github", "name": "GitHub", "transport": "http", "url": "https://api.githubcopilot.com/mcp/", "bearerTokenEnv": "GITHUB_MCP_TOKEN", "command": "", "args": [], "enabled": false }`. See the [official GitHub MCP setup](https://github.com/github/github-mcp-server) for token permissions. For [Playwright MCP](https://github.com/microsoft/playwright-mcp), configure its installed executable and arguments as a normal stdio server; `--isolated` avoids persistent browser profiles. Review and pin the server version yourself. Neither example is automatically installed or enabled.
+
+Other MCP servers use the same configuration path without provider-specific code when their transport and authentication are compatible. This implementation covers tool discovery and calls, not OAuth login, legacy standalone SSE transport, resources, prompts, sampling or elicitation. Local fixture tests verify HTTP/stdio communication, authentication forwarding, allowlists, schema rejection, cancellation before dispatch and redirect rejection; they do not certify every third-party server or the original deployment environment.
+
 [English](TOOL-ECOSYSTEM.md) | [简体中文](TOOL-ECOSYSTEM.zh-CN.md) · [Documentation](README.md)
 
 Reviewed: 2026-10-05; code baseline: `d663030`.

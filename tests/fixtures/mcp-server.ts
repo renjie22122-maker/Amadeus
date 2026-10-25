@@ -7,4 +7,15 @@ server.registerTool(
   { description: 'Echo fixture', inputSchema: { text: z.string() } },
   async ({ text }) => ({ content: [{ type: 'text', text }] }),
 );
+server.registerTool('environment_fixture', { inputSchema: {} }, async () => ({
+  content: [
+    {
+      type: 'text',
+      text: JSON.stringify({
+        mapped: process.env.MCP_MAPPED_TEST,
+        unrelated: process.env.AMADEUS_MCP_UNRELATED_TEST,
+      }),
+    },
+  ],
+}));
 await server.connect(new StdioServerTransport());

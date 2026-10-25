@@ -4,27 +4,54 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
+import { validMcpUrl } from '../../shared/mcp.js';
 import type { Settings } from '../../shared/types.js';
 import { assert } from '../core/errors.js';
 export class McpHub {
   constructor(private stateDirectory?: string) {}
   private clients = new Map<
     string,
-    { client: Client; transport: StdioClientTransport; fingerprint: string }
+    { client: Client; transport: Transport; fingerprint: string }
   >();
   private closing = false;
   private connecting = new Map<string, { fingerprint: string; promise: Promise<Client> }>();
+  private credentials(server: Settings['mcp'][number]) {
+    const read = (name: string) => {
+      assert(
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(name),
+        'MCP_ENV',
+        'Invalid MCP environment variable name.',
+      );
+      const value = process.env[name];
+      assert(value, 'MCP_ENV', `Missing host environment variable: ${name}`);
+      return value;
+    };
+    return server.transport === 'http'
+      ? { token: server.bearerTokenEnv ? read(server.bearerTokenEnv) : undefined, env: {} }
+      : {
+          token: undefined,
+          env: Object.fromEntries(
+            Object.entries(server.envFromHost || {}).map(([key, name]) => [key, read(name)]),
+          ),
+        };
+  }
   async connect(server: Settings['mcp'][number], scope = 'global'): Promise<Client> {
     assert(!this.closing, 'MCP_CLOSING', 'MCP service is shutting down.');
+    const credentials = this.credentials(server);
     const key = JSON.stringify([server.id, scope]),
-      fingerprint = JSON.stringify(server);
+      fingerprint = createHash('sha256')
+        .update(JSON.stringify([server, credentials]))
+        .digest('hex');
     const pending = this.connecting.get(key);
     if (pending) {
       if (pending.fingerprint === fingerprint) return pending.promise;
       await pending.promise.catch(() => {});
       return this.connect(server, scope);
     }
-    const work = this.open(server, key);
+    const work = this.open(server, key, fingerprint, credentials);
     this.connecting.set(key, { fingerprint, promise: work });
     try {
       return await work;
@@ -32,10 +59,14 @@ export class McpHub {
       this.connecting.delete(key);
     }
   }
-  private async open(server: Settings['mcp'][number], key: string) {
+  private async open(
+    server: Settings['mcp'][number],
+    key: string,
+    fingerprint: string,
+    credentials: ReturnType<McpHub['credentials']>,
+  ) {
     assert(server.enabled, 'MCP_DISABLED', 'MCP server is not enabled.');
-    const fingerprint = JSON.stringify(server),
-      old = this.clients.get(key);
+    const old = this.clients.get(key);
     if (old?.fingerprint === fingerprint) return old.client;
     if (old) {
       await old.client.close();
@@ -55,6 +86,7 @@ export class McpHub {
       'LOCALAPPDATA',
     ])
       if (process.env[key]) env[key] = process.env[key]!;
+    Object.assign(env, credentials.env);
     if (server.builtin === 'browser') {
       env.AGENTDEMO_BROWSER_HOSTS = JSON.stringify(server.browser?.allowedHosts || []);
       if (server.browser?.persistSession) {
@@ -74,25 +106,47 @@ export class McpHub {
         );
       }
     }
-    const transport = new StdioClientTransport({
-      command: server.builtin ? process.execPath : server.command,
-      args: server.builtin
-        ? [
-            ...(import.meta.url.endsWith('.ts') ? ['--import', 'tsx'] : []),
-            fileURLToPath(
-              new URL(
-                import.meta.url.endsWith('.ts') ? '../interactive-mcp.ts' : '../interactive-mcp.js',
-                import.meta.url,
-              ),
-            ),
-            server.builtin,
-          ]
-        : server.args,
-      env,
-      stderr: 'pipe',
-    });
+    if (server.transport === 'http')
+      assert(
+        !server.builtin && !!server.url && validMcpUrl(server.url),
+        'MCP_URL',
+        'Invalid MCP HTTP endpoint.',
+      );
+    const transport =
+      server.transport === 'http'
+        ? new StreamableHTTPClientTransport(new URL(server.url!), {
+            requestInit: {
+              redirect: 'error',
+              headers: credentials.token ? { Authorization: `Bearer ${credentials.token}` } : {},
+            },
+            reconnectionOptions: {
+              maxRetries: 0,
+              initialReconnectionDelay: 1000,
+              maxReconnectionDelay: 1000,
+              reconnectionDelayGrowFactor: 1,
+            },
+          })
+        : new StdioClientTransport({
+            command: server.builtin ? process.execPath : server.command,
+            args: server.builtin
+              ? [
+                  ...(import.meta.url.endsWith('.ts') ? ['--import', 'tsx'] : []),
+                  fileURLToPath(
+                    new URL(
+                      import.meta.url.endsWith('.ts')
+                        ? '../interactive-mcp.ts'
+                        : '../interactive-mcp.js',
+                      import.meta.url,
+                    ),
+                  ),
+                  server.builtin,
+                ]
+              : server.args,
+            env,
+            stderr: 'pipe',
+          });
     // Remote server stderr may contain credentials. Do not mirror it into chat or logs.
-    transport.stderr?.on('data', () => {});
+    if (transport instanceof StdioClientTransport) transport.stderr?.on('data', () => {});
     const client = new Client({ name: 'Amadeus', version: '0.1.0' });
     try {
       await client.connect(transport, { timeout: 20000 });
@@ -124,7 +178,9 @@ export class McpHub {
         seen.add(cursor);
       }
     } while (cursor);
-    return tools;
+    return server.allowedTools === undefined
+      ? tools
+      : tools.filter((t) => server.allowedTools!.includes(t.name));
   }
   async call(
     server: Settings['mcp'][number],
@@ -133,12 +189,27 @@ export class McpHub {
     signal: AbortSignal,
     scope = 'global',
   ) {
+    signal.throwIfAborted();
+    assert(
+      server.allowedTools === undefined || server.allowedTools.includes(name),
+      'MCP_TOOL_DENIED',
+      'MCP tool is outside the configured allowlist.',
+    );
     const client = await this.connect(server, scope);
     const catalog = await this.list(server, scope);
     assert(
       catalog.some((t) => t.name === name),
       'MCP_TOOL_UNKNOWN',
       'Unknown MCP tool.',
+    );
+    signal.throwIfAborted();
+    const tool = catalog.find((t) => t.name === name)!;
+    // A fresh validator keeps schema IDs from different servers from sharing a cache.
+    const validation = new AjvJsonSchemaValidator().getValidator(tool.inputSchema)(args);
+    assert(
+      validation.valid,
+      'MCP_ARGUMENTS',
+      'MCP arguments do not match the advertised input schema.',
     );
     return client.callTool({ name, arguments: args }, undefined, { timeout: 120000, signal });
   }

@@ -1,5 +1,6 @@
 import { RetrievalSettings } from '../components/RetrievalSettings';
 import { ToolEcosystemSettings } from '../components/ToolEcosystemSettings';
+import { McpConnectionSettings } from '../components/McpConnectionSettings';
 import { ApprovalSettings } from '../components/ApprovalSettings';
 import { MediaSettings } from '../components/MediaSettings';
 import { matchModel } from '../../shared/model-metadata';
@@ -688,14 +689,24 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
           </button>
         </div>
         <p className="muted">
-          {t(
-            'Enabling a server authorizes its configured host process to start. Trust the executable first. Individual tool calls still require approval.',
-          )}
+          {t('settings') === 'Settings'
+            ? 'Trust the configured executable or remote endpoint before enabling. Discovery and tool calls require approval.'
+            : '启用前请确认信任本地程序或远程服务。发现工具和调用工具仍需审批。'}
         </p>
         {value.mcp.map((server: any, index: number) => (
           <div className="panel" key={server.id}>
+            <McpConnectionSettings
+              server={server}
+              zh={t('settings') !== 'Settings'}
+              update={(patch) =>
+                setValue({
+                  ...value,
+                  mcp: value.mcp.map((s: any, i: number) => (i === index ? { ...s, ...patch } : s)),
+                })
+              }
+            />
             <div className="form-grid">
-              {['name', 'command'].map((key) => (
+              {(server.transport === 'http' ? ['name'] : ['name', 'command']).map((key) => (
                 <label key={key}>
                   {key}
                   <input
@@ -713,21 +724,23 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
                   />
                 </label>
               ))}
-              <label className="wide">
-                {t('Arguments · one per line')}
-                <textarea
-                  disabled={!!server.builtin}
-                  value={server.args.join('\n')}
-                  onChange={(e) =>
-                    setValue({
-                      ...value,
-                      mcp: value.mcp.map((s: any, i: number) =>
-                        i === index ? { ...s, args: e.target.value.split('\n') } : s,
-                      ),
-                    })
-                  }
-                />
-              </label>
+              {server.transport !== 'http' && (
+                <label className="wide">
+                  {t('Arguments · one per line')}
+                  <textarea
+                    disabled={!!server.builtin}
+                    value={server.args.join('\n')}
+                    onChange={(e) =>
+                      setValue({
+                        ...value,
+                        mcp: value.mcp.map((s: any, i: number) =>
+                          i === index ? { ...s, args: e.target.value.split('\n') } : s,
+                        ),
+                      })
+                    }
+                  />
+                </label>
+              )}
             </div>
             {server.builtin === 'browser' && (
               <div className="form-grid">
@@ -798,7 +811,11 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
                   onChange={(e) => {
                     if (
                       e.target.checked &&
-                      !confirm('Trust this executable to run with host user permissions?')
+                      !confirm(
+                        server.transport === 'http'
+                          ? 'Trust this endpoint to receive MCP requests and the configured credential?'
+                          : 'Trust this executable to run with host user permissions?',
+                      )
                     )
                       return;
                     setValue({

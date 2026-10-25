@@ -140,6 +140,11 @@ export interface Settings {
     name: string;
     command: string;
     args: string[];
+    transport?: 'stdio' | 'http';
+    url?: string;
+    bearerTokenEnv?: string;
+    envFromHost?: Record<string, string>;
+    allowedTools?: string[];
     enabled: boolean;
     capability?: 'general' | 'browser' | 'computer';
     builtin?: 'browser' | 'computer';

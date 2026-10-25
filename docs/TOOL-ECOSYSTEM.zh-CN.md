@@ -1,5 +1,17 @@
 # 工具生态
 
+## 通用 MCP 接入
+
+设置 → MCP 服务支持本地 **stdio**（旧配置默认方式）和 **Streamable HTTP**。添加服务、选择方式、填写配置后手动启用。发现与调用仍经过现有审批、对话隔离和执行记录；工具描述或只读标记不授予权限。HTTP 发现连接远程服务，不启动本地程序。
+
+HTTP 地址须为 HTTPS，本地回环地址可使用 HTTP；拒绝 URL 中的凭据、查询参数、片段和重定向。可选的 `bearerTokenEnv` 填 Amadeus 服务进程可读取的环境变量名。本地服务的 `envFromHost` 将子进程变量名映射到明确选择的宿主变量名，配置不保存密钥值。在服务启动环境中设置变量，变更启动环境后重启服务。这些措施不构成本地程序的沙箱。
+
+`allowedTools` 是精确工具名白名单：省略表示开放服务目录，空数组表示不开放任何工具。发现与调用都执行限制；调用前按照服务声明的 JSON Schema 校验参数。运行进程可见的凭据变化会使连接缓存失效。失败不自动重放；取消不能保证远端尚未产生副作用。
+
+GitHub 示例：`{ "id": "github", "name": "GitHub", "transport": "http", "url": "https://api.githubcopilot.com/mcp/", "bearerTokenEnv": "GITHUB_MCP_TOKEN", "command": "", "args": [], "enabled": false }`。令牌权限见 [GitHub 官方配置](https://github.com/github/github-mcp-server)。[Playwright MCP](https://github.com/microsoft/playwright-mcp) 按普通 stdio 服务填写已安装程序和参数，`--isolated` 可避免持久浏览器配置。请审核并固定服务版本；示例不会自动安装或启用。
+
+其他服务只要传输方式和认证兼容，就能走同一配置入口，不需要按厂商编写专用逻辑。当前范围是工具发现和调用，尚不支持 OAuth 登录、旧版独立 SSE 传输、资源、提示模板、sampling 和 elicitation。已用本地测试服务验证 HTTP/stdio 通信、认证传递、白名单、参数拒绝、发送前取消及重定向拒绝；不代表每个第三方服务和原版部署环境均已验证。
+
 [English](TOOL-ECOSYSTEM.md) | [简体中文](TOOL-ECOSYSTEM.zh-CN.md) · [文档目录](README.zh-CN.md)
 
 当前说明核对日期：2026-10-05；代码基线: `d663030`.
