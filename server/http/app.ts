@@ -32,6 +32,7 @@ import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
 import Fastify from 'fastify';
 import { randomBytes } from 'node:crypto';
+import { conditionalState, stateRun } from './state-response.js';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, mkdtemp, rm, open } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
@@ -140,7 +141,7 @@ export async function createApp(options: { directory: string; dist?: string; run
       })),
     conversations: store.conversations(),
     projects: store.list('project'),
-    runs: store.runMetadata().map(({ checkpoints, ...r }) => r),
+    runs: store.runMetadata().map((run) => stateRun(run, shell)),
     skills: store.list<Skill>('skill').map(({ content, source, ...s }) => ({
       ...s,
       sourceGroup:
@@ -156,8 +157,8 @@ export async function createApp(options: { directory: string; dist?: string; run
         }),
     settings: config.public(),
   });
-  app.get<{ Querystring: { view?: string } }>('/api/state', async (req) =>
-    state(req.query.view === 'shell'),
+  app.get<{ Querystring: { view?: string } }>('/api/state', async (req, reply) =>
+    conditionalState(req, reply, state(req.query.view === 'shell')),
   );
   conversationViewRoutes(app, runtime);
   inspectionRoutes(app, runtime);

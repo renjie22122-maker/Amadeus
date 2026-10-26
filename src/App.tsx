@@ -1,3 +1,4 @@
+import { mergeState } from './state-refresh';
 const ChatConnectionsPage = lazy(() =>
   import('./pages/ChatConnections').then((m) => ({ default: m.ChatConnectionsPage })),
 );
@@ -131,7 +132,9 @@ export function App() {
     if (!pending) {
       pending = api('/state?view=' + view)
         .then((value) => {
-          setState((old) => ({ memories: [], documents: [], ...old, ...value }));
+          setState((old) =>
+            old ? mergeState(old, value) : { memories: [], documents: [], ...value },
+          );
           return value;
         })
         .finally(() => {

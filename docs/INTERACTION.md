@@ -178,3 +178,7 @@ Failed scheduled runs clear active pointers, retain the last-run link and stay p
 Integration includes `feat/mcp-connections`, its newer context guidance/problem framing, HTTP MCP, OAuth and durable remote tasks. The older standalone framing branch does not overwrite the newer optional workflow. Remote task recovery queries the original task without replaying the tool call.
 
 The bound controller may send `/continue` privately, or `/amadeus /continue` using the configured group prefix, to continue the latest interrupted task on that route. Requests are durably queued and deduplicated, and revalidate the sender, latest run and unresolved effects before dispatch. Local draft attachments are excluded. This cannot cross conversations or re-enable paused schedules; unknown effects require inspection. Other members are unaffected by the failing member’s cooldown.
+
+### Workspace refresh performance
+
+The shell state omits per-run model-input diagnostic samples and provider fingerprints; detailed inspection and stored history remain intact. State requests revalidate using ETags with no-store and a page-memory-only cache, separated by shell/full view and reset on session changes. Unchanged refreshes return no body; unchanged UI sections retain their references. This applies equally to local chats, projects and connected chats without altering permissions, memory scope or model input.
