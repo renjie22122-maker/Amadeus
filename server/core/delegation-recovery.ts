@@ -11,12 +11,15 @@ export function delegationFingerprint(task: string, deliverable = '') {
 export function assertDelegationRecovery(
   store: Store,
   root: string,
+  agentId: string,
   fingerprint: string,
   now = Date.now(),
 ) {
   const recent = store
-    .list<{ id: string; root: string; fingerprint: string; at: number }>('delegation-attempt')
-    .filter((a) => a.root === root && a.fingerprint === fingerprint)
+    .list<{ id: string; root: string; agentId?: string; fingerprint: string; at: number }>(
+      'delegation-attempt',
+    )
+    .filter((a) => a.root === root && a.agentId === agentId && a.fingerprint === fingerprint)
     .sort((a, b) => b.at - a.at)
     .slice(0, 3);
   if (recent.length < 3) return;
@@ -27,7 +30,7 @@ export function assertDelegationRecovery(
   if (now < until)
     throw new AppError(
       'DELEGATION_REPEATED_FAILURE',
-      `Three identical delegations ended with the same failure. Inspect the existing member and change the approach, or retry after ${Math.ceil((until - now) / 1000)} seconds. Completed work and permissions are unchanged.`,
+      `Three identical continuations of this member ended with the same failure. Inspect the existing member and change the approach, or retry after ${Math.ceil((until - now) / 1000)} seconds. Completed work and permissions are unchanged.`,
       429,
     );
 }

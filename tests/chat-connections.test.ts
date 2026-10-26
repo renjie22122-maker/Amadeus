@@ -1366,3 +1366,95 @@ test('unknown OneBot errors remain uncertain; confirmed recovery sends the queue
   assert.equal(store.db.prepare('SELECT state FROM chat_outbox').get()!.state, 'sent');
   assert.equal(store.get<any>('chat-transport-state', c.id).status, 'connected');
 });
+
+test('controller can remotely continue only the latest interrupted task, with durable dedup and no draft attachments', (t) => {
+  const { channel, c, store, calls } = fixture(t);
+  store.put('run', {
+    id: 'old',
+    conversationId: 'chat',
+    status: 'interrupted',
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  const msg = {
+    id: 'continue1',
+    senderId: '123',
+    peerId: '123',
+    text: '/continue',
+    timestamp: Date.now(),
+  };
+  assert.equal(channel.receive(c.id, msg), 'queued');
+  assert.equal(channel.receive(c.id, msg), 'duplicate');
+  channel.receive(c.id, { ...msg, id: 'continue2' });
+  channel.tick(Date.now() + 20000);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'chat');
+  assert.equal(calls[0][3].recoveredFrom, 'old');
+  assert.deepEqual(calls[0][3].attachmentIds, []);
+});
+test('remote continuation revalidates queued state and never continues another newly completed task', (t) => {
+  const { channel, c, store, calls } = fixture(t);
+  store.put('run', {
+    id: 'old',
+    conversationId: 'chat',
+    status: 'interrupted',
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  channel.receive(c.id, {
+    id: 'continue',
+    senderId: '123',
+    peerId: '123',
+    text: '/continue',
+    timestamp: Date.now(),
+  });
+  store.put('run', {
+    id: 'new',
+    conversationId: 'chat',
+    status: 'completed',
+    createdAt: 2,
+    updatedAt: 2,
+  });
+  channel.tick(Date.now() + 20000);
+  assert.equal(calls.length, 0);
+  assert.equal(store.db.prepare('SELECT state FROM chat_inbox').get()!.state, 'cancelled');
+});
+test('remote continuation blocks unknown effects and retains ordinary group member restrictions', (t) => {
+  const { channel, c, store, calls } = fixture(t);
+  store.put('run', {
+    id: 'old',
+    conversationId: 'chat',
+    status: 'interrupted',
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  const effect = store.beginEffect('old', 'command', { command: 'unknown command result' });
+  assert(effect);
+  channel.receive(c.id, {
+    id: 'blocked',
+    senderId: '123',
+    peerId: '123',
+    text: '/continue',
+    timestamp: Date.now(),
+  });
+  channel.tick(Date.now() + 20000);
+  assert.equal(calls.length, 0);
+  const group = {
+    ...c,
+    peerType: 'group' as const,
+    accessMode: 'chat' as const,
+    peerId: 'group',
+    allGroupMembers: true,
+  };
+  store.put('chat-connection', group);
+  channel.receive(group.id, {
+    id: 'member',
+    senderId: '4567',
+    peerType: 'group',
+    peerId: 'group',
+    text: '/amadeus /continue',
+    timestamp: Date.now(),
+  });
+  channel.tick(Date.now() + 20000);
+  assert.equal(calls.length, 0);
+});

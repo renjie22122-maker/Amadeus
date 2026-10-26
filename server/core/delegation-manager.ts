@@ -53,7 +53,6 @@ export class DelegationManager {
     );
     const root = this.root(parent);
     const fingerprint = delegationFingerprint(task, deliverable);
-    assertDelegationRecovery(this.store, root, fingerprint);
     assert(
       this.store
         .runMetadata()
@@ -128,7 +127,13 @@ export class DelegationManager {
         0,
         { parentRunId: parent.id, depth: parent.depth + 1, fresh: true, controlTicket },
       );
-      this.store.put('delegation-attempt', { id: run.id, root, fingerprint, at: Date.now() });
+      this.store.put('delegation-attempt', {
+        id: run.id,
+        root,
+        agentId: child.id,
+        fingerprint,
+        at: Date.now(),
+      });
       new Teams(this.store).enrollSpawn(parent, run);
       this.store.event(c.id, parent.id, 'child.started', {
         runId: run.id,
@@ -271,7 +276,7 @@ export class DelegationManager {
     );
     const root = this.root(parent);
     const fingerprint = delegationFingerprint(message);
-    assertDelegationRecovery(this.store, root, fingerprint);
+    assertDelegationRecovery(this.store, root, child.id, fingerprint);
     assert(
       this.store
         .runMetadata()
@@ -355,7 +360,13 @@ export class DelegationManager {
           0,
           { parentRunId: parent.id, depth: parent.depth + 1, fresh: false, controlTicket },
         );
-        this.store.put('delegation-attempt', { id: next.id, root, fingerprint, at: Date.now() });
+        this.store.put('delegation-attempt', {
+          id: next.id,
+          root,
+          agentId: child.id,
+          fingerprint,
+          at: Date.now(),
+        });
         new Teams(this.store).enrollSpawn(parent, next);
         this.store.event(c.id, parent.id, 'child.started', {
           runId: next.id,

@@ -10,7 +10,13 @@ test('only repeated identical failures back off; success, changed tasks, other t
   t.after(() => store.close());
   const fingerprint = delegationFingerprint('inspect');
   for (let i = 0; i < 3; i++) {
-    store.put('delegation-attempt', { id: String(i), root: 'root', fingerprint, at: i });
+    store.put('delegation-attempt', {
+      id: String(i),
+      root: 'root',
+      agentId: 'member',
+      fingerprint,
+      at: i,
+    });
     store.put('run', {
       id: String(i),
       status: 'interrupted',
@@ -19,14 +25,23 @@ test('only repeated identical failures back off; success, changed tasks, other t
     });
   }
   assert.throws(
-    () => assertDelegationRecovery(store, 'root', fingerprint, 2000),
-    /identical delegations/,
+    () => assertDelegationRecovery(store, 'root', 'member', fingerprint, 2000),
+    /identical continuations/,
   );
-  assert.doesNotThrow(() => assertDelegationRecovery(store, 'other', fingerprint, 2000));
+  assert.doesNotThrow(() => assertDelegationRecovery(store, 'other', 'member', fingerprint, 2000));
   assert.doesNotThrow(() =>
-    assertDelegationRecovery(store, 'root', delegationFingerprint('inspect new evidence'), 2000),
+    assertDelegationRecovery(store, 'root', 'healthy-sibling', fingerprint, 2000),
   );
-  assert.doesNotThrow(() => assertDelegationRecovery(store, 'root', fingerprint, 62000));
+  assert.doesNotThrow(() =>
+    assertDelegationRecovery(
+      store,
+      'root',
+      'member',
+      delegationFingerprint('inspect new evidence'),
+      2000,
+    ),
+  );
+  assert.doesNotThrow(() => assertDelegationRecovery(store, 'root', 'member', fingerprint, 62000));
   store.put('run', { id: '2', status: 'completed', updatedAt: 1002 });
-  assert.doesNotThrow(() => assertDelegationRecovery(store, 'root', fingerprint, 2000));
+  assert.doesNotThrow(() => assertDelegationRecovery(store, 'root', 'member', fingerprint, 2000));
 });

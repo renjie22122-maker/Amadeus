@@ -635,7 +635,7 @@ export class ChatConnections {
     const command =
       !m.media?.length &&
       (helpRequested ||
-        ['/stop', '/status', '/grants', '/revoke-grants'].includes(m.text.trim()) ||
+        ['/stop', '/status', '/continue', '/grants', '/revoke-grants'].includes(m.text.trim()) ||
         !!approval);
     assert(command || pending.n < 20, 'CHAT_QUEUE', 'Message queue is full.', 429);
     this.store.db
@@ -679,6 +679,7 @@ export class ChatConnections {
       ];
       if (controller) {
         lines.push(prefix + '/status：运行状态；' + prefix + '/stop：停止本入口任务。');
+        lines.push(prefix + '/continue：继续本入口最近中断的任务，不重启已暂停的定时计划。');
         if (c.accessMode === 'work' && c.remoteApprovals)
           lines.push(
             prefix +
@@ -756,6 +757,31 @@ export class ChatConnections {
         return 'done';
       }
       const active = this.runtime.active(c.conversationId);
+      if (m.text.trim() === '/continue') {
+        const previous = this.store.latestRun(c.conversationId);
+        if (active || pending.n > 0) {
+          this.reply(c, keyId, '本入口还有正在处理或排队的消息，请等待完成；没有重复启动。');
+        } else if (!previous || previous.status !== 'interrupted' || previous.parentRunId) {
+          this.reply(c, keyId, '本入口最近没有可继续的中断任务。你可以直接发送新的消息。');
+        } else if (this.store.unknownEffects(c.conversationId).length) {
+          this.reply(
+            c,
+            keyId,
+            '这次中断有尚未确认结果的操作，需要先在 Amadeus 核对；不会自动重做。',
+          );
+        } else {
+          this.store.db
+            .prepare("UPDATE chat_inbox SET state='queued',text=?,notice=? WHERE id=?")
+            .run(
+              '用户明确要求继续刚才中断的任务。沿用已有检查点，先核对进度，勿重复已完成操作；这不增加权限，也不恢复暂停的定时计划。',
+              'resume:' + previous.id,
+              keyId,
+            );
+          this.reply(c, keyId + ':accepted', '已收到继续请求，将沿用原任务进度。');
+          return 'queued';
+        }
+        return 'done';
+      }
       if (m.text.trim() === '/stop') {
         this.store.db
           .prepare(
@@ -1186,7 +1212,7 @@ export class ChatConnections {
                       : result?.data.text
                         ? chatPlainText(result.data.text)
                         : run.status === 'interrupted'
-                          ? '这次处理已中断，未能完成回复。已完成的操作会保留；可在 Amadeus 查看原因并继续任务。'
+                          ? `这次处理已中断，未能完成回复。已完成的操作会保留；绑定控制人可发送 ${c.peerType === 'group' ? (c.groupPrefix || '/amadeus') + ' ' : ''}/continue 继续，存在未确认操作时需先在本机核对。`
                           : '这次处理未能完成，请在 Amadeus 查看错误详情。',
                   ];
               for (const [index, message] of texts.entries())
@@ -1258,6 +1284,29 @@ export class ChatConnections {
         }
         continue;
       }
+      const resumeFrom =
+        typeof next.notice === 'string' && next.notice.startsWith('resume:')
+          ? next.notice.slice(7)
+          : undefined;
+      if (resumeFrom) {
+        const previous = this.store.latestRun(c.conversationId);
+        if (
+          next.sender_id !== c.senderId ||
+          previous?.id !== resumeFrom ||
+          previous?.status !== 'interrupted' ||
+          this.store.unknownEffects(c.conversationId).length
+        ) {
+          this.store.db
+            .prepare("UPDATE chat_inbox SET state='cancelled',text='' WHERE id=?")
+            .run(next.id);
+          this.reply(
+            c,
+            next.id + ':stale',
+            '任务状态或权限已变化，未重复启动；请查看 /status 或核对本地任务。',
+          );
+          continue;
+        }
+      }
       const earlier = this.store.db
         .prepare(
           "SELECT 1 FROM chat_inbox WHERE connection_id=? AND state IN ('receiving','downloading') AND received_at<=? LIMIT 1",
@@ -1268,7 +1317,7 @@ export class ChatConnections {
       // another sender and older bursts are boundaries; keep original receipts intact.
       const burst = [next];
       let burstChars = next.text.length;
-      if (!next.media && next.attachment_ids === '[]') {
+      if (!resumeFrom && !next.media && next.attachment_ids === '[]') {
         const following = this.store.db
           .prepare(
             'SELECT * FROM chat_inbox WHERE connection_id=? AND (received_at>? OR (received_at=? AND id>?)) ORDER BY received_at,id LIMIT 7',
@@ -1277,6 +1326,7 @@ export class ChatConnections {
         for (const row of following) {
           if (
             row.state !== 'queued' ||
+            String(row.notice || '').startsWith('resume:') ||
             row.sender_id !== next.sender_id ||
             row.media ||
             row.attachment_ids !== '[]' ||
@@ -1319,6 +1369,7 @@ export class ChatConnections {
           0,
           {
             runId,
+            ...(resumeFrom ? { recoveredFrom: resumeFrom } : {}),
             attachmentIds: JSON.parse(next.attachment_ids),
           },
         );
