@@ -25,6 +25,7 @@ const memory = (id: string, extra: Partial<Memory> = {}): Memory => ({
   kind: 'preference',
   entityId: 'user',
   attribute: 'theme',
+  factCardinality: 'single',
   value: id,
   ...extra,
 });

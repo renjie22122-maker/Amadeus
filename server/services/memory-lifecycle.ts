@@ -187,8 +187,8 @@ export class MemoryLifecycle {
           x.scope === m.scope &&
           memoryPartition(x) === memoryPartition(m) &&
           memoryValid(x) &&
-          m.factCardinality !== 'multiple' &&
-          x.factCardinality !== 'multiple' &&
+          m.factCardinality === 'single' &&
+          x.factCardinality === 'single' &&
           !!m.entityId &&
           !!m.attribute &&
           x.entityId === m.entityId &&

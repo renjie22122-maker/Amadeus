@@ -293,6 +293,19 @@ export interface Skill {
   createdAt: number;
 }
 export interface Memory {
+  /** Read-only UI projection of the separate source-review audit. */
+  relationReview?: {
+    status: string;
+    outcome?: string;
+    at: number;
+    relations: Array<{
+      id: string;
+      relation: string;
+      reason: string;
+      quote: string;
+      otherQuote: string;
+    }>;
+  };
   basis?: 'self-report' | 'direct-request' | 'agreement' | 'observation' | 'proposal';
   revisionIntent?: 'replace' | 'coexist' | 'uncertain';
   /** Subject within an isolated external chat; not a wider storage scope. */

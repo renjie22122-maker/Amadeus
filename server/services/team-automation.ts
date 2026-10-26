@@ -245,10 +245,10 @@ export class TeamAutomation {
     return this.store.transaction(() => {
       const t = new Teams(this.store).get(run);
       if (!t) return;
-      const old = this.store.get<Run>('run', t.roles.coordinator);
+      const old = this.store.runHeader(t.roles.coordinator);
       if (!terminal(old.status) && !t.closed[old.id]) return;
       const choices = t.members
-        .map((k) => this.store.get<Run>('run', k))
+        .map((k) => this.store.runHeader(k))
         .filter(
           (r) =>
             ['queued', 'running', 'waiting_children'].includes(r.status) &&
@@ -281,7 +281,7 @@ export class TeamAutomation {
     for (const policy of this.store
       .list<TeamAutomationPolicy>('team-automation')
       .filter((p) => p.enabled)) {
-      const origin = this.store.get<Run>('run', policy.id),
+      const origin = this.store.runHeader(policy.id),
         teams = new Teams(this.store);
       let t = teams.get(origin);
       if (!t) continue;
@@ -307,7 +307,8 @@ export class TeamAutomation {
       if (policy.costLimitUsd !== null && (costUnknown || cost >= policy.costLimitUsd)) continue;
       if (policy.autoRecover) {
         for (const key of t.members) {
-          const r = this.store.get<Run>('run', key);
+          const r = this.store.runHeader(key);
+          if (!terminal(r.status) || r.status === 'completed') continue;
           if (
             t.closed[key] ||
             this.store.maybe('team-member-held', key) ||
@@ -320,11 +321,11 @@ export class TeamAutomation {
               (o) =>
                 o.root === t!.id &&
                 o.kind === 'recovery' &&
-                this.store.get<Run>('run', o.previous).conversationId === r.conversationId,
+                this.store.runHeader(o.previous).conversationId === r.conversationId,
             );
           const plan = this.plan(r);
           if (history.length < policy.maxRecoveries && plan.eligible && plan.automatic)
-            this.recover(r, true);
+            this.recover(this.store.get<Run>('run', r.id), true);
         }
       }
       t = teams.get(origin)!;
@@ -333,7 +334,7 @@ export class TeamAutomation {
       const scheduling = this.store.maybe<any>('team-scheduling', t.id);
       if (!scheduling?.enabled) continue;
       const active = scheduling.workers
-        .map((k: string) => this.store.get<Run>('run', k))
+        .map((k: string) => this.store.runHeader(k))
         .filter((r: Run) => !terminal(r.status) && !t!.closed[r.id] && !r.recoveryOnly);
       const pending = board.tasks.filter(
         (x) =>
@@ -379,7 +380,7 @@ export class TeamAutomation {
         this.store.put('team-control-operation', op);
         try {
           const key = await this.host.spawn(
-            origin,
+            this.store.get<Run>('run', origin.id),
             op.id +
               ': Host-managed read-only worker. await_team_task, inspect_plan, read assigned inputs, update_task with real evidence; record_verification for declared artifacts. Use await_team_task again for new work. End participation when no work remains. No recursive delegation.',
             op.id,

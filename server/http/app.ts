@@ -1,3 +1,4 @@
+import { memoryReviewViews } from '../services/memory-conflict-review.js';
 import { ChatConnections } from '../services/chat-connections.js';
 import { mcpRoutes } from './mcp.js';
 import { ChatTransports } from '../services/chat-transports.js';
@@ -151,7 +152,7 @@ export async function createApp(options: { directory: string; dist?: string; run
     ...(shell
       ? {}
       : {
-          memories: store.list('memory'),
+          memories: memoryReviewViews(store),
           memoryLearning: store.list('memory-learning').slice(-30),
           documents: store.list('document'),
         }),

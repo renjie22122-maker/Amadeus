@@ -82,6 +82,7 @@ test('sharing an active local memory cannot bypass a conflicting shared fact', a
         recallScope: 'scope',
         entityId: 'user',
         attribute: 'language',
+        factCardinality: 'single',
         value: 'en',
       }),
     );
@@ -93,6 +94,7 @@ test('sharing an active local memory cannot bypass a conflicting shared fact', a
         recallScope: 'conversation',
         entityId: 'user',
         attribute: 'language',
+        factCardinality: 'single',
         value: 'zh',
       }),
     );

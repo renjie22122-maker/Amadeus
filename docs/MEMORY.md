@@ -189,7 +189,6 @@ Design references: [Codex memories](https://learn.chatgpt.com/docs/customization
 
 The extraction, source validation, retry and retrieval lifecycle is shared by local conversations, projects and external chats. Durability does not widen visibility. Product references also distinguish durable memories from past-chat retrieval: [ChatGPT memory](https://help.openai.com/en/articles/8590148-memory-in-chatgpt) and [Claude chat memory](https://support.claude.com/en/articles/11817273-use-claude-s-chat-search-and-memory-to-build-on-previous-context). Their public behavior is not a specification of their private extraction algorithms. The extractor receives the same JSON schema that the host validates.
 
-
 ## Historical search and layered summaries
 
 Durable memories and historical conversation search are separate. When memory use and generation are enabled, eligible local ordinary chats share an ordinary-chat history domain; project chats search only their own project. Each external private/group conversation has its own domain in both directions. Enabling user preferences for a project does not grant access to ordinary-chat transcripts. Archived chats, child-agent chats, removed projects and disabled source chats are excluded. Settings are checked again at read time, including reads by explicit ID.
@@ -200,7 +199,6 @@ The automatic topic directory uses the most recent 256 eligible digest batches; 
 
 Source deletion, text/author changes, forgotten source markers and scope changes invalidate affected summaries before use. The original chat remains the source of truth. Reading an old topic does not reactivate a disputed/forgotten durable memory. Search reads only message events, not large run checkpoints or tool-output blobs; source bodies are validated after ranking topic candidates. Page sizes and read lengths bound resource use, not the total searchable history. Automatic backfill is incremental, so coverage grows over background cycles.
 
-
 ### On-demand historical semantic indexing
 
 History search reuses the configured `Embeddings` client, model fingerprint, query cache, vector validation and cosine scoring. It does not start a separate embedding model or LightRAG graph job. Passage vectors are persisted separately from knowledge-document and durable-memory vectors, with conversation/domain identity enforced before loading and again after asynchronous calls.
@@ -210,3 +208,11 @@ Each request indexes up to eight missing passages from its current 200-message p
 Lexical and semantic ranks are fused, with overlapping passages contributing only one vote per message. Source edits, sender changes, forgotten markers, opt-out, archival and scope changes are revalidated before persistence and return. Model fingerprints do not mix; a dimension change invalidates incompatible derived rows so the next search can rebuild them. Unavailable embeddings fall back to fresh scoped lexical results. The 12-second request budget bounds additional waiting; cancellation rejects promptly and late results are not saved. Indexing is demand-driven, not a background full-history re-embedding loop.
 
 This version uses exact cosine scoring of the compatible indexed history subset, not a claim of HNSW acceleration or a fully indexed corpus. Existing document indexes and LightRAG build progress are unchanged. On a three-message synthetic Chinese corpus using the configured local service, an English paraphrase retrieved the intended Chinese source first; a repeated query computed zero new passage vectors. This is a functional sample, not a full-corpus recall benchmark.
+
+## Source-grounded relationship review
+
+Different wording is not an exclusive value. Structural conflicts require both records to explicitly declare single cardinality; extraction distinguishes complementary, coexisting, duplicate, replacement and contradictory claims. Existing disputed entries remain excluded until review. Automatic management compares original human sources from authorized conversations in the same memory partition; it checks exact quotations, unchanged records and permissions before retaining compatible entries. It never deletes the counterpart, resolves explicit exclusive facts through a compatibility shortcut, revives user-disabled entries, or crosses bot/project boundaries. Repair-generated holds with recorded counterparts can be reviewed; missing sources and other holds remain quarantined. Decisions and excerpts appear under each entry's automatic source comparison. Failures back off for at most five attempts per unchanged source/configuration.
+
+Local memory indexing also supports a configured loopback embedding HTTP service, independently of document/LightRAG indexing. Maintenance indexes at most eight missing valid memories per pass and reuses unchanged vectors. Per-scope throttling and five-failure backoff prevent repeated requests; external services still require explicit indexing authorization. Lexical recall remains available.
+
+Design references: [Mem0 memory operations](https://mem0.ai/library/agent-memory/programmatic-memory-management-for-ai-agents-with-mem0) and [LangMem memory concepts](https://github.com/langchain-ai/langmem/blob/main/docs/docs/concepts/conceptual_guide.md). These inform the relationship/update workflow; they do not guarantee semantic classification accuracy.

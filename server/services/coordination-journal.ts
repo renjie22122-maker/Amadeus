@@ -66,13 +66,18 @@ export function reconcileCoordination(store: Store, onlyRun?: Run) {
           .all() as { run_id: string }[]
       ).map((r) => store.runHeader(r.run_id));
   for (const run of candidates.filter((r) => terminal(r.status))) {
-    const events = store.eventsForRun(run.id, ['tool.started', 'tool.completed']);
-    const completed = new Set(
-      events.filter((e) => e.type === 'tool.completed').map((e) => e.data.callId),
-    );
-    for (const event of events.filter(
-      (e) => e.type === 'tool.started' && !completed.has(e.data.callId),
-    )) {
+    // Resolve outstanding calls directly. Completed outputs can be very large and
+    // must not be decoded on every background tick.
+    const pending = store.db
+      .prepare(
+        `SELECT s.data FROM events s WHERE s.run_id=? AND s.type='tool.started'
+       AND NOT EXISTS(SELECT 1 FROM events c WHERE c.run_id=s.run_id
+         AND c.type='tool.completed' AND json_extract(c.data,'$.callId')=json_extract(s.data,'$.callId'))
+       ORDER BY s.id`,
+      )
+      .all(run.id) as { data: string }[];
+    for (const row of pending) {
+      const event = { data: JSON.parse(row.data) };
       const callId = event.data.callId,
         tool = event.data.name,
         args = event.data.arguments || {};

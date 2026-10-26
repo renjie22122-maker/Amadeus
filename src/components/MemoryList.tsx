@@ -62,7 +62,7 @@ export function MemoryList({
     active: label('Enabled · recalled when relevant', '已启用 · 可按需召回'),
     candidate: label('Awaiting confirmation', '待确认'),
     inactive: label('Deactivated', '已停用'),
-    disputed: label('Conflicts', '冲突'),
+    disputed: label('Possible conflicts', '疑似冲突'),
     history: label('History / expired', '历史／过期'),
     all: label('All', '全部'),
   };
@@ -135,7 +135,7 @@ export function MemoryList({
             <p>
               {label(
                 'Conflicting entries are excluded from recall. Compare the statements and sources before choosing which applies; bulk confirmation does not resolve contradictions.',
-                '冲突条目已退出召回。请比较说法与来源后选择适用内容；批量确认不会自动裁决矛盾。',
+                '疑似冲突暂不召回；自动管理会在来源获授权时比较原文，兼容条目保留双方。证据不足的继续待复核。',
               )}
             </p>
             <button
@@ -422,8 +422,8 @@ export function MemoryList({
           {m.conflictReviewRequired && (
             <p className="muted">
               {label(
-                'Conflict record needs human review. Recall remains disabled; this is not proof of a contradiction.',
-                '冲突记录待人工复核，保持不参与召回；不代表已确认存在矛盾。',
+                'Recall remains disabled until source review; this is not proof of a contradiction.',
+                '记录待原文复核，暂不参与召回；不代表已确认存在矛盾。',
               )}
             </p>
           )}
@@ -431,7 +431,7 @@ export function MemoryList({
             <div className="muted">
               <strong>
                 {m.conflictsWith?.length
-                  ? label('Conflicting with:', '与以下记忆冲突：')
+                  ? label('Possible conflict — compare with:', '疑似冲突，待比较的另一条：')
                   : label(
                       'Conflict counterpart not recorded; review required.',
                       '未记录冲突对象，需要复核。',
@@ -448,11 +448,36 @@ export function MemoryList({
               })}
               <p>
                 {label(
-                  'Expand details to compare sources and resolve.',
-                  '展开详情可核对来源并处理冲突。',
+                  'Different wording alone is not a contradiction. Automatic review compares original sources when permitted; both records are preserved.',
+                  '文字不同不等于矛盾；开启自动管理且来源获授权时会复审原文，保留双方记录。',
                 )}
               </p>
             </div>
+          )}
+          {m.relationReview && (
+            <details>
+              <summary>
+                {label('Automatic source comparison', '自动原文复审')} ·{' '}
+                {m.relationReview.outcome?.startsWith('coexisting')
+                  ? label('Both retained', '兼容，双方保留')
+                  : label('Under review', '待复核')}
+              </summary>
+              {m.relationReview.outcome === 'coexisting_held' && (
+                <p>
+                  {label(
+                    'Prior deactivation is retained; compatibility does not grant recall.',
+                    '已排除这组冲突，但保留原有停用状态，不自动恢复召回。',
+                  )}
+                </p>
+              )}
+              {m.relationReview.relations.map((r) => (
+                <div key={r.id}>
+                  <p>{r.reason}</p>
+                  <blockquote>{r.quote}</blockquote>
+                  <blockquote>{r.otherQuote}</blockquote>
+                </div>
+              ))}
+            </details>
           )}
           <details>
             <summary>{label('Source, editing and history', '来源、编辑与历史')}</summary>

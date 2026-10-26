@@ -298,3 +298,22 @@ test('idle retirement uses cumulative idle time across wait cycles', async () =>
     f.store.close();
   }
 });
+
+// Historical checkpoint corruption must not block status-only maintenance.
+test('maintenance skips checkpoint payloads and recovery planning for completed members', async () => {
+  const { store, lead, peer, service } = setup();
+  try {
+    for (const run of [lead, peer]) store.put('run', { ...run, status: 'completed' });
+    service.configure(
+      lead,
+      automationInput.parse({ enabled: true, autoRecover: true, autoElect: true }),
+    );
+    store.db.prepare("UPDATE run_checkpoints SET data='invalid payload'").run();
+    service.plan = () => {
+      throw Error('Completed runs must not be recovery-planned');
+    };
+    await service.tick();
+  } finally {
+    store.close();
+  }
+});

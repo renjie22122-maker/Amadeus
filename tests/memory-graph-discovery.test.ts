@@ -125,6 +125,7 @@ test('same topic is additive; exclusive attributes still conflict within matchin
     add('single-a', {
       entityId: 'user',
       attribute: 'runtime',
+      factCardinality: 'single',
       value: 'A',
       conditions: 'project X',
     });
@@ -132,6 +133,7 @@ test('same topic is additive; exclusive attributes still conflict within matchin
       add('single-b', {
         entityId: 'user',
         attribute: 'runtime',
+        factCardinality: 'single',
         value: 'B',
         conditions: 'project X',
       }).status,
@@ -141,6 +143,7 @@ test('same topic is additive; exclusive attributes still conflict within matchin
       add('other-condition', {
         entityId: 'user',
         attribute: 'runtime',
+        factCardinality: 'single',
         value: 'B',
         conditions: 'project Y',
       }).active,
@@ -236,7 +239,9 @@ test('graph verifies duplicate quotes once per search, rechecks changes, and use
   try {
     store.put('document', { id: 'doc', scope: 'general', createdAt: 1 });
     store.db
-      .prepare('INSERT INTO chunks(id,scope,document_id,name,ordinal,text,source_hash) VALUES(?,?,?,?,?,?,?)')
+      .prepare(
+        'INSERT INTO chunks(id,scope,document_id,name,ordinal,text,source_hash) VALUES(?,?,?,?,?,?,?)',
+      )
       .run('chunk', 'general', 'doc', 'source', 0, 'original evidence', 'fixture');
     for (const id of ['a', 'b', 'c'])
       store.put('memory-entity', { id, scope: 'general', name: id, aliases: [], automatic: true });

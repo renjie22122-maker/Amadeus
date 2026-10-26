@@ -24,6 +24,7 @@ function memory(id: string, extra: Partial<Memory> = {}): Memory {
     expiresAt: null,
     entityId: 'project:a',
     attribute: 'python_version',
+    factCardinality: 'single',
     value: '3.11',
     ...extra,
   };

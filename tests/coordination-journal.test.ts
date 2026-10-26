@@ -80,3 +80,27 @@ test('rolled back nested transaction publishes no events', () => {
     store.close();
   }
 });
+
+test('background reconciliation only decodes outstanding tool starts', () => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'coord-index-')), 'state.sqlite'));
+  try {
+    store.put('run', { id: 'r', conversationId: 'c', status: 'interrupted', createdAt: 1 } as any);
+    store.event('c', 'r', 'tool.started', { callId: 'done', name: 'read_file' });
+    store.event('c', 'r', 'tool.completed', { callId: 'done', output: 'x'.repeat(1000000) });
+    store.event('c', 'r', 'tool.started', { callId: 'unknown', name: 'run_command' });
+    store.eventsForRun = () => {
+      throw Error('Must not load completed outputs');
+    };
+    reconcileCoordination(store);
+    assert.equal(
+      store.db.prepare("SELECT count(*) AS n FROM events WHERE type='tool.completed'").get()!.n,
+      1,
+    );
+    const plan = store.db
+      .prepare("EXPLAIN QUERY PLAN SELECT run_id FROM events WHERE type='tool.started'")
+      .all();
+    assert.match(JSON.stringify(plan), /events_tool_started/);
+  } finally {
+    store.close();
+  }
+});

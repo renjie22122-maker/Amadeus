@@ -1,3 +1,4 @@
+import { runDescendants } from './run-descendants';
 import { mergeState } from './state-refresh';
 const ChatConnectionsPage = lazy(() =>
   import('./pages/ChatConnections').then((m) => ({ default: m.ChatConnectionsPage })),
@@ -35,7 +36,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentEvent, Conversation, Project } from '../shared/types';
 import { api, bootstrap } from './api';
 import { Composer } from './components/Composer';
@@ -391,17 +392,10 @@ export function App() {
   const currentRuns = state?.runs.filter((r: any) => r.conversationId === selected) || [],
     run = currentRuns.at(-1),
     running = run && !ended(run.status);
-  const descendants =
-    state && run
-      ? state.runs.filter((candidate) => {
-          let r: typeof candidate | undefined = candidate;
-          while (r) {
-            if (r.id === run.id) return true;
-            r = r.parentRunId ? state.runs.find((p) => p.id === r!.parentRunId) : undefined;
-          }
-          return false;
-        })
-      : [];
+  const descendants = useMemo(
+    () => (run && state ? runDescendants(state.runs, run.id) : []),
+    [state?.runs, run?.id],
+  );
   const totalUsage = run
     ? {
         ...run,

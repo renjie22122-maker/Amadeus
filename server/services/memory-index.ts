@@ -29,8 +29,13 @@ export class MemoryIndex {
       throw error;
     }
   }
-  // Explicit user action only: inactive candidates never leave the machine for embedding.
-  async index(scope?: string, allowed: () => boolean = () => true, signal?: AbortSignal) {
+  // External indexing requires explicit authorization; local maintenance is separately gated.
+  async index(
+    scope?: string,
+    allowed: () => boolean = () => true,
+    signal?: AbortSignal,
+    limit = Infinity,
+  ) {
     const fingerprint = this.embeddings.fingerprint();
     let indexed = 0;
     for (const m of this.store
@@ -48,7 +53,7 @@ export class MemoryIndex {
         validVector(existing.values)
       )
         continue;
-      if (!allowed() || this.embeddings.fingerprint() !== fingerprint) break;
+      if (indexed >= limit || !allowed() || this.embeddings.fingerprint() !== fingerprint) break;
       const [values] = await this.embeddings.encode([m.content], signal);
       const current = this.store.maybe<Memory>('memory', m.id);
       if (

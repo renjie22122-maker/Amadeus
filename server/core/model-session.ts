@@ -1,3 +1,4 @@
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { providerFailureDiagnostic } from '../providers/failure.js';
 import { modelPricing } from '../../shared/model-pricing.js';
 import type { Run, Profile, Usage } from '../../shared/types.js';
@@ -19,6 +20,9 @@ export async function completeModel(
   input: ModelRequest,
 ) {
   const requestedAt = Date.now();
+  // Numeric diagnostics only: never store streamed reasoning or request secrets.
+  const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+  loopDelay.enable();
   try {
     const result = await resolveProvider(input.profile).complete(input);
     // Validate delivery before treating an otherwise successful transport as a result.
@@ -56,6 +60,16 @@ export async function completeModel(
       failure: providerFailureDiagnostic(error),
       elapsedMs: Date.now() - requestedAt,
       timeoutMs: input.profile.timeoutMs,
+      eventLoopDelayMs: {
+        max: Math.round(loopDelay.max / 1e6),
+        p99: Math.round(loopDelay.percentile(99) / 1e6),
+      },
+      requestShape: {
+        messages: input.messages.length,
+        textCharacters: input.messages.reduce((n, m) => n + m.content.length, 0),
+        tools: input.tools.length,
+        reasoning: input.profile.reasoning,
+      },
       usageReported: !!(error as { usage?: Usage })?.usage?.measured,
     });
     const usage = (error as { usage?: Usage })?.usage || {
@@ -84,6 +98,8 @@ export async function completeModel(
       });
     }
     throw error;
+  } finally {
+    loopDelay.disable();
   }
 }
 export function accountModelUsage(

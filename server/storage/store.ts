@@ -38,6 +38,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS events_conversation ON events(conversation_id,id);
       CREATE INDEX IF NOT EXISTS events_run ON events(run_id,id);
       CREATE INDEX IF NOT EXISTS events_tool_result ON events(run_id,json_extract(data,'$.callId')) WHERE type='tool.completed';
+      CREATE INDEX IF NOT EXISTS events_tool_started ON events(run_id,json_extract(data,'$.callId'),id) WHERE type='tool.started';
       CREATE TABLE IF NOT EXISTS chunks(id TEXT PRIMARY KEY,scope TEXT NOT NULL,document_id TEXT NOT NULL,name TEXT NOT NULL,ordinal INTEGER NOT NULL,text TEXT NOT NULL,vector TEXT,source_hash TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS chunks_scope ON chunks(scope);
       CREATE INDEX IF NOT EXISTS chunks_document_ordinal ON chunks(document_id,ordinal);
