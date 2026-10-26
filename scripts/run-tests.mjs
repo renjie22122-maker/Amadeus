@@ -24,7 +24,8 @@ const suites = [
       ...files('tests', '.test.ts').filter((file) => file !== runtime && file !== credentials),
     ],
   ],
-  ['bot launcher tests', ['--test', ...files('scripts/bot', '.test.mjs')]],
+  // PowerShell cold starts must not compete across test files on hosted Windows runners.
+  ['bot launcher tests', ['--test', '--test-concurrency=1', ...files('scripts/bot', '.test.mjs')]],
 ];
 for (const [name, args] of suites) {
   console.log('Running ' + name);

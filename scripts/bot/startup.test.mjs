@@ -1,9 +1,8 @@
 import { test } from 'node:test';
-import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { runPowerShellTest } from './test-process.mjs';
 test(
   'Windows launcher parses and reuses existing processes without duplicates',
   { skip: process.platform !== 'win32' },
@@ -38,12 +37,10 @@ test(
   if($global:started -ne 1){throw 'Duplicate process started'}
   `;
       writeFileSync(join(dir, 'test.ps1'), ps);
-      const r = spawnSync(
-        'powershell.exe',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(dir, 'test.ps1')],
-        { encoding: 'utf8', timeout: 15000 },
+      runPowerShellTest(
+        ['-ExecutionPolicy', 'Bypass', '-File', join(dir, 'test.ps1')],
+        'launcher process reuse',
       );
-      assert.equal(r.status, 0, r.stdout + r.stderr);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -71,27 +68,45 @@ test(
  Restart-Bridge ([pscustomobject]@{executable='bridge.exe';processArgument='bot-id'})
  if(($global:stopped -join ',') -ne '11,10'){throw 'Wrong process tree stopped'}
  `;
-    const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
-      encoding: 'utf8',
-      timeout: 15000,
-    });
-    assert.equal(r.status, 0, r.stdout + r.stderr);
+    runPowerShellTest(['-Command', script], 'bridge scoped restart');
   },
 );
 
-test('all-mode starts optional services even when main HTTP is already ready',
-  { skip: process.platform !== 'win32' }, () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bot optional '));
-  try {
-    const source = readFileSync(new URL('./Run-Bot.ps1', import.meta.url), 'utf8').split('# Keep the Windows')[0];
-    writeFileSync(join(dir, 'run.ps1'), source);
-    writeFileSync(join(dir, 'Start-Amadeus.ps1'), "param([switch]$NoBrowser)\nSet-Content -LiteralPath (Join-Path $PSScriptRoot 'called.txt') -Value 'optional checked'\n");
-    writeFileSync(join(dir, 'config.json'), JSON.stringify({version:1,taskPrefix:'OptionalTest'+process.pid,logDirectory:dir,agentRoot:dir,powershell:'powershell.exe',agent:{healthUrl:'http://fixture.invalid/health'}}));
-    const quote = s => s.replaceAll("'", "''");
-    const script = `function Invoke-RestMethod {[pscustomobject]@{ready=$true;application='Amadeus'}}
-& '${quote(join(dir,'run.ps1'))}' -Config '${quote(join(dir,'config.json'))}' -Mode all
-if(-not(Test-Path -LiteralPath '${quote(join(dir,'called.txt'))}')){throw 'Optional service startup was skipped'}`;
-    const r = spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command',script],{encoding:'utf8',timeout:15000});
-    assert.equal(r.status,0,r.stdout+r.stderr);
-  } finally {rmSync(dir,{recursive:true,force:true});}
-});
+test(
+  'all-mode starts optional services even when main HTTP is already ready',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bot optional '));
+    try {
+      const source = readFileSync(new URL('./Run-Bot.ps1', import.meta.url), 'utf8').split(
+        '# Keep the Windows',
+      )[0];
+      writeFileSync(join(dir, 'run.ps1'), source);
+      writeFileSync(
+        join(dir, 'Start-Amadeus.ps1'),
+        "param([switch]$NoBrowser)\nSet-Content -LiteralPath (Join-Path $PSScriptRoot 'called.txt') -Value 'optional checked'\n",
+      );
+      writeFileSync(
+        join(dir, 'config.json'),
+        JSON.stringify({
+          version: 1,
+          taskPrefix: 'OptionalTest' + process.pid,
+          logDirectory: dir,
+          agentRoot: dir,
+          powershell: 'powershell.exe',
+          agent: { healthUrl: 'http://fixture.invalid/health' },
+        }),
+      );
+      const quote = (s) => s.replaceAll("'", "''");
+      const script = `function Invoke-RestMethod {[pscustomobject]@{ready=$true;application='Amadeus'}}
+& '${quote(join(dir, 'run.ps1'))}' -Config '${quote(join(dir, 'config.json'))}' -Mode all
+if(-not(Test-Path -LiteralPath '${quote(join(dir, 'called.txt'))}')){throw 'Optional service startup was skipped'}`;
+      runPowerShellTest(
+        ['-ExecutionPolicy', 'Bypass', '-Command', script],
+        'optional service startup',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

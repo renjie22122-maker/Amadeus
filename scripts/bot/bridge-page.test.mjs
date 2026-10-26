@@ -1,10 +1,9 @@
 import { test } from 'node:test';
-import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { runPowerShellTest } from './test-process.mjs';
 test(
   'bridge login prefill reads local token and rejects non-loopback targets',
   { skip: process.platform !== 'win32' },
@@ -26,12 +25,7 @@ if((Get-BotBridgePage ([pscustomobject]@{bridgePage='http://localhost:1234'})) -
 `;
       const path = join(dir, 'test.ps1');
       writeFileSync(path, script);
-      const result = spawnSync(
-        'powershell.exe',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path],
-        { encoding: 'utf8', timeout: 15000 },
-      );
-      assert.equal(result.status, 0, result.stdout + result.stderr);
+      runPowerShellTest(['-ExecutionPolicy', 'Bypass', '-File', path], 'bridge login prefill');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
