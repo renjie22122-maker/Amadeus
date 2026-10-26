@@ -148,7 +148,13 @@ export class ChatProvider implements ModelProvider {
         responseId,
       };
     } catch (error) {
-      if (error instanceof Error) Object.assign(error, { usage });
+      if (error instanceof Error)
+        Object.assign(error, {
+          usage,
+          answerCharacters: content.length,
+          reasoningCharacters: reasoning.length,
+          pendingToolCalls: calls.size,
+        });
       throw error;
     }
   }

@@ -36,6 +36,12 @@ export class ContextManager {
     signal: AbortSignal,
     tools: import('../../shared/types.js').ToolSpec[],
   ) {
+    // Superseded host projections are not conversation history. Prune before
+    // the threshold check, including ordinary turns that need no summarization.
+    const currentSnapshots = new Set(latestContextSnapshots(run.checkpoints));
+    run.checkpoints = run.checkpoints.filter(
+      (m) => !isContextSnapshot(m) || currentSnapshots.has(m),
+    );
     const before = contextBudget(run.checkpoints, tools, profile, this.ratio(), run.contextSample);
     assert(
       before.threshold > 0,

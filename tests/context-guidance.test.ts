@@ -295,3 +295,40 @@ test('summary failure archives old user sources while preserving current request
   assert.ok(run.checkpoints.some((m: any) => m.content.includes('Summary unavailable')));
   assert.ok(run.checkpoints.some((m: any) => m.content === 'latest requirement'));
 });
+
+test('ordinary requests prune obsolete host snapshots below compaction threshold without dropping sources', async (t) => {
+  const { store, run } = fixture(t);
+  run.checkpoints = [
+    { role: 'system', content: 'instructions' },
+    { role: 'user', content: 'original' },
+    { role: 'user', contextKind: 'runtime-snapshot', content: 'old'.repeat(1000) },
+    {
+      role: 'assistant',
+      content: '',
+      calls: [{ id: 'a', name: 'read_file', arguments: { path: 'a' } }],
+    },
+    { role: 'tool', callId: 'a', content: 'result' },
+    { role: 'user', contextKind: 'runtime-snapshot', content: 'current' },
+    { role: 'user', content: 'latest' },
+  ];
+  const before = [...run.checkpoints];
+  const manager = new ContextManager(
+    store,
+    () => 0.85,
+    new ModelPool(() => 1),
+    async () => {
+      throw Error('no summary needed');
+    },
+  );
+  await manager.compact(
+    run,
+    { contextWindow: 100000, maxOutputTokens: 1000 } as any,
+    new AbortController().signal,
+    [],
+  );
+  assert.deepEqual(
+    run.checkpoints,
+    before.filter((m) => m.content !== 'old'.repeat(1000)),
+  );
+  assertSourceRetention(before, run.checkpoints);
+});

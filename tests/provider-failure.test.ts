@@ -181,3 +181,57 @@ test('tool-free reviewer opt-in can recover a pre-response reset; ordinary calle
   );
   assert.equal(calls, 2);
 });
+
+test('SSE keepalive bytes cannot indefinitely renew the data-event idle deadline', async () => {
+  let timer: ReturnType<typeof setInterval>;
+  let cancelled = false;
+  const stream = new ReadableStream({
+    start(c) {
+      timer = setInterval(() => c.enqueue(new TextEncoder().encode(': keepalive\n\n')), 5);
+    },
+    cancel() {
+      cancelled = true;
+      clearInterval(timer);
+    },
+  });
+  try {
+    await assert.rejects(
+      async () => {
+        for await (const e of sse(new Response(stream), 40)) void e;
+      },
+      (e: any) => {
+        assert.equal(e.code, 'MODEL_STREAM_IDLE');
+        const diagnostic = providerFailureDiagnostic(e);
+        assert.equal(diagnostic.phase, 'stream');
+        assert.equal(diagnostic.stream?.eventCount, 0);
+        assert.ok(Number(diagnostic.stream?.bytesReceived) > 0);
+        assert.ok(!JSON.stringify(diagnostic).includes('keepalive'));
+        return true;
+      },
+    );
+    assert.equal(cancelled, true);
+  } finally {
+    clearInterval(timer!);
+  }
+});
+
+test('SSE reports total timeout separately and keeps completed event counts', async () => {
+  const response = new Response(
+    new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode('data: {"partial":true}\n\n'));
+        setTimeout(() => c.error(new DOMException('timeout', 'TimeoutError')), 10);
+      },
+    }),
+  );
+  await assert.rejects(
+    async () => {
+      for await (const e of sse(response, 1000)) void e;
+    },
+    (e: any) => {
+      assert.equal(e.code, 'MODEL_TIMEOUT');
+      assert.equal(providerFailureDiagnostic(e).stream?.eventCount, 1);
+      return true;
+    },
+  );
+});

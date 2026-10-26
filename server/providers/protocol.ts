@@ -90,6 +90,7 @@ export function endpoint(profile: Profile, suffix: string) {
   const base = profile.baseUrl.replace(/\/$/, '');
   return base.endsWith(suffix) ? base : base + suffix;
 }
+const responseTiming = new WeakMap<Response, { started: number; headersMs: number }>();
 export async function request(
   profile: Profile,
   url: string,
@@ -98,6 +99,7 @@ export async function request(
   headers: Record<string, string> = {},
   retryTransientConnect = false,
 ) {
+  const started = performance.now();
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(profile.timeoutMs)]);
   for (let attempt = 0; ; attempt++) {
     let response: Response;
@@ -142,7 +144,10 @@ export async function request(
       }
       throw normalizeProviderFailure(error, 'connect');
     }
-    if (response.ok) return response;
+    if (response.ok) {
+      responseTiming.set(response, { started, headersMs: performance.now() - started });
+      return response;
+    }
     if ([429, 500, 502, 503, 504].includes(response.status) && attempt < 2) {
       const retryAfter = Number(response.headers.get('retry-after'));
       await response.body?.cancel();
@@ -185,6 +190,12 @@ export async function* sse(response: Response, idleTimeoutMs = 60000): AsyncGene
   assert(response.body, 'EMPTY_RESPONSE', 'Model returned no response body.', 502);
   const reader = response.body.getReader(),
     decoder = new TextDecoder();
+  const timing = responseTiming.get(response);
+  const started = timing?.started ?? performance.now();
+  let lastEvent = performance.now(),
+    firstByteMs: number | undefined,
+    firstEventMs: number | undefined,
+    eventCount = 0;
   let buffer = '',
     bytes = 0;
   try {
@@ -193,16 +204,19 @@ export async function* sse(response: Response, idleTimeoutMs = 60000): AsyncGene
       const { value, done } = await Promise.race([
         reader.read(),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            reject(
-              new AppError(
-                'MODEL_STREAM_IDLE',
-                'Model stream stopped delivering bytes before completion. No tool calls from this incomplete response were executed.',
-                504,
-              ),
-            );
-            void reader.cancel().catch(() => {});
-          }, idleTimeoutMs);
+          timer = setTimeout(
+            () => {
+              reject(
+                new AppError(
+                  'MODEL_STREAM_IDLE',
+                  'Model stream made no data-event progress within the idle deadline; keepalive bytes do not count. Partial tool calls were not executed.',
+                  504,
+                ),
+              );
+              void reader.cancel().catch(() => {});
+            },
+            Math.max(1, idleTimeoutMs - (performance.now() - lastEvent)),
+          );
         }),
       ]).finally(() => clearTimeout(timer));
       if (done) {
@@ -211,6 +225,7 @@ export async function* sse(response: Response, idleTimeoutMs = 60000): AsyncGene
           throw new AppError('TRUNCATED_STREAM', 'Model stream ended inside an event.', 502);
         break;
       }
+      firstByteMs ??= performance.now() - started;
       bytes += value.length;
       assert(
         bytes <= 32_000_000,
@@ -231,7 +246,11 @@ export async function* sse(response: Response, idleTimeoutMs = 60000): AsyncGene
         if (!text) continue;
         if (text === '[DONE]') return;
         try {
-          yield JSON.parse(text);
+          const event = JSON.parse(text);
+          lastEvent = performance.now();
+          firstEventMs ??= lastEvent - started;
+          eventCount++;
+          yield event;
         } catch (e) {
           if (e instanceof SyntaxError)
             throw new AppError('INVALID_STREAM', 'Invalid model event JSON.', 502);
@@ -240,13 +259,28 @@ export async function* sse(response: Response, idleTimeoutMs = 60000): AsyncGene
       }
     }
   } catch (error) {
-    if (error instanceof Error && error.name === 'TimeoutError')
-      throw new AppError(
-        'MODEL_TIMEOUT',
-        'Model stream timed out; partial tool calls were not executed.',
-        504,
-      );
-    throw normalizeProviderFailure(error, 'stream');
+    const normalized =
+      error instanceof Error && error.name === 'TimeoutError'
+        ? new AppError(
+            'MODEL_TIMEOUT',
+            'Model request total deadline expired during streaming; partial tool calls were not executed.',
+            504,
+          )
+        : normalizeProviderFailure(error, 'stream');
+    if (normalized instanceof Error)
+      Object.assign(normalized, {
+        phase: 'stream',
+        streamDiagnostic: {
+          elapsedMs: Math.round(performance.now() - started),
+          headersMs: timing ? Math.round(timing.headersMs) : undefined,
+          firstByteMs: firstByteMs === undefined ? undefined : Math.round(firstByteMs),
+          firstEventMs: firstEventMs === undefined ? undefined : Math.round(firstEventMs),
+          idleMs: Math.round(performance.now() - lastEvent),
+          bytesReceived: bytes,
+          eventCount,
+        },
+      });
+    throw normalized;
   } finally {
     void reader.cancel().catch(() => {});
     reader.releaseLock();

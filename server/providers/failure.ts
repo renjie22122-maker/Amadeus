@@ -74,6 +74,7 @@ export function providerFailureDiagnostic(error: unknown, phase: FailurePhase = 
     outputLimit?: number;
     outputTokens?: number;
     pendingToolCalls?: number;
+    streamDiagnostic?: Record<string, unknown>;
   };
   const code =
     e?.code &&
@@ -100,7 +101,35 @@ export function providerFailureDiagnostic(error: unknown, phase: FailurePhase = 
     category,
     phase: e?.phase || phase,
     transportCode: e?.transportCode,
+    ...(e?.streamDiagnostic
+      ? {
+          stream: Object.fromEntries(
+            [
+              'elapsedMs',
+              'headersMs',
+              'firstByteMs',
+              'firstEventMs',
+              'idleMs',
+              'bytesReceived',
+              'eventCount',
+            ].flatMap((key) => {
+              const value = e.streamDiagnostic?.[key];
+              return typeof value === 'number' && Number.isFinite(value) && value >= 0
+                ? [[key, value]]
+                : [];
+            }),
+          ),
+        }
+      : {}),
     retryable: ['network', 'timeout'].includes(category),
+    ...Object.fromEntries(
+      ['answerCharacters', 'reasoningCharacters', 'pendingToolCalls'].flatMap((key) => {
+        const value = (e as Record<string, unknown>)?.[key];
+        return typeof value === 'number' && Number.isFinite(value) && value >= 0
+          ? [[key, value]]
+          : [];
+      }),
+    ),
     ...(code === 'MODEL_INCOMPLETE'
       ? {
           finishReason: ['length', 'stop', 'tool_calls', 'max_tokens'].includes(
