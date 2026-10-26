@@ -514,3 +514,26 @@ test('learning saves cited topic summaries independently of durable memory items
   await learning.close();
   store.close();
 });
+
+test('maintenance sorting reads extraction history once rather than once per comparison', async () => {
+  const { store, config } = await fixture();
+  try {
+    for (let i = 0; i < 40; i++)
+      store.put('conversation', { id: 'disabled-' + i, generateMemory: false });
+    let reads = 0;
+    const list = store.list.bind(store);
+    store.list = ((kind: string) => {
+      if (kind === 'memory-learning') reads++;
+      return list(kind);
+    }) as typeof store.list;
+    // Disable the fixture conversation as well; isolate the scheduling work.
+    const c = store.get<any>('conversation', 'chat');
+    store.put('conversation', { ...c, generateMemory: false });
+    const learning = new MemoryLearning(store, config);
+    await learning.tick();
+    await learning.close();
+    assert.equal(reads, 1);
+  } finally {
+    store.close();
+  }
+});

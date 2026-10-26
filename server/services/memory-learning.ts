@@ -248,17 +248,16 @@ export class MemoryLearning {
 
   private async scan(now: number) {
     if (this.controller.signal.aborted) return;
-    const lastAttempt = (id: string) =>
-      Math.max(
-        0,
-        ...this.store
-          .list<any>('memory-learning')
-          .filter((j) => j.conversationId === id)
-          .map((j) => j.at || 0),
+    const learning = this.store.list<any>('memory-learning');
+    const lastAttempts = new Map<string, number>();
+    for (const job of learning)
+      lastAttempts.set(
+        job.conversationId,
+        Math.max(lastAttempts.get(job.conversationId) || 0, job.at || 0),
       );
     const conversations = this.store
       .list<Conversation>('conversation')
-      .sort((a, b) => lastAttempt(a.id) - lastAttempt(b.id));
+      .sort((a, b) => (lastAttempts.get(a.id) || 0) - (lastAttempts.get(b.id) || 0));
     for (const c of conversations) {
       if (!this.ready(c, now)) continue;
       const scope = conversationMemoryScope(c),
@@ -269,8 +268,7 @@ export class MemoryLearning {
       if (!isolated) {
         const legacyCursor = Math.max(
           0,
-          ...this.store
-            .list<any>('memory-learning')
+          ...learning
             .filter(
               (j) =>
                 j.conversationId === c.id &&

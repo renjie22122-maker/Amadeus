@@ -32,7 +32,13 @@ export async function api<T = any>(
         ? signal
         : AbortSignal.any([
             AbortSignal.timeout(
-              path === '/media/local-voice/preview' ? 170000 : body === undefined ? 20000 : 120000,
+              path === '/media/local-voice/preview'
+                ? 170000
+                : path.startsWith('/knowledge/index-status?') && body === undefined
+                  ? 125000 // Read-only worker has its own 120s deadline; other UI requests stay short.
+                  : body === undefined
+                    ? 20000
+                    : 120000,
             ),
             ...(signal ? [signal] : []),
           ]),

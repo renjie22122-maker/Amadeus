@@ -56,6 +56,7 @@ export class Store {
       INSERT OR IGNORE INTO run_metadata SELECT id,COALESCE(json_extract(data,'$.conversationId'),''),COALESCE(json_extract(data,'$.createdAt'),0),json_remove(data,'$.checkpoints') FROM records WHERE kind='run';
       CREATE INDEX IF NOT EXISTS records_conversation_scope ON records(kind,CASE WHEN json_valid(data) THEN json_extract(data,'$.conversationId') END);
       CREATE INDEX IF NOT EXISTS effects_unfinished ON effects(run_id) WHERE state='started';
+      CREATE INDEX IF NOT EXISTS records_pending_inputs ON records(json_extract(data,'$.createdAt')) WHERE kind='input' AND json_extract(data,'$.status')='pending';
       CREATE TABLE IF NOT EXISTS run_checkpoints(id TEXT PRIMARY KEY,data TEXT NOT NULL);
       INSERT OR IGNORE INTO run_checkpoints SELECT id,COALESCE(json_extract(data,'$.checkpoints'),'[]') FROM records WHERE kind='run';
     `);

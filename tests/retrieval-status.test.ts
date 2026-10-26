@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../server/storage/store.js';
@@ -200,4 +203,41 @@ test('vector pagination covers eligibility before loading bounded payloads', (t)
   assert.equal(rows.length, 1);
   assert.equal(rows[0].document_id, a.id);
   assert.equal(store.db.prepare(sql).all('general', rows[0].id, 1).length, 0);
+});
+
+test('file-backed status worker matches validation, shares concurrent work and invalidates stale counts', async (t) => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'status-worker-')), 'db.sqlite'));
+  let model = 'fixture',
+    fingerprintCalls = 0;
+  const knowledge = new Knowledge(store, {
+    fingerprint: () => {
+      fingerprintCalls++;
+      return model;
+    },
+  } as any);
+  t.after(() => {
+    knowledge.close();
+    store.close();
+  });
+  const doc: any = knowledge.import('general', 'public', 'one chunk');
+  knowledge.import('private', 'secret', 'hidden');
+  store.db
+    .prepare('UPDATE chunks SET vector=?')
+    .run(JSON.stringify({ model: 'fixture', values: [1, 0] }));
+  const [a, b] = await Promise.all([
+    knowledge.indexStatusesAsync('general'),
+    knowledge.indexStatusesAsync('general'),
+  ]);
+  assert.deepEqual(a, b);
+  assert.deepEqual(Object.keys(a), [doc.id]);
+  assert.equal(a[doc.id].status, 'indexed');
+  a[doc.id].total = 999;
+  assert.equal((await knowledge.indexStatusesAsync('general'))[doc.id].total, 1);
+  assert.equal(fingerprintCalls, 3);
+  model = 'replacement';
+  assert.equal((await knowledge.indexStatusesAsync('general'))[doc.id].completed, 0);
+  store.db.prepare('UPDATE chunks SET vector=? WHERE document_id=?').run('broken', doc.id);
+  assert.equal((await knowledge.indexStatusesAsync('general'))[doc.id].invalid, 1);
+  store.put('document', { ...doc, validUntil: Date.now() - 1 });
+  assert.deepEqual(await knowledge.indexStatusesAsync('general'), {});
 });

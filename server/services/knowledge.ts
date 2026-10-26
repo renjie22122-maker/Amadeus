@@ -1,3 +1,4 @@
+import { Worker } from 'node:worker_threads';
 import { selectEvidence } from './research-evidence.js';
 import { streamedVectors } from './streamed-vectors.js';
 import { vectorRecord, validVector } from './vector-record.js';
@@ -21,9 +22,14 @@ export const terms = (text: string) => {
 };
 export class Knowledge {
   private ann: AnnIndex;
+  private statusJobs = new Map<string, Promise<any>>();
+  private statusWorkers = new Set<Worker>();
+  private statusCache = new Map<string, any>();
   lastRetrieval: Record<string, unknown> = {};
   close() {
     this.ann.close();
+    for (const worker of this.statusWorkers) void worker.terminate();
+    this.statusCache.clear();
   }
   constructor(
     private store: Store,
@@ -40,7 +46,7 @@ export class Knowledge {
     CREATE TRIGGER IF NOT EXISTS vectors_update AFTER UPDATE OF vector ON chunks BEGIN UPDATE vector_revision SET version=version+1 WHERE id=1; END;
     CREATE TRIGGER IF NOT EXISTS vectors_delete AFTER DELETE ON chunks BEGIN UPDATE vector_revision SET version=version+1 WHERE id=1; END;`);
   }
-  private vectorStatuses(rows: Iterable<any>) {
+  private vectorStatuses(rows: Iterable<any>, fingerprint = this.embeddings?.fingerprint()) {
     const statuses: Record<
       string,
       { completed: number; total: number; invalid: number; status: string }
@@ -55,7 +61,7 @@ export class Knowledge {
       item.total++;
       const vector = vectorRecord(row.vector);
       if (row.vector != null && !vector) item.invalid++;
-      if (vector?.model === this.embeddings?.fingerprint()) item.completed++;
+      if (vector && vector.model === fingerprint) item.completed++;
       item.status =
         item.completed === item.total ? 'indexed' : item.completed ? 'partial' : 'pending';
     }
@@ -103,6 +109,45 @@ export class Knowledge {
         .filter((doc) => doc.scope === scope && documentAt(doc, Date.now()))
         .map((doc) => doc.id),
     );
+    const fingerprint = this.embeddings?.fingerprint() || '';
+    if (this.store.path !== ':memory:') {
+      const revision = (
+        this.store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any
+      ).version;
+      const key = JSON.stringify([scope, revision, fingerprint, [...current].sort()]);
+      if (this.statusCache.has(key)) return structuredClone(this.statusCache.get(key));
+      let job = this.statusJobs.get(key);
+      if (!job) {
+        job = new Promise((resolve, reject) => {
+          const worker = new Worker(new URL('./knowledge-status-worker.cjs', import.meta.url), {
+            workerData: { path: this.store.path, scope, fingerprint, documentIds: [...current] },
+          });
+          this.statusWorkers.add(worker);
+          const timer = setTimeout(() => {
+            void worker.terminate();
+            reject(Error('Index status inspection timed out.'));
+          }, 120000);
+          worker.once('message', (message) =>
+            message.error ? reject(Error(message.error)) : resolve(message.statuses),
+          );
+          worker.once('error', reject);
+          worker.once('exit', () => {
+            clearTimeout(timer);
+            this.statusWorkers.delete(worker);
+            reject(Error('Index status worker exited before returning a result.'));
+          });
+        })
+          .then((value) => {
+            this.statusCache.set(key, value);
+            if (this.statusCache.size > 8)
+              this.statusCache.delete(this.statusCache.keys().next().value!);
+            return value;
+          })
+          .finally(() => this.statusJobs.delete(key));
+        this.statusJobs.set(key, job);
+      }
+      return structuredClone(await job);
+    }
     for (const id of current)
       statuses[id] = { completed: 0, total: 0, invalid: 0, status: 'pending' };
     const rows = this.store.db
@@ -112,7 +157,7 @@ export class Knowledge {
     for (const row of rows as Iterable<any>) {
       if (++visited % 64 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
       if (!current.has(row.document_id)) continue;
-      const item = this.vectorStatuses([row])[row.document_id];
+      const item = this.vectorStatuses([row], fingerprint)[row.document_id];
       const old = (statuses[row.document_id] ||= {
         completed: 0,
         total: 0,
