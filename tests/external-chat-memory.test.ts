@@ -346,3 +346,33 @@ test('trusted chat receipts preserve authorship, deduplicate and reject unrelate
   backfillChatMemorySources(store, 'g');
   assert.equal(chatMemorySources(store, 'g').length, 2);
 });
+
+test('modern chat sources do not decode historical prompt envelopes', (t) => {
+  const { store } = fixture(t);
+  const event = store.event('chat', null, 'chat.memory-source', {
+    senderId: 'member',
+    text: 'hello',
+  });
+  store.event('chat', 'r', 'chat.origin', {
+    senderId: 'member',
+    sourceEventIds: [event.id],
+    memoryMessages: ['hello'],
+  });
+  store.event('chat', 'r', 'user.message', { text: 'x'.repeat(1000000) });
+  store.eventsForRun = () => {
+    throw Error('Modern receipts must not read prompt envelopes');
+  };
+  assert.deepEqual(
+    chatMemorySources(store, 'chat').map((s) => s.text),
+    ['hello'],
+  );
+});
+test('legacy origin cannot import a message from another conversation', (t) => {
+  const { store } = fixture(t);
+  store.event('chat', 'foreign', 'chat.origin', {
+    senderId: 'member',
+    memoryMessages: ['not authorized'],
+  });
+  store.event('other', 'foreign', 'user.message', { text: 'private' });
+  assert.deepEqual(chatMemorySources(store, 'chat'), []);
+});

@@ -36,6 +36,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(kind,id));
       CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,conversation_id TEXT NOT NULL,run_id TEXT,type TEXT NOT NULL,data TEXT NOT NULL,created_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS events_conversation ON events(conversation_id,id);
+      CREATE INDEX IF NOT EXISTS events_conversation_type ON events(conversation_id,type,id);
       CREATE INDEX IF NOT EXISTS events_run ON events(run_id,id);
       CREATE INDEX IF NOT EXISTS events_tool_result ON events(run_id,json_extract(data,'$.callId')) WHERE type='tool.completed';
       CREATE INDEX IF NOT EXISTS events_tool_started ON events(run_id,json_extract(data,'$.callId'),id) WHERE type='tool.started';

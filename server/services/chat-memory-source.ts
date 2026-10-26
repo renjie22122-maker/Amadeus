@@ -16,27 +16,40 @@ export function chatMemorySources(store: Store, conversationId: string): MemoryS
     .events(conversationId, 0, 'chat.memory-source')
     .filter((e) => e.data.senderId && typeof e.data.text === 'string');
   const origins = new Map(
-    store.events(conversationId, 0, 'chat.origin').map((e) => [e.runId, e.data]),
+    store
+      .events(conversationId, 0, 'chat.origin')
+      .filter(
+        (e) =>
+          e.data.senderId && !e.data.sourceEventIds?.length && Array.isArray(e.data.memoryMessages),
+      )
+      .map((e) => [e.runId, e.data]),
   );
-  const legacy = store.events(conversationId, 0, 'user.message').flatMap((e) => {
-    const o = origins.get(e.runId);
-    if (
-      e.data.scheduledTrigger ||
-      !o?.senderId ||
-      o.sourceEventIds?.length ||
-      !Array.isArray(o.memoryMessages)
-    )
-      return [];
-    return [
-      {
-        id: e.id,
-        at: e.createdAt,
-        text: o.memoryMessages.filter((x: unknown) => typeof x === 'string').join('\n'),
-        sender: String(o.senderId),
-        peerType: o.peerType,
-      },
-    ];
-  });
+  // Modern source receipts already contain authorship. Do not decode old, often huge
+  // prompt envelopes unless a legacy origin actually needs its message event ID.
+  const legacyEvents = [...origins.keys()].flatMap((runId) =>
+    runId ? store.eventsForRun(runId, ['user.message']) : [],
+  );
+  const legacy = legacyEvents
+    .filter((e) => e.conversationId === conversationId)
+    .flatMap((e) => {
+      const o = origins.get(e.runId);
+      if (
+        e.data.scheduledTrigger ||
+        !o?.senderId ||
+        o.sourceEventIds?.length ||
+        !Array.isArray(o.memoryMessages)
+      )
+        return [];
+      return [
+        {
+          id: e.id,
+          at: e.createdAt,
+          text: o.memoryMessages.filter((x: unknown) => typeof x === 'string').join('\n'),
+          sender: String(o.senderId),
+          peerType: o.peerType,
+        },
+      ];
+    });
   return [
     ...legacy,
     ...raw.map((e) => ({

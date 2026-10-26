@@ -297,3 +297,5 @@ Model request failure events include numeric event-loop maximum/p99 delay and re
 Index-status inspection uses a read-only worker and shares concurrent identical requests. Its bounded cache is keyed by vector revision, model fingerprint and current document IDs; document removal/model changes invalidate counts. Memory maintenance loads extraction history once per sweep, not during every sort comparison. Pending approval discovery uses a partial index.
 
 LightRAG host reconciliation snapshots eligible documents once and reads ordered chunk IDs through a covering index instead of looking up each document per chunk. Completed memory-graph work is excluded before loading source evidence; pending approval discovery explicitly selects its partial index. These are status/read-path changes, not graph re-extraction or authorization changes.
+
+Chat-memory source reads use a conversation/type index. Modern attributed receipts bypass legacy prompt envelopes; legacy origins look up only their own run messages and recheck conversation identity.
