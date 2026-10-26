@@ -1,3 +1,4 @@
+import { assertSourceRetention } from '../server/core/source-ledger.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -209,4 +210,88 @@ test('snapshot-only compaction needs no summary call and retains the original re
     store.events('c').some((e) => e.type === 'context.degraded'),
     false,
   );
+});
+
+test('oversized legacy remote requests compact into a scoped verified archive without losing the latest request', async (t) => {
+  const { store, run } = fixture(t);
+  run.checkpoints = [
+    { role: 'system', content: 'Instructions' },
+    ...Array.from({ length: 12 }, (_, i) => ({
+      role: 'user',
+      content:
+        `Legacy sender ${i}: preserve my constraint. ` +
+        'Repeated host style and group history. '.repeat(1200),
+    })),
+    ...Array.from({ length: 7 }, () => ({ role: 'assistant', content: 'Old reply' })),
+    { role: 'user', content: 'Current request: do not delete any source.' },
+  ];
+  const before = structuredClone(run.checkpoints);
+  let summaries = 0;
+  const manager = new ContextManager(
+    store,
+    () => 0.75,
+    new ModelPool(() => 1),
+    async () => {
+      summaries++;
+      return {
+        message: {
+          role: 'assistant',
+          content: 'Earlier participant constraints preserved; consult archive for exact text.',
+        },
+        usage: { input: 1, output: 1, cached: 0, measured: false },
+      };
+    },
+  );
+  const result = await manager.compact(
+    run,
+    { contextWindow: 16000, maxOutputTokens: 1000, efforts: ['none'] } as any,
+    new AbortController().signal,
+    [],
+  );
+  assert.ok(summaries > 0);
+  assert.ok(result.tokens < result.threshold);
+  assert.ok(
+    run.checkpoints.some((m: any) => m.content === 'Current request: do not delete any source.'),
+  );
+  assert.ok(
+    run.checkpoints.some(
+      (m: any) => m.contextKind === 'source-ledger' && m.content.includes('read_spill'),
+    ),
+  );
+  assertSourceRetention(before, run.checkpoints, (key) => {
+    const spill = store.get<any>('spill', key);
+    assert.equal(spill.conversationId, 'c');
+    return spill.text;
+  });
+});
+
+test('summary failure archives old user sources while preserving current request and a readable recovery path', async (t) => {
+  const { store, run } = fixture(t);
+  run.checkpoints = [
+    { role: 'system', content: 'instructions' },
+    ...Array.from({ length: 8 }, (_, i) => ({
+      role: 'user',
+      content: 'historical-' + i + ' retain source '.repeat(3000),
+    })),
+    ...Array.from({ length: 7 }, () => ({ role: 'assistant', content: 'old response' })),
+    { role: 'user', content: 'latest requirement' },
+  ];
+  const before = structuredClone(run.checkpoints);
+  const manager = new ContextManager(
+    store,
+    () => 0.75,
+    new ModelPool(() => 1),
+    async () => {
+      throw Error('summary unavailable');
+    },
+  );
+  await manager.compact(
+    run,
+    { contextWindow: 16000, maxOutputTokens: 1000, efforts: ['none'] } as any,
+    new AbortController().signal,
+    [],
+  );
+  assertSourceRetention(before, run.checkpoints, (key) => store.get<any>('spill', key).text);
+  assert.ok(run.checkpoints.some((m: any) => m.content.includes('Summary unavailable')));
+  assert.ok(run.checkpoints.some((m: any) => m.content === 'latest requirement'));
 });

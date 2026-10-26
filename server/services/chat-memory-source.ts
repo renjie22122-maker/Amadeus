@@ -77,6 +77,8 @@ export function recordChatMemorySource(store: Store, c: ChatConnection, m: ChatI
   return store.transaction(() => {
     const e = store.event(c.conversationId, null, 'chat.memory-source', {
       connectionId: c.id,
+      transport: c.transport,
+      accountId: c.accountId,
       messageId: m.id,
       senderId: m.senderId,
       peerId: m.peerId,

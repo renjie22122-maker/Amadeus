@@ -28,6 +28,7 @@ export interface ToolCall {
 export interface ModelMessage {
   sourceWarnings?: string[];
   contextKind?:
+    | 'chat-snapshot'
     | 'runtime-snapshot'
     | 'runtime-advice'
     | 'workflow-guidance'

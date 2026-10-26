@@ -1428,7 +1428,8 @@ export function tools() {
   registry.add({
     name: 'read_spill',
     parallelSafe: true,
-    description: 'Read a bounded range of an oversized tool result from this conversation.',
+    description:
+      'Read a bounded range of archived historical requests or an oversized tool result from this conversation.',
     effect: 'read',
     schema: z.object({
       id: z.string(),

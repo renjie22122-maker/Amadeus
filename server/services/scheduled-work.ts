@@ -1,5 +1,5 @@
 import { currentChat } from './chat-interaction.js';
-import { remoteConversationStyle } from './chat-style.js';
+import { notebookContext } from './chat-notebook.js';
 import { Store, id } from '../storage/store.js';
 import { terminal } from '../core/lifecycle.js';
 import type { Conversation } from '../../shared/types.js';
@@ -230,16 +230,19 @@ export class ScheduledWorkService {
             notifications: task.notifications || 'meaningful',
           });
           remotePrefix =
-            remoteConversationStyle +
+            notebookContext(this.store, connection) +
             `[Scheduled remote follow-up in the original ${connection.peerType || 'private'} chat. Use inspect_chat to inspect this route, prepare_chat_reply for ordered messages or mediaOnly. Do not change recipients. Respect the authorized purpose and quiet hours in the task. Report unchanged if there is nothing useful to send.]\n`;
         }
         this.runtime.start(
           chatId,
-          remotePrefix +
-            task.prompt +
+          task.prompt +
             '\n\n[Scheduled task] Before finishing, use report_scheduled_result to report unchanged, update, or complete with a short summary. Choose complete only when the requested monitoring/follow-up is finished; it stops future runs. Missing reports still notify. Existing permissions apply.',
           0,
-          { runId, scheduledTrigger: { id: task.id, name: task.name || task.prompt.slice(0, 80) } },
+          {
+            runId,
+            ...(remotePrefix ? { chatContext: remotePrefix } : {}),
+            scheduledTrigger: { id: task.id, name: task.name || task.prompt.slice(0, 80) },
+          },
         );
         if (task.remoteDelivery)
           this.store.db

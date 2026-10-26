@@ -1,3 +1,4 @@
+import { ChatNotebook } from '../components/ChatNotebook';
 import { BrowserVoiceChat } from '../components/BrowserVoiceChat';
 import '../chat-connections.css';
 import { useEffect, useState } from 'react';
@@ -241,6 +242,7 @@ export function ChatConnectionsPage({
                 {tr('删除', 'Remove')}
               </button>
             </div>
+            <ChatNotebook id={c.id} zh={zh} notify={notify} />
             {c.deliveries.some((d: any) => ['uncertain', 'failed'].includes(d.state)) && (
               <button
                 onClick={() =>

@@ -17,6 +17,8 @@ export function capabilityDecision(ctx: ToolContext, name: string, effect: ToolS
         ![
           'read_clock',
           'inspect_chat',
+          'inspect_chat_notebook',
+          'read_spill',
           'list_chat_members',
           'read_chat_media',
           'read_chat_message',

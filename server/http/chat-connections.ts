@@ -1,10 +1,30 @@
 import { assert } from '../core/errors.js';
 import { id } from '../storage/store.js';
-import { remoteConversationStyle } from '../services/chat-style.js';
+import {
+  notebookContext,
+  inspectNotebook,
+  updateNotebook,
+  notebookRevision,
+} from '../services/chat-notebook.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ChatConnections } from '../services/chat-connections.js';
 export function chatConnectionRoutes(app: FastifyInstance, channels: ChatConnections) {
+  app.get<{ Params: { id: string } }>('/api/chat-connections/:id/notebook', async (req) =>
+    inspectNotebook(channels.store, channels.get(req.params.id)),
+  );
+  app.get<{ Params: { id: string; revision: string } }>(
+    '/api/chat-connections/:id/notebook/:revision',
+    async (req) =>
+      notebookRevision(
+        channels.store,
+        channels.get(req.params.id),
+        z.coerce.number().int().positive().parse(req.params.revision),
+      ),
+  );
+  app.post<{ Params: { id: string } }>('/api/chat-connections/:id/notebook', async (req) =>
+    updateNotebook(channels.store, channels.get(req.params.id), req.body, 'human'),
+  );
   app.get('/api/chat-connections', async () => ({
     connections: channels.overview(),
     mediaServices: channels.runtime.media
@@ -33,14 +53,13 @@ export function chatConnectionRoutes(app: FastifyInstance, channels: ChatConnect
       revision: c.revision,
       conversationId: c.conversationId,
     });
-    channels.runtime.start(
-      c.conversationId,
-      remoteConversationStyle +
-        '[Authenticated local browser voice turn. Reply naturally in text; the browser reads the final answer aloud. Do not generate a separate speech file or send this reply to a social platform unless explicitly requested. This is alternating browser voice, not a native phone call. Existing permissions apply.]\n' +
-        body.text,
-      0,
-      { runId, attachmentIds: [] },
-    );
+    channels.runtime.start(c.conversationId, body.text, 0, {
+      runId,
+      attachmentIds: [],
+      chatContext:
+        notebookContext(channels.store, c) +
+        '[Authenticated local browser voice turn. Reply naturally in text; the browser reads the final answer aloud. Do not generate a separate speech file or send this reply to a social platform unless explicitly requested. This is alternating browser voice, not a native phone call. Existing permissions apply.]\n',
+    });
     return { runId };
   });
   const voiceRun = (connectionId: string, runId: string) => {

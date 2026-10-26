@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sourceLedger, assertSourceRetention } from '../server/core/source-ledger.js';
+import {
+  sourceLedger,
+  assertSourceRetention,
+  archivedSourceLedger,
+  requestSources,
+} from '../server/core/source-ledger.js';
 import { usageCost, compactionEconomics } from '../server/core/context-economics.js';
 import type { ModelMessage } from '../shared/types.js';
 test('multiple compactions retain verbatim chronological sources including conflicting instructions', () => {
@@ -43,4 +48,23 @@ test('compaction economics includes summary and cache rewarm; unknown costs rema
   assert.equal(compactionEconomics(10000, 2000, null, 0.8, prices).breakEvenRequests, null);
   assert.equal(compactionEconomics(10000, 2000, 0.005, null, prices).breakEvenRequests, null);
   assert.equal(usageCost({ input: 10, cached: 0, output: 1, measured: false }, prices), null);
+});
+
+test('archived request sources remain exact, chronological and tamper checked across compactions', () => {
+  const messages: ModelMessage[] = [
+    { role: 'user', content: 'keep files' },
+    { role: 'user', content: 'later correction' },
+  ];
+  const archive = new Map<string, string>();
+  const ledger = archivedSourceLedger(requestSources(messages), (raw) => {
+    archive.set('key', raw);
+    return 'key';
+  });
+  const resolve = (key: string) => archive.get(key)!;
+  assertSourceRetention(messages, [ledger], resolve);
+  const later: ModelMessage = { role: 'user', content: 'current task' };
+  assertSourceRetention([...messages, later], [sourceLedger([ledger, later], resolve)!], resolve);
+  assert.throws(() => requestSources([ledger]), /resolver/);
+  archive.set('key', archive.get('key')! + ' ');
+  assert.throws(() => requestSources([ledger], resolve), /integrity/);
 });

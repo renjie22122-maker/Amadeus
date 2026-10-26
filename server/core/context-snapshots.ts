@@ -1,6 +1,7 @@
 import type { ModelMessage } from '../../shared/types.js';
 
 const replaceable = new Set<ModelMessage['contextKind']>([
+  'chat-snapshot',
   'runtime-snapshot',
   'task-snapshot',
   'workflow-guidance',

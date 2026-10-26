@@ -980,9 +980,9 @@ test('remote private style is transient and leaves local conversation settings u
   });
   channel.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
-  assert.match(calls[0][1], /Remote conversation style/);
-  assert.match(calls[0][1], /serious factual questions/);
-  assert.match(calls[0][1], /never relaxes permissions/);
+  assert.match(calls[0][3].chatContext, /Remote conversation style/);
+  assert.match(calls[0][3].chatContext, /serious factual questions/);
+  assert.match(calls[0][3].chatContext, /never relaxes permissions/);
   assert.deepEqual(store.get('conversation', 'chat'), before);
 });
 
@@ -1457,4 +1457,31 @@ test('remote continuation blocks unknown effects and retains ordinary group memb
   });
   channel.tick(Date.now() + 20000);
   assert.equal(calls.length, 0);
+});
+
+test('controller can continue a protected-context failure through the normal checkpoint path', (t) => {
+  const { channel, c, store, calls } = fixture(t);
+  store.put('run', {
+    id: 'full',
+    conversationId: 'chat',
+    status: 'failed',
+    createdAt: 1,
+    updatedAt: 1,
+    error:
+      'Protected requests and current state exceed the available context. Narrow the active task or use a larger context; no protected sources were discarded.',
+  });
+  assert.equal(
+    channel.receive(c.id, {
+      id: 'continue-context',
+      senderId: '123',
+      peerId: '123',
+      text: '/continue',
+      timestamp: Date.now(),
+    }),
+    'queued',
+  );
+  channel.tick(Date.now() + 20000);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][3].recoveredFrom, 'full');
+  assert.deepEqual(calls[0][3].attachmentIds, []);
 });

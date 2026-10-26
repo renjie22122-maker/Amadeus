@@ -62,24 +62,42 @@ export function richSummary(parts: any) {
     .filter(Boolean)
     .join(' ');
 }
-export function forwardPage(raw: any, offset: number, limit: number) {
+export function forwardPage(
+  raw: any,
+  offset: number,
+  limit: number,
+  register?: (record: { id?: string; nodes?: any[] }) => unknown,
+) {
   const nodes = raw?.messages ?? raw?.message;
   if (!Array.isArray(nodes))
     throw Error('Forwarded record is unavailable or has an unsupported response shape.');
   let budget = 20000,
     visited = 0;
   const media: any[] = [];
-  let truncated = false;
+  let truncated = false,
+    mediaOmitted = 0;
   function node(n: any, depth: number): any {
     if (++visited > 100 || depth > 3 || budget <= 0) {
       truncated = true;
-      return { truncated: true };
+      return { truncated: true, ...(register ? { continuation: register({ nodes: [n] }) } : {}) };
     }
     const parts = n.message ?? n.content ?? n.data?.message ?? n.data?.content;
     const items = [];
     if (Array.isArray(parts) && parts.length > 80) truncated = true;
     for (const p of (Array.isArray(parts) ? parts : []).slice(0, 80)) {
       if (budget <= 0) break;
+      if (p.type === 'forward') {
+        const embedded = p.data?.content ?? p.data?.messages;
+        const record = {
+          ...(typeof p.data?.id === 'string' ? { id: p.data.id } : {}),
+          ...(Array.isArray(embedded) && embedded.length ? { nodes: embedded } : {}),
+        };
+        items.push({
+          forward:
+            register && (record.id || record.nodes) ? register(record) : { unavailable: true },
+        });
+        continue;
+      }
       if (p.type === 'node') {
         items.push(node(p, depth + 1));
         continue;
@@ -106,6 +124,10 @@ export function forwardPage(raw: any, offset: number, limit: number) {
             name: String(p.data?.name || p.type).slice(0, 200),
             kind,
           });
+        else {
+          mediaOmitted++;
+          truncated = true;
+        }
       } else {
         const summary = richSummary([p]).slice(0, budget);
         budget -= summary.length;
@@ -121,6 +143,8 @@ export function forwardPage(raw: any, offset: number, limit: number) {
   return {
     messages: nodes.slice(offset, offset + limit).map((n) => node(n, 0)),
     media,
+    mediaOmitted,
+    ...(mediaOmitted ? { mediaHint: 'Use smaller pages to import omitted media.' } : {}),
     total: nodes.length,
     nextOffset: offset + limit < nodes.length ? offset + limit : null,
     truncated: truncated || budget <= 0 || visited > 100,

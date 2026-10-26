@@ -187,6 +187,8 @@ export class Runtime implements TeamPort {
       controlTicket?: string;
       scheduledTrigger?: { id: string; name: string };
       attachmentIds?: string[];
+      /** Host-projected remote context, replaced each turn rather than protected as user text. */
+      chatContext?: string;
     } = {},
   ): Run {
     const c = this.store.get<Conversation>('conversation', conversationId);
@@ -252,6 +254,14 @@ export class Runtime implements TeamPort {
         (previous.providerFingerprint && previous.providerFingerprint !== run.providerFingerprint))
     )
       run.checkpoints = this.history(conversationId);
+    if (options.chatContext !== undefined) {
+      run.checkpoints = run.checkpoints.filter((m) => m.contextKind !== 'chat-snapshot');
+      run.checkpoints.push({
+        role: 'user',
+        contextKind: 'chat-snapshot',
+        content: options.chatContext,
+      });
+    }
     if (run.contextSample?.fingerprint !== profileKey({ ...profile, reasoning: c.reasoning }))
       run.contextSample = undefined;
     this.store.put('conversation', {

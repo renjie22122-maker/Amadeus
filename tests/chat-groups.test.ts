@@ -422,7 +422,8 @@ test('passive group context is bounded, deduplicated and shared by members only 
   });
   channels.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
-  assert(calls[0][1].includes('message 49'));
+  assert(calls[0][3].chatContext.includes('message 49'));
+  assert(!calls[0][1].includes('message 49'));
   assert(calls[0][1].includes('Platform sender ID: 121'));
   const event = store.events(c.conversationId).find((e) => e.type === 'chat.origin');
   assert.equal(event?.data.senderId, '121');
@@ -1298,10 +1299,10 @@ test('remote group banter guidance preserves sender and authorization boundaries
   );
   channels.tick(Date.now() + 20000);
   assert.equal(calls.length, 1);
-  assert.match(calls[0][1], /Remote conversation style/);
-  assert.match(calls[0][1], /not a fixed persona/);
-  assert.match(calls[0][1], /Do not transfer one member's identity/);
-  assert.match(calls[0][1], /never relaxes permissions/);
+  assert.match(calls[0][3].chatContext, /Remote conversation style/);
+  assert.match(calls[0][3].chatContext, /not a fixed persona/);
+  assert.match(calls[0][3].chatContext, /Do not transfer one member's identity/);
+  assert.match(calls[0][3].chatContext, /never relaxes permissions/);
 });
 
 test('local pure and project conversations retain their existing configuration', () => {
@@ -1315,4 +1316,107 @@ test('local pure and project conversations retain their existing configuration',
     } as any;
     assert.equal(restrictedChat(local), local);
   }
+});
+
+test('nested forwarded records expand through scoped handles, paginate, expose media and stop cycles', async (t) => {
+  const { store, channels, c } = setup(t);
+  store.db
+    .prepare('INSERT INTO chat_received VALUES(?,?,?,?,?)')
+    .run(
+      c.id,
+      'root',
+      '123',
+      JSON.stringify({ senderId: '123', rich: { forwards: ['layer0'] } }),
+      Date.now(),
+    );
+  const transport: any = new ChatTransports(channels);
+  transport.chatSession = () => ({});
+  transport.current = () => true;
+  let requests = 0;
+  transport.socketRequest = async (_c: any, _s: any, action: string, params: any) => {
+    requests++;
+    assert.equal(action, 'get_forward_msg');
+    const level = Number(params.message_id.slice(5));
+    return {
+      messages: [
+        {
+          sender: { user_id: 'untrusted' },
+          message:
+            level < 5
+              ? [{ type: 'forward', data: { id: 'layer' + (level + 1) } }]
+              : [
+                  { type: 'text', data: { text: 'deepest record' } },
+                  { type: 'image', data: { file: 'deep-image' } },
+                  { type: 'forward', data: { id: 'layer0' } },
+                ],
+        },
+      ],
+    };
+  };
+  let messageId = 'root',
+    page: any;
+  for (let level = 0; level <= 5; level++) {
+    page = await transport.readChatMessage(c, messageId, 0, 0, 20);
+    if (level < 5) {
+      messageId = page.forwarded.messages[0].items[0].forward.messageId;
+      assert.ok(messageId.startsWith('forward:'));
+      await assert.rejects(
+        () => transport.readChatMessage({ ...c, id: 'foreign-chat' }, messageId, 0, 0, 20),
+        /not received or quoted/,
+      );
+    }
+  }
+  assert.equal(requests, 6);
+  assert.match(JSON.stringify(page), /deepest record/);
+  assert.equal(page.forwarded.messages[0].items[2].forward.cycle, true);
+  const saved = store.db
+    .prepare('SELECT payload FROM chat_received WHERE connection_id=? AND message_id=?')
+    .get(c.id, page.mediaMessageId) as any;
+  assert.equal(JSON.parse(saved.payload).media[0].id, 'deep-image');
+  assert.equal(JSON.parse(saved.payload).senderId, '123');
+});
+
+test('NapCat embedded forward content is paginated locally when child IDs are not remotely resolvable', async (t) => {
+  const { store, channels, c } = setup(t);
+  store.db
+    .prepare('INSERT INTO chat_received VALUES(?,?,?,?,?)')
+    .run(
+      c.id,
+      'embedded-root',
+      '123',
+      JSON.stringify({ senderId: '123', rich: { forwards: ['outer'] } }),
+      Date.now(),
+    );
+  const transport: any = new ChatTransports(channels);
+  transport.chatSession = () => ({});
+  transport.current = () => true;
+  let requests = 0;
+  transport.socketRequest = async (_c: any, _s: any, _action: string, params: any) => {
+    requests++;
+    assert.equal(params.message_id, 'outer', 'child ID must not be fetched');
+    return {
+      messages: [
+        {
+          message: [
+            {
+              type: 'forward',
+              data: {
+                id: 'unresolvable-inner',
+                content: Array.from({ length: 50 }, (_, i) => ({
+                  message: [{ type: 'text', data: { text: 'record ' + i } }],
+                })),
+              },
+            },
+          ],
+        },
+      ],
+    };
+  };
+  const first = await transport.readChatMessage(c, 'embedded-root', 0, 0, 20);
+  const child = first.forwarded.messages[0].items[0].forward.messageId;
+  const page = await transport.readChatMessage(c, child, 0, 20, 20);
+  assert.equal(requests, 1);
+  assert.equal(page.forwarded.total, 50);
+  assert.equal(page.forwarded.nextOffset, 40);
+  assert.equal(page.forwarded.messages[0].items[0].text, 'record 20');
 });

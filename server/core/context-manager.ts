@@ -1,5 +1,11 @@
 import { trustLedger } from './trust-ledger.js';
-import { sourceLedger, assertSourceRetention } from './source-ledger.js';
+import {
+  sourceLedger,
+  assertSourceRetention,
+  archivedSourceLedger,
+  requestSources,
+  isArchivedSourceLedger,
+} from './source-ledger.js';
 import { usageCost, compactionEconomics } from './context-economics.js';
 import { restoreDetachedReferences } from './context-reuse.js';
 import { contextBudget, messageUnits, splitSummaryText } from './context-budget.js';
@@ -73,7 +79,32 @@ export class ContextManager {
           i + 1 !== lastUser &&
           (m.contextKind === 'source-ledger' || (m.role === 'user' && !m.contextKind)),
       );
-    const protectedLedger = sourceLedger(protectedMessages);
+    const resolveSources = (key: string) => {
+      const spill = this.store.get<any>('spill', key);
+      assert(
+        spill.conversationId === run.conversationId,
+        'SOURCE_SCOPE',
+        'Historical sources belong to another conversation.',
+      );
+      return spill.text as string;
+    };
+    let protectedLedger = sourceLedger(protectedMessages, resolveSources);
+    // Historical requests must remain recoverable, not occupy an unbounded
+    // verbatim prompt forever. The latest request is never archived here.
+    const archiveSources =
+      !!protectedLedger && messageUnits([protectedLedger]) > before.threshold * 0.2;
+    if (archiveSources) {
+      protectedLedger = archivedSourceLedger(
+        requestSources(protectedMessages, resolveSources),
+        (text) => {
+          const key = createHash('sha256')
+            .update(run.conversationId + '|sources|' + text)
+            .digest('hex');
+          this.store.put('spill', { id: key, conversationId: run.conversationId, text });
+          return key;
+        },
+      );
+    }
     const protectedTrust = trustLedger(run.checkpoints.slice(1, cut));
     const protectedBudget = contextBudget(
       [
@@ -96,7 +127,16 @@ export class ContextManager {
     const old = run.checkpoints
         .slice(1, cut)
         .filter(
-          (m, i) => i + 1 !== lastUser && !isContextSnapshot(m) && !protectedMessages.includes(m),
+          (m, i) =>
+            i + 1 !== lastUser &&
+            !isContextSnapshot(m) &&
+            (archiveSources || !protectedMessages.includes(m)) &&
+            !isArchivedSourceLedger(m),
+        )
+        .map((m) =>
+          m.contextKind === 'source-ledger' && archiveSources
+            ? { ...m, content: JSON.stringify(requestSources([m], resolveSources)) }
+            : m,
         ),
       tail = run.checkpoints.slice(cut).filter((m) => !isContextSnapshot(m));
 
@@ -217,7 +257,7 @@ export class ContextManager {
       ],
       run.checkpoints,
     );
-    assertSourceRetention(run.checkpoints, next);
+    assertSourceRetention(run.checkpoints, next, resolveSources);
     const after = contextBudget(next, tools, profile, this.ratio(), run.contextSample);
     assert(
       after.tokens < before.tokens && after.tokens < before.threshold,

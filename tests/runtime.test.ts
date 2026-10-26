@@ -2769,3 +2769,40 @@ test('expired model step timeout does not restart another full timeout window', 
     f.store.close();
   }
 });
+
+test('remote chat snapshots replace prior projections while real user messages remain chronological', async () => {
+  const seen: any[] = [];
+  const f = await setup({
+    complete: async (request) => {
+      seen.push(structuredClone(request.messages));
+      return result('Done');
+    },
+  });
+  try {
+    for (let i = 0; i < 3; i++) {
+      const r = f.runtime.start('chat', 'User message ' + i, 0, {
+        chatContext: 'Remote snapshot ' + i,
+      });
+      await until(() => f.store.get<any>('run', r.id).status === 'completed');
+      assert.deepEqual(
+        seen[i].filter((m: any) => m.contextKind === 'chat-snapshot').map((m: any) => m.content),
+        ['Remote snapshot ' + i],
+      );
+      assert.ok(
+        !seen[i]
+          .filter((m: any) => m.role === 'user' && !m.contextKind)
+          .some((m: any) => m.content.includes('Remote snapshot')),
+      );
+    }
+    assert.deepEqual(
+      f.store
+        .events('chat')
+        .filter((e) => e.type === 'user.message')
+        .map((e) => e.data.text),
+      ['User message 0', 'User message 1', 'User message 2'],
+    );
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});
