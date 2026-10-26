@@ -771,3 +771,58 @@ test('a sourced later agreement can refine a candidate but never revive a user-d
     }
   }
 });
+
+test('a durable old memory can be revised after several compactions and beyond recent memory selection', async () => {
+  const f = await fixture();
+  let target = '';
+  let round = 0;
+  const provider: any = () => ({
+    complete: async (req: any) => {
+      if (++round === 1) return response([f.item]);
+      const input = JSON.parse(req.messages[1].content);
+      assert.ok(input.existing.some((m: any) => m.id === target));
+      assert.ok(input.contextMessages.some((m: any) => m.id === f.eid));
+      const latest = input.messages.at(-1);
+      return response([
+        {
+          ...f.item,
+          content: 'Prefers concise answers with a worked example.',
+          updatesMemoryId: target,
+          eventId: latest.id,
+          quote: latest.text,
+          supportingEvidence: [{ eventId: f.eid, quote: f.item.quote }],
+        },
+      ]);
+    },
+  });
+  let worker = new MemoryLearning(f.store, f.config, provider);
+  try {
+    await worker.tick();
+    const original = f.store.list<any>('memory')[0];
+    target = original.id;
+    await worker.close();
+    for (let i = 0; i < 160; i++)
+      f.store.put('memory', {
+        ...original,
+        id: 'filler-' + i,
+        content: 'Unrelated topic ' + i,
+        createdAt: Date.now() + i,
+      });
+    for (let i = 0; i < 4; i++) {
+      f.store.event('chat', 'run', 'context.compacting', {});
+      f.store.event('chat', 'run', 'context.compacted', {
+        summary: 'No original preference retained here',
+      });
+    }
+    f.store.event('chat', 'run', 'user.message', {
+      content: 'For concise answers, now include a worked example.',
+    });
+    worker = new MemoryLearning(f.store, f.config, provider);
+    await worker.tick();
+    assert.equal(f.store.get<any>('memory', target).revision, 2);
+    assert.equal(f.store.get<any>('memory', target).evidence.length, 2);
+  } finally {
+    await worker.close();
+    f.store.close();
+  }
+});

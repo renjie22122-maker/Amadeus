@@ -15,7 +15,11 @@ export function memoryContext(
   const add = (candidates: MemorySource[], budget: number) => {
     for (const source of candidates) {
       if (selected.has(source.id)) continue;
-      const text = source.text.slice(0, 4000);
+      const quote = existing
+        .flatMap((m) => m.evidence || [])
+        .find((e) => e.eventId === source.id && e.quote && source.text.includes(e.quote))?.quote;
+      const start = quote ? Math.max(0, source.text.indexOf(quote) - 256) : 0;
+      const text = source.text.slice(start, start + 4000);
       if (text.length > budget) continue;
       selected.set(source.id, { ...source, text });
       budget -= text.length;

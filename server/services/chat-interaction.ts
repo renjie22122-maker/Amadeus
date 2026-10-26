@@ -69,6 +69,104 @@ export function chatCapabilities(c: ChatConnection) {
     note: 'Bridge features require backend support. Unsupported actions fail explicitly; image stickers use the media upload path, not a universal native sticker format.',
   };
 }
+
+export function memberCacheRoute(c: ChatConnection) {
+  return JSON.stringify([
+    c.transport,
+    c.accountId,
+    c.peerType,
+    c.peerId,
+    c.conversationId,
+    c.revision,
+  ]);
+}
+export function cacheChatMembers(store: Store, c: ChatConnection, members: any[]) {
+  assert(
+    Array.isArray(members) &&
+      members.every((m) => m && typeof m.id === 'string' && m.id.length > 0),
+    'CHAT_MEMBERS',
+    'Invalid member list.',
+  );
+  store.put('chat-member-cache', { id: c.id, route: memberCacheRoute(c), at: Date.now(), members });
+}
+/** Names are resolved only against the exact current platform roster, never prose or memory. */
+export async function resolveReplyMentions(
+  store: Store,
+  c: ChatConnection,
+  bridge: ChatBridge,
+  requested: string[],
+) {
+  if (!requested.length) return [];
+  assert(
+    chatCapabilities(c).mentions,
+    'CHAT_UNSUPPORTED',
+    'Native mentions unavailable on this adapter.',
+  );
+  let members: any[] | undefined;
+  const known = store.maybe<any>('chat-member-cache', c.id);
+  if (known?.route === memberCacheRoute(c) && known.at > Date.now() - 300000)
+    members = known.members;
+  let refreshed = false;
+  const refresh = async () => {
+    const result = await bridge.query(c, 'members');
+    const latest = store.maybe<ChatConnection>('chat-connection', c.id);
+    assert(
+      latest?.enabled && memberCacheRoute(latest) === memberCacheRoute(c),
+      'CHAT_CHANGED',
+      'Chat changed during member lookup; prepare the reply again in the current chat.',
+    );
+    cacheChatMembers(store, c, result);
+    members = result;
+    refreshed = true;
+  };
+  const resolved: string[] = [];
+  for (const token of requested) {
+    const who = token.trim();
+    assert(
+      who && who !== 'all' && who !== c.accountId,
+      'CHAT_MENTION',
+      'Mention an individual member, not everyone or this bot.',
+    );
+    try {
+      validateReplyPlan(store, c, { mentions: [who] });
+      resolved.push(who);
+      continue;
+    } catch (error) {
+      if ((error as any)?.code !== 'CHAT_MEMBER') throw error;
+    }
+    if (!members) await refresh();
+    const matches = () => {
+      const exact = members!.filter((m) => m.id === who);
+      return exact.length
+        ? exact
+        : members!.filter((m) =>
+            [m.name, m.card].some(
+              (n) => typeof n === 'string' && n.trim() === who.replace(/^@/, ''),
+            ),
+          );
+    };
+    let found = matches();
+    if (!found.length && !refreshed) {
+      await refresh();
+      found = matches();
+    }
+    const ids = [...new Set(found.map((m) => m.id))];
+    assert(
+      ids.length !== 0,
+      'CHAT_MEMBER',
+      'No exact member ID or name match in this current group. Use list_chat_members to obtain the platform ID; this is a lookup failure, not a missing mention capability.',
+    );
+    assert(
+      ids.length === 1,
+      'CHAT_MEMBER_AMBIGUOUS',
+      'Several members share this name. Use list_chat_members and choose the intended platform ID; do not guess.',
+    );
+    validateReplyPlan(store, c, { mentions: [ids[0]] });
+    resolved.push(ids[0]);
+  }
+  return [...new Set(resolved)];
+}
+
 export function validateReplyPlan(store: Store, c: ChatConnection, plan: ChatReplyPlan) {
   assert(
     !plan.messages ||
@@ -103,9 +201,12 @@ export function validateReplyPlan(store: Store, c: ChatConnection, plan: ChatRep
       .get(c.id, who, Date.now() - 86400000);
     const known = store.maybe<any>('chat-member-cache', c.id);
     assert(
-      observed || (known?.at > Date.now() - 300000 && known.members.some((m: any) => m.id === who)),
+      observed ||
+        (known?.route === memberCacheRoute(c) &&
+          known.at > Date.now() - 300000 &&
+          known.members.some((m: any) => m.id === who)),
       'CHAT_MEMBER',
-      'Member was not observed or queried in this chat.',
+      'Use a platform member ID from this chat, not a display name. Query list_chat_members for an unknown or expired member; mentions are supported.',
     );
   }
   if (plan.replyTo) {

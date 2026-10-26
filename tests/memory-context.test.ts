@@ -57,3 +57,17 @@ test('reinforcement cannot revive a hold or count replay, and strength is bounde
   );
   assert.equal(experienceOutcome({ verification: { passed: true } }), 'success');
 });
+
+test('old source quotation beyond its first window is restored for a later revision', () => {
+  const text = 'x'.repeat(6000) + 'Original tested procedure';
+  const result = memoryContext(
+    [
+      { id: 1, at: 1, text },
+      { id: 9, at: 9, text: 'update' },
+    ],
+    [{ id: 9, at: 9, text: 'update' }],
+    [{ evidence: [{ eventId: 1, quote: 'Original tested procedure' }] } as any],
+    () => true,
+  );
+  assert.ok(result[0].text.includes('Original tested procedure'));
+});

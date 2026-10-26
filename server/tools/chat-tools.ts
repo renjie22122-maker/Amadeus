@@ -7,7 +7,13 @@ import {
 import { normalizeImage } from '../services/images.js';
 import { z } from 'zod';
 import type { ToolRegistry } from './registry.js';
-import { currentChat, chatCapabilities, validateReplyPlan } from '../services/chat-interaction.js';
+import {
+  currentChat,
+  chatCapabilities,
+  validateReplyPlan,
+  cacheChatMembers,
+  resolveReplyMentions,
+} from '../services/chat-interaction.js';
 const text = (x: unknown) => ({ content: JSON.stringify(x) });
 export function installChatTools(registry: ToolRegistry) {
   registry.add({
@@ -151,7 +157,7 @@ export function installChatTools(registry: ToolRegistry) {
     run: async (a, ctx) => {
       const { c, bridge } = currentChat(ctx.store, ctx.conversation.id, ctx.run.id);
       const members = await bridge.query(c, 'members');
-      ctx.store.put('chat-member-cache', { id: c.id, at: Date.now(), members });
+      cacheChatMembers(ctx.store, c, members);
       const matching = members.filter((m: any) =>
         [m.id, m.name, m.card].some((v) =>
           String(v || '')
@@ -224,7 +230,13 @@ export function installChatTools(registry: ToolRegistry) {
           'One entry per intended platform bubble, in order. Choose by conversational meaning, not line breaks. Omit for one coherent final answer; do not force multiple bubbles. These entries replace the final answer on the platform.',
         ),
       mediaOnly: z.boolean().default(false),
-      mentions: z.array(z.string().min(1).max(160)).max(5).default([]),
+      mentions: z
+        .array(z.string().min(1).max(160))
+        .max(5)
+        .default([])
+        .describe(
+          'Platform member IDs from list_chat_members or observed senders in this current group. A unique exact platform nickname/card can be resolved automatically; ambiguous names require the actual ID. Never invent IDs or use @all.',
+        ),
       replyTo: z.string().min(1).max(256).optional(),
       faces: z
         .array(z.string().regex(/^\d{1,5}$/))
@@ -240,8 +252,13 @@ export function installChatTools(registry: ToolRegistry) {
         .max(3)
         .default([]),
     }),
-    run: (a, ctx) => {
-      const { c } = currentChat(ctx.store, ctx.conversation.id, ctx.run.id);
+    run: async (a, ctx) => {
+      const { c, bridge } = currentChat(ctx.store, ctx.conversation.id, ctx.run.id);
+      const mentions = await resolveReplyMentions(ctx.store, c, bridge, a.mentions);
+      const latest = currentChat(ctx.store, ctx.conversation.id, ctx.run.id).c;
+      if (latest.revision !== c.revision || latest.peerId !== c.peerId)
+        throw Error('Chat changed while preparing reply');
+      a = { ...a, mentions };
       validateReplyPlan(ctx.store, c, a);
       for (const ref of a.references) {
         if (ref.startsWith('attachment:')) {
@@ -258,6 +275,7 @@ export function installChatTools(registry: ToolRegistry) {
       });
       return text({
         prepared: true,
+        mentions,
         target: c.peerId,
         delivery: 'queued-after-run-completes',
         textSource: a.mediaOnly ? 'none' : a.messages ? 'messages' : 'final-answer',

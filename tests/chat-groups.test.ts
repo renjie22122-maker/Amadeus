@@ -1420,3 +1420,45 @@ test('NapCat embedded forward content is paginated locally when child IDs are no
   assert.equal(page.forwarded.nextOffset, 40);
   assert.equal(page.forwarded.messages[0].items[0].text, 'record 20');
 });
+
+test('mention names resolve exactly within current roster; collisions and cross-route cache never guess', async (t) => {
+  const { store, c } = setup(t);
+  const { resolveReplyMentions, cacheChatMembers } =
+    await import('../server/services/chat-interaction.js');
+  let calls = 0;
+  const bridge: any = {
+    query: async (target: any) => {
+      calls++;
+      assert.equal(target.peerId, c.peerId);
+      return [
+        { id: '123', name: 'Known Name', card: 'Card' },
+        { id: '124', name: 'Duplicate', card: '' },
+        { id: '125', name: 'Duplicate', card: '' },
+      ];
+    },
+  };
+  assert.deepEqual(await resolveReplyMentions(store, c, bridge, ['Known Name', 'Card']), ['123']);
+  assert.equal(calls, 1);
+  await assert.rejects(
+    () => resolveReplyMentions(store, c, bridge, ['Duplicate']),
+    /Several members/,
+  );
+  await assert.rejects(() => resolveReplyMentions(store, c, bridge, ['Known']), /No exact/);
+  await assert.rejects(() => resolveReplyMentions(store, c, bridge, ['all']), /individual/);
+  cacheChatMembers(store, { ...c, peerId: 'foreign' }, [{ id: '999', name: 'Foreign', card: '' }]);
+  await assert.rejects(() => resolveReplyMentions(store, c, bridge, ['Foreign']), /No exact/);
+  assert.ok(calls >= 3);
+});
+
+test('mention refresh rejects a route change while awaiting platform members', async (t) => {
+  const { store, c } = setup(t);
+  const { resolveReplyMentions } = await import('../server/services/chat-interaction.js');
+  const bridge: any = {
+    query: async () => {
+      store.put('chat-connection', { ...c, peerId: 'changed', revision: c.revision + 1 });
+      return [{ id: '123', name: 'Known', card: '' }];
+    },
+  };
+  await assert.rejects(() => resolveReplyMentions(store, c, bridge, ['Known']), /Chat changed/);
+  assert.equal(store.maybe('chat-member-cache', c.id), undefined);
+});
