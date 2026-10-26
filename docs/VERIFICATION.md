@@ -84,3 +84,5 @@ Windows run 39798050028 failed three runtime coordination/readiness tests during
 The follow-up Windows run exposed an unrelated DPAPI subprocess timeout in a group-conversation fixture. Group behavior tests now mock only the credential codec using the test runner's automatically restored mocks. The actual Windows DPAPI round-trip test is retained and runs in its own phase before runtime tests, without competing test files. Production encryption and its fail-closed behavior are unchanged.
 
 Windows bot launcher tests run serially across files. Each noninteractive PowerShell fixture has a bounded 60-second startup-and-execution budget, no retry, and reports elapsed time, spawn errors, exit status, signal and captured output on failure. Functional assertions remain unchanged; this budget is not a production command timeout.
+
+Runtime functional-state polling has at least 30 seconds of bounded scheduling allowance on all platforms. It does not change production timeouts or the assertions for retry counts, partial output and tool execution; performance assertions must be explicit rather than inferred from fixture polling.

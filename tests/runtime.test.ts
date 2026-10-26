@@ -49,10 +49,17 @@ const result = (content: string, calls?: any[]) => ({
   message: { role: 'assistant' as const, content, calls },
   usage: { input: 10, output: 2, cached: 0, measured: true },
 });
+// Functional completion polling is not a latency assertion. Hosted runners can
+// pause synchronous SQLite/OS work for seconds; retain a bounded scheduling margin.
+// Production deadlines and assertions about retry counts remain unchanged.
 async function until(fn: () => boolean, ms = 3000) {
-  const end = Date.now() + ms;
+  const budgetMs = Math.max(ms, 30000);
+  const started = performance.now();
   while (!fn()) {
-    if (Date.now() > end) throw new Error('Timed out');
+    if (performance.now() - started > budgetMs)
+      throw new Error(
+        `State predicate did not become true: elapsedMs=${Math.round(performance.now() - started)}, budgetMs=${budgetMs}`,
+      );
     await new Promise((r) => setTimeout(r, 10));
   }
 }
