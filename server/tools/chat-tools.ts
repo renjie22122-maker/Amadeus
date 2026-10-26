@@ -1,4 +1,9 @@
-import { inspectNotebook, updateNotebook, notebookInput } from '../services/chat-notebook.js';
+import {
+  modelNotebook,
+  inspectNotebook,
+  updateNotebook,
+  notebookInput,
+} from '../services/chat-notebook.js';
 import { normalizeImage } from '../services/images.js';
 import { z } from 'zod';
 import type { ToolRegistry } from './registry.js';
@@ -14,7 +19,7 @@ export function installChatTools(registry: ToolRegistry) {
     schema: z.object({}),
     run: async (_a, ctx) => {
       const { c } = currentChat(ctx.store, ctx.conversation.id, ctx.run.id);
-      return text(inspectNotebook(ctx.store, c));
+      return text(modelNotebook(inspectNotebook(ctx.store, c)));
     },
   });
   registry.add({
@@ -22,10 +27,17 @@ export function installChatTools(registry: ToolRegistry) {
     effect: 'coordinate',
     description:
       'Maintain concise learned style/persona preferences and diary for this connected chat only. Inspect first, cite sourceEventIds, retain attribution and corrections, use current revision. No permission changes or cross-chat sharing. Do not treat a member opinion as unanimous agreement. Omit automatic: only the local user may change it.',
-    schema: notebookInput.omit({ automatic: true, tone: true, mbti: true }),
+    schema: notebookInput.omit({
+      automatic: true,
+      tone: true,
+      mbti: true,
+      brief: true,
+      references: true,
+      presets: true,
+    }),
     run: async (a, ctx) => {
       const { c } = currentChat(ctx.store, ctx.conversation.id, ctx.run.id);
-      return text(updateNotebook(ctx.store, c, a, 'bot'));
+      return text(modelNotebook(updateNotebook(ctx.store, c, a, 'bot')));
     },
   });
   registry.add({

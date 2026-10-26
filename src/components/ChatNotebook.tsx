@@ -1,3 +1,4 @@
+import { styleReferences, blendStyleReferences } from '../../shared/chat-personas';
 import { useState, useRef } from 'react';
 import { api } from '../api';
 import {
@@ -20,11 +21,22 @@ export function ChatNotebook({
     [busy, setBusy] = useState(false),
     [dirty, setDirty] = useState(false),
     [history, setHistory] = useState<any>(null);
+  const [search, setSearch] = useState(''),
+    [customName, setCustomName] = useState(''),
+    [customDescription, setCustomDescription] = useState(''),
+    [presetName, setPresetName] = useState('');
   const tr = (cn: string, en: string) => (zh ? cn : en);
   const load = async () => {
     try {
       const d = await api('/chat-connections/' + id + '/notebook');
-      setData({ ...d, tone: { ...defaults, ...d.tone }, mbti: d.mbti || '' });
+      setData({
+        brief: '',
+        references: [],
+        presets: [],
+        ...d,
+        tone: { ...defaults, ...d.tone },
+        mbti: d.mbti || '',
+      });
       setDirty(false);
     } catch (e: any) {
       notify(e.message);
@@ -38,6 +50,9 @@ export function ChatNotebook({
     setBusy(true);
     try {
       await api('/chat-connections/' + id + '/notebook', {
+        brief: data.brief,
+        references: data.references,
+        presets: data.presets,
         revision: data.revision,
         style: data.style,
         diary: data.diary,
@@ -77,6 +92,196 @@ export function ChatNotebook({
             <summary>
               {tr('人格与表达快捷调整', 'Quick personality and expression controls')}
             </summary>
+            <label>
+              {tr('一句话风格意图', 'Style intent')}
+              <textarea
+                rows={2}
+                maxLength={2000}
+                value={data.brief || ''}
+                onChange={(e) => edit({ brief: e.target.value })}
+              />
+            </label>
+            <details>
+              <summary>
+                {tr('属性参考库与混合组合', 'Style references and combinations')} ·{' '}
+                {(data.references || []).length}
+              </summary>
+              <p className="muted">
+                {tr(
+                  '包含附件 30 种 OC 参考及补充类别；不是百科完整镜像。描述可混合，维度数值只是创作起点。',
+                  'Includes 30 OC references and additional categories; not a complete encyclopedia mirror. Axis values are editorial starting points.',
+                )}{' '}
+                <a href="https://zh.moegirl.org.cn/萌属性" target="_blank" rel="noreferrer">
+                  {tr('萌属性目录', 'Reference taxonomy')}
+                </a>
+              </p>
+              <input
+                aria-label={tr('搜索属性', 'Search references')}
+                placeholder={tr('搜索名称、分类或描述', 'Search name, category or description')}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <div style={{ maxHeight: 240, overflow: 'auto' }}>
+                {styleReferences
+                  .filter((r) => (r.name + r.category + r.description).includes(search))
+                  .map((r) => (
+                    <label key={r.id} className="chat-notebook-auto">
+                      <input
+                        type="checkbox"
+                        checked={data.references.some((x: any) => x.name === r.name)}
+                        disabled={
+                          data.references.length >= 32 &&
+                          !data.references.some((x: any) => x.name === r.name)
+                        }
+                        onChange={(e) =>
+                          edit({
+                            references: e.target.checked
+                              ? [
+                                  ...data.references,
+                                  { name: r.name, description: r.description, strength: 70 },
+                                ]
+                              : data.references.filter((x: any) => x.name !== r.name),
+                          })
+                        }
+                      />
+                      <span>
+                        <strong>{r.name}</strong> · {r.category}
+                        <br />
+                        {r.description}
+                      </span>
+                    </label>
+                  ))}
+              </div>
+              {data.references.map((r: any, i: number) => (
+                <div key={i}>
+                  <label>
+                    {r.name} · {r.strength}
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={r.strength}
+                      onChange={(e) =>
+                        edit({
+                          references: data.references.map((v: any, j: number) =>
+                            j === i ? { ...v, strength: Number(e.target.value) } : v,
+                          ),
+                        })
+                      }
+                    />
+                  </label>
+                  <small>{r.description}</small>
+                  <button
+                    onClick={() =>
+                      edit({ references: data.references.filter((_: any, j: number) => j !== i) })
+                    }
+                  >
+                    {tr('移除', 'Remove')}
+                  </button>
+                </div>
+              ))}
+              <input
+                aria-label="Reference name"
+                placeholder={tr('自定义属性名称', 'Custom reference name')}
+                maxLength={80}
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+              />
+              <textarea
+                aria-label="Reference description"
+                placeholder={tr(
+                  '用自己的话描述表现、情境或例外',
+                  'Describe expression, context or exceptions',
+                )}
+                maxLength={400}
+                value={customDescription}
+                onChange={(e) => setCustomDescription(e.target.value)}
+              />
+              <button
+                disabled={
+                  !customName.trim() || !customDescription.trim() || data.references.length >= 32
+                }
+                onClick={() => {
+                  edit({
+                    references: [
+                      ...data.references,
+                      {
+                        name: customName.trim(),
+                        description: customDescription.trim(),
+                        strength: 70,
+                      },
+                    ],
+                  });
+                  setCustomName('');
+                  setCustomDescription('');
+                }}
+              >
+                {tr('添加自定义参考', 'Add custom reference')}
+              </button>
+              <button onClick={() => edit({ tone: blendStyleReferences(data.references) })}>
+                {tr('按所选组合调整三个维度图', 'Apply combination to tone charts')}
+              </button>
+              <p className="muted">
+                {tr(
+                  '外观、身份和自定义描述保留为文字，不自动推断维度。调整组合不会覆盖日记。',
+                  'Appearance, identity and custom descriptions stay textual; no inferred axis scores. Diary stays separate.',
+                )}
+              </p>
+            </details>
+            <details>
+              <summary>{tr('我的快捷组合', 'My saved combinations')}</summary>
+              <input
+                aria-label="Combination name"
+                maxLength={80}
+                value={presetName}
+                placeholder={tr('组合名称', 'Combination name')}
+                onChange={(e) => setPresetName(e.target.value)}
+              />
+              <button
+                disabled={!presetName.trim() || data.presets.length >= 20}
+                onClick={() => {
+                  edit({
+                    presets: [
+                      ...data.presets,
+                      {
+                        name: presetName.trim(),
+                        brief: data.brief,
+                        references: data.references,
+                        tone: data.tone,
+                        mbti: data.mbti,
+                      },
+                    ],
+                  });
+                  setPresetName('');
+                }}
+              >
+                {tr('保存当前组合', 'Keep current combination')}
+              </button>
+              {data.presets.map((p: any, i: number) => (
+                <div key={i}>
+                  <button
+                    onClick={() =>
+                      edit({ brief: p.brief, references: p.references, tone: p.tone, mbti: p.mbti })
+                    }
+                  >
+                    {p.name}
+                  </button>
+                  <button
+                    onClick={() =>
+                      edit({ presets: data.presets.filter((_: any, j: number) => j !== i) })
+                    }
+                  >
+                    {tr('删除组合', 'Delete combination')}
+                  </button>
+                </div>
+              ))}
+              <small>
+                {tr(
+                  '仅保存风格意图、属性、维度和 MBTI；点击下方保存后持久化。',
+                  'Keeps intent, references, axes and MBTI only. Save below to persist.',
+                )}
+              </small>
+            </details>
             <div className="chat-connection-actions">
               {tonePresets.map((preset) => (
                 <button

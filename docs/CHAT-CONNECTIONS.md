@@ -197,3 +197,8 @@ Remote projections now replace previous chat snapshots instead of becoming repea
 Nested forwards expose scoped child message handles and pagination. Embedded NapCat content is preferred over re-fetching internal IDs (which can return 1200 even though content is already present). Remote child lookup is used only when needed, with cycle/depth protection. Forwarded identities remain claims; media still requires inspection. Missing or expired platform content cannot be reconstructed.
 
 Validation: an isolated real checkpoint recovery used a synthetic summary and exact source retention checks (estimated 1,293,953 to 24,589 tokens; not an online semantic-quality claim). Read-only inspection of the reported real forward exposed four embedded records of 100/100/98/11 messages. Synthetic regression additionally covers six remote levels, cycles and cross-chat rejection.
+
+### Composable style references
+Remote chat settings include 30 supplied OC references plus additional personality, language, habit, fictional identity, appearance and relationship categories inspired by the [Moegirl taxonomy](https://zh.moegirl.org.cn/萌属性). This is a curated catalog, not a complete encyclopedia mirror. Search, mix weighted references or add custom descriptions. Axis values are editable creative starting points; appearance and identity have no inferred scores.
+
+Named combinations retain intent, selected references, tone axes and optional MBTI within this chat only, excluding diary, history and permissions. Save applies them to the next turn. Only active references enter model context; the catalog and saved combinations are excluded from model tool results. Automatic learning preserves human controls.

@@ -121,3 +121,64 @@ test('notebook settings cannot grant capabilities or update manual dimensions th
   assert.ok(socialChatTools.has('update_chat_notebook'));
   assert.ok(!socialChatTools.has('run_command'));
 });
+
+test('reference combinations stay scoped, preserve human controls and exclude saved library from context', async (t) => {
+  const { store, c, source } = fixture(t);
+  const { styleReferences, blendStyleReferences } = await import('../shared/chat-personas.js');
+  const { modelNotebook } = await import('../server/services/chat-notebook.js');
+  assert.equal(styleReferences.filter((r) => r.id.startsWith('oc-')).length, 31);
+  assert.equal(new Set(styleReferences.map((r) => r.id)).size, styleReferences.length);
+  const references = styleReferences
+    .slice(0, 2)
+    .map((r) => ({ name: r.name, description: r.description, strength: 70 }));
+  const tone = blendStyleReferences(references);
+  assert.ok(Object.values(tone).every((v) => v >= 0 && v <= 100));
+  assert.deepEqual(
+    blendStyleReferences([{ name: 'custom', description: 'No axis inference', strength: 100 }]),
+    defaultTone,
+  );
+  const note = updateNotebook(
+    store,
+    c,
+    {
+      revision: 0,
+      style: 'style',
+      diary: 'private diary',
+      brief: 'Flexible intent',
+      references,
+      tone,
+      presets: [{ name: 'stored-only-marker', brief: 'saved', references, tone, mbti: '' }],
+      reason: 'human',
+    },
+    'human',
+  );
+  assert.equal(note.references.length, 2);
+  assert.ok(notebookContext(store, c).includes('Flexible intent'));
+  assert.ok(!notebookContext(store, c).includes('stored-only-marker'));
+  assert.equal((modelNotebook(inspectNotebook(store, c)) as any).presets, undefined);
+  assert.equal(chatNotebook(store, { ...c, peerId: 'other' }).references.length, 0);
+  assert.throws(() =>
+    updateNotebook(
+      store,
+      c,
+      {
+        revision: 1,
+        style: 'style',
+        diary: 'diary',
+        brief: 'override',
+        reason: 'bot',
+        sourceEventIds: [source.id],
+      },
+      'bot',
+    ),
+  );
+  const learned = updateNotebook(
+    store,
+    c,
+    { revision: 1, style: 'learned', diary: 'updated', reason: 'bot', sourceEventIds: [source.id] },
+    'bot',
+  );
+  assert.equal(learned.brief, 'Flexible intent');
+  assert.deepEqual(learned.references, references);
+  assert.deepEqual(notebookRevision(store, c, 2).previous.references, references);
+});
