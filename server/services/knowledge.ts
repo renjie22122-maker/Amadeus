@@ -937,12 +937,17 @@ export class Knowledge {
       const target = retrievalTarget('lightRag', c);
       const id = createHash('sha256').update(target).digest('hex');
       const previous = this.store.maybe<any>('lightrag-sync', id);
+      const at = Date.now();
+      const currentDocuments = new Set(
+        this.store
+          .list<any>('document')
+          .filter((doc) => doc.scope === c.scope && documentAt(doc, at))
+          .map((doc) => doc.id),
+      );
       const rows = this.store.db
         .prepare('SELECT id,document_id FROM chunks WHERE scope=? ORDER BY document_id,ordinal')
         .all(c.scope)
-        .filter((r: any) =>
-          documentAt(this.store.maybe('document', r.document_id), Date.now()),
-        ) as any[];
+        .filter((r: any) => currentDocuments.has(r.document_id)) as any[];
       const completed = new Set<string>(previous?.completed || []);
       if (previous?.jobId) {
         let job = await retrievalPost('lightRag', c, '/documents/status', {

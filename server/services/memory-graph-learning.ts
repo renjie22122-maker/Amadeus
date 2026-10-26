@@ -58,8 +58,8 @@ export async function learnMemoryGraph(
         m.sourceConversationId === c.id &&
         m.automatic &&
         memoryValid(m) &&
-        life.evidenceValid(m) &&
         !store.maybe('memory-graph-learning', keyFor(m)) &&
+        life.evidenceValid(m) &&
         !/(?:sk-[a-z0-9_-]{12,}|password|api[_ -]?key|密钥|密码)/i.test(m.content),
     )
     .slice(0, 4)
@@ -69,7 +69,7 @@ export async function learnMemoryGraph(
         return source ? [{ m, original: source.text }] : [];
       }
       const event = store
-        .events(c.id)
+        .events(c.id, 0, 'user.message')
         .find(
           (e) => e.id === m.sourceEventId && e.type === 'user.message' && !e.data.scheduledTrigger,
         );

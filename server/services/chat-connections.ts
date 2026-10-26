@@ -854,7 +854,7 @@ export class ChatConnections {
   private offerApprovals(c: ChatConnection) {
     const rows = this.store.db
       .prepare(
-        "SELECT data FROM records WHERE kind='input' AND json_extract(data,'$.status')='pending' ORDER BY json_extract(data,'$.createdAt') DESC LIMIT 100",
+        "SELECT data FROM records INDEXED BY records_pending_inputs WHERE kind='input' AND json_extract(data,'$.status')='pending' ORDER BY json_extract(data,'$.createdAt') DESC LIMIT 100",
       )
       .all() as { data: string }[];
     for (const row of rows) {
