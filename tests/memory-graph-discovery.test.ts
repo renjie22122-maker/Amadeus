@@ -287,3 +287,57 @@ test('graph verifies duplicate quotes once per search, rechecks changes, and use
     store.close();
   }
 });
+
+test('graph retries failed and abandoned text extraction with backoff, stops at five, honors consent', async () => {
+  const store = new Store(':memory:');
+  try {
+    const c: any = { id: 'a', projectId: null },
+      profile: any = { id: 'p', model: 'm', baseUrl: 'https://model.example', timeoutMs: 1000 };
+    store.put('conversation', c);
+    const source = store.event('a', null, 'user.message', { content: 'Atlas depends on SQLite' });
+    new MemoryLifecycle(store).create({
+      id: 'm',
+      scope: 'user',
+      source: 'User',
+      sourceConversationId: 'a',
+      sourceEventId: source.id,
+      content: 'Atlas depends on SQLite',
+      automatic: true,
+      active: true,
+      revision: 1,
+      createdAt: 1,
+      expiresAt: null,
+    });
+    let calls = 0;
+    const provider: any = {
+      complete: async () => {
+        calls++;
+        throw Error('Temporary failure');
+      },
+    };
+    const invoke = (allowed = true) =>
+      learnMemoryGraph(store, c, profile, provider, new AbortController().signal, () => allowed);
+    await invoke();
+    assert.equal(calls, 1);
+    await invoke();
+    assert.equal(calls, 1);
+    for (let i = 1; i < 5; i++) {
+      const job = store.list<any>('memory-graph-learning')[0];
+      store.put('memory-graph-learning', { ...job, nextAttemptAt: 0 });
+      await invoke();
+    }
+    assert.equal(calls, 5);
+    assert.equal(store.list<any>('memory-graph-learning')[0].status, 'exhausted');
+    await invoke();
+    assert.equal(calls, 5);
+    const job = store.list<any>('memory-graph-learning')[0];
+    store.put('memory-graph-learning', { ...job, status: 'running', attempts: 1, startedAt: 1 });
+    await invoke(false);
+    assert.equal(calls, 5);
+    await invoke();
+    assert.equal(calls, 6);
+    assert.equal(store.list('knowledge-edge').length, 0);
+  } finally {
+    store.close();
+  }
+});

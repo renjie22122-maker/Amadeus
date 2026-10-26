@@ -338,11 +338,12 @@ test('automatic learning retains reusable evolving facts with source time and co
     });
     await learning.tick();
     const reports = f.store.list<any>('memory');
-    assert.equal(reports.length, 2);
-    assert.equal(reports.filter((x) => x.active).length, 2);
-    assert.ok(
-      reports.some((x) => x.sourceEventId === event.id && x.observedAt === event.createdAt),
-    );
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].active, true);
+    assert.equal(reports[0].reinforcedAt, event.createdAt);
+    assert.equal(reports[0].reinforcementCount, 1);
+    assert.equal(reports[0].observedAt, m.observedAt);
+    assert.ok(reports[0].evidence.some((e: any) => e.eventId === event.id));
   } finally {
     await learning.close();
     f.store.close();
@@ -535,5 +536,238 @@ test('maintenance sorting reads extraction history once rather than once per com
     assert.equal(reads, 1);
   } finally {
     store.close();
+  }
+});
+
+test('overlapping extraction resolves earlier sources without replaying them', async () => {
+  const f = await fixture();
+  let batch = 0;
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async (req) => {
+      const input = JSON.parse(req.messages[1].content);
+      batch++;
+      if (batch === 1) return response([f.item]);
+      assert.ok(input.contextMessages.some((m: any) => m.id === f.eid));
+      assert.ok(!input.messages.some((m: any) => m.id === f.eid));
+      const last = input.messages.at(-1);
+      const old = f.store.list<any>('memory')[0];
+      return response([
+        {
+          ...f.item,
+          content: 'Prefers concise answers with examples.',
+          eventId: last.id,
+          quote: last.text,
+          updatesMemoryId: old.id,
+          supportingEvidence: [{ eventId: f.eid, quote: f.item.quote }],
+        },
+      ]);
+    },
+  }));
+  try {
+    await learning.tick();
+    f.store.event('chat', 'run', 'user.message', { content: 'Add examples to that style.' });
+    await learning.tick();
+    const memories = f.store.list<any>('memory');
+    assert.equal(memories.length, 1);
+    assert.equal(memories[0].revision, 2);
+    assert.equal(memories[0].evidence.length, 2);
+    assert.ok(f.store.list('memory-history').length >= 2);
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});
+
+test('long human sources continue past the first excerpt and compaction fences remain readable', async () => {
+  const f = await fixture();
+  f.store.put('run', { id: 'run', conversationId: 'chat', status: 'running', checkpoints: [] });
+  const long = f.store.event('chat', 'run', 'user.message', {
+    content: 'x'.repeat(5000) + 'Remember the final constraint.',
+  });
+  f.store.event('chat', 'run', 'context.compacting', {});
+  const after = f.store.event('chat', 'run', 'user.message', { content: 'not fenced yet' });
+  let sawTail = false;
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async (req) => {
+      const input = JSON.parse(req.messages[1].content);
+      assert.ok(!input.messages.some((m: any) => m.id === after.id));
+      const src = input.messages.find((m: any) => m.id === long.id);
+      if (src?.text.includes('Remember the final constraint.')) sawTail = true;
+      return response([]);
+    },
+  }));
+  try {
+    await learning.tick();
+    assert.equal(f.store.get<any>('memory-source-progress', 'chat:' + long.id).status, 'pending');
+    const legacy = f.store.get<any>('memory-source-progress', 'chat:' + long.id);
+    delete legacy.offset;
+    f.store.put('memory-source-progress', { ...legacy, status: 'completed' });
+    await learning.tick();
+    assert.equal(sawTail, true);
+    assert.equal(f.store.get<any>('memory-source-progress', 'chat:' + long.id).status, 'completed');
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});
+
+test('only evidenced procedure outcomes activate; failure is conditional and timeout is not learned', async () => {
+  const f = await fixture();
+  f.store.put('conversation', { ...f.c, automaticMemory: true });
+  const failed = f.store.event('chat', 'run', 'tool.completed', {
+    output: 'validation rejected the unsupported format',
+    verification: { passed: false },
+    outcome: { status: 'failed', executionStarted: true, code: 'EXIT_NONZERO' },
+  });
+  const timeout = f.store.event('chat', 'run', 'tool.completed', {
+    output: '{"timedOut":true}',
+    verification: { passed: false },
+    outcome: { status: 'failed', executionStarted: true, code: 'TIMEOUT' },
+  });
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async (req) => {
+      const input = JSON.parse(req.messages[1].content);
+      assert.ok(
+        input.messages.some((m: any) => m.id === failed.id && m.experienceOutcome === 'failure'),
+      );
+      assert.ok(!input.messages.some((m: any) => m.id === timeout.id));
+      return response([
+        {
+          content: 'Validate supported formats before import; this format was rejected.',
+          topic: 'import-method',
+          eventId: failed.id,
+          quote: 'validation rejected the unsupported format',
+          kind: 'experience',
+          conditions: 'same importer and unsupported format',
+          conflictsWith: [],
+        },
+      ]);
+    },
+  }));
+  try {
+    await learning.tick();
+    const m = f.store.list<any>('memory')[0];
+    assert.equal(m.kind, 'experience');
+    assert.equal(m.active, true);
+    assert.equal(m.experienceOutcome, 'failure');
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});
+
+test('changing supporting old context during extraction discards the revision', async () => {
+  const f = await fixture();
+  let call = 0;
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async (req) => {
+      if (++call === 1) return response([f.item]);
+      const input = JSON.parse(req.messages[1].content),
+        latest = input.messages.at(-1);
+      f.store.db
+        .prepare('UPDATE events SET data=? WHERE id=?')
+        .run(JSON.stringify({ content: 'Changed original source' }), f.eid);
+      return response([
+        {
+          ...f.item,
+          eventId: latest.id,
+          quote: latest.text,
+          content: 'Changed preference',
+          updatesMemoryId: f.store.list<any>('memory')[0].id,
+          supportingEvidence: [{ eventId: f.eid, quote: f.item.quote }],
+        },
+      ]);
+    },
+  }));
+  try {
+    await learning.tick();
+    f.store.event('chat', 'run', 'user.message', { content: 'Expand that preference' });
+    await learning.tick();
+    assert.equal(f.store.list<any>('memory')[0].content, f.item.content);
+    assert.equal(f.store.list<any>('memory-learning').at(-1).reason, 'source_changed');
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});
+
+test('unrelated active tasks no longer starve eligible memory relation learning', async () => {
+  const f = await fixture();
+  f.store.put('conversation', { ...f.c, automaticMemory: true });
+  let relationCalls = 0;
+  f.store.put('run', {
+    id: 'elsewhere',
+    conversationId: 'elsewhere',
+    status: 'running',
+    checkpoints: [],
+  });
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async (req) => {
+      if (req.messages[0].content.startsWith('Extract explicit semantic relations')) {
+        relationCalls++;
+        return {
+          ...response([]),
+          message: { role: 'assistant' as const, content: '{"relations":[]}' },
+        };
+      }
+      return response([f.item]);
+    },
+  }));
+  try {
+    await learning.tick();
+    await learning.tick();
+    assert.equal(relationCalls, 1);
+    assert.equal(f.store.list<any>('memory-graph-learning')[0].status, 'completed');
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});
+
+test('a sourced later agreement can refine a candidate but never revive a user-disabled memory', async () => {
+  for (const disabled of [false, true]) {
+    const f = await fixture();
+    let round = 0;
+    const learning = new MemoryLearning(f.store, f.config, () => ({
+      complete: async (req) => {
+        if (++round === 1) return response([{ ...f.item, kind: 'decision', basis: 'proposal' }]);
+        const input = JSON.parse(req.messages[1].content),
+          latest = input.messages.at(-1),
+          old = f.store.list<any>('memory')[0];
+        return response([
+          {
+            ...f.item,
+            kind: 'decision',
+            basis: 'agreement',
+            content: 'Use the proposed concise style.',
+            eventId: latest.id,
+            quote: latest.text,
+            updatesMemoryId: old.id,
+            supportingEvidence: [{ eventId: f.eid, quote: f.item.quote }],
+          },
+        ]);
+      },
+    }));
+    try {
+      await learning.tick();
+      const before = f.store.list<any>('memory')[0];
+      assert.equal(before.status, 'candidate');
+      if (disabled) {
+        const { MemoryLifecycle } = await import('../server/services/memory-lifecycle.js');
+        new MemoryLifecycle(f.store).update(before.id, { active: false }, before.revision);
+      }
+      f.store.put('conversation', { ...f.c, automaticMemory: true });
+      f.store.event('chat', 'run', 'user.message', {
+        content: 'Yes, use the style I just proposed.',
+      });
+      await learning.tick();
+      const after = f.store.list<any>('memory')[0];
+      assert.equal(after.active, !disabled);
+      assert.equal(after.status, disabled ? 'inactive' : 'active');
+      assert.equal(f.store.list('memory').length, 1);
+    } finally {
+      await learning.close();
+      f.store.close();
+    }
   }
 });

@@ -303,9 +303,44 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
               )
               .map((j: any) => (
                 <p key={j.id}>
-                  {new Date(j.at).toLocaleString()} · {j.status} · {j.added || 0}{' '}
-                  {t('settings') === 'Settings' ? 'added' : '新增'} · {j.candidates || 0}{' '}
-                  {t('settings') === 'Settings' ? 'candidates' : '待确认'} {j.reason || ''}
+                  {j.at ? new Date(j.at).toLocaleString() : '—'} ·{' '}
+                  {j.stage === 'relations'
+                    ? t('settings') === 'Settings'
+                      ? 'Relations'
+                      : '实体关系'
+                    : j.stage === 'index'
+                      ? t('settings') === 'Settings'
+                        ? 'Vector index'
+                        : '向量索引'
+                      : t('settings') === 'Settings'
+                        ? 'Memory extraction'
+                        : '记忆提取'}{' '}
+                  · {j.status} · {j.stage === 'index' ? j.indexed || 0 : j.added || 0}{' '}
+                  {j.stage === 'index'
+                    ? t('settings') === 'Settings'
+                      ? 'indexed'
+                      : '已索引'
+                    : t('settings') === 'Settings'
+                      ? 'added'
+                      : '新增'}{' '}
+                  · {j.stage === 'relations' ? j.deferred || 0 : j.candidates || 0}{' '}
+                  {j.stage === 'relations'
+                    ? t('settings') === 'Settings'
+                      ? 'not adopted'
+                      : '未采纳'
+                    : t('settings') === 'Settings'
+                      ? 'candidates'
+                      : '待确认'}{' '}
+                  {j.updated
+                    ? ` · ${j.updated} ${t('settings') === 'Settings' ? 'updated' : '修订'}`
+                    : ''}
+                  {j.reinforced
+                    ? ` · ${j.reinforced} ${t('settings') === 'Settings' ? 'reinforced' : '增强'}`
+                    : ''}
+                  {j.reason || ''} {j.attempts ? ` · ${j.attempts}/5` : ''}{' '}
+                  {j.nextAttemptAt && j.status !== 'completed'
+                    ? ` · ${t('settings') === 'Settings' ? 'Next retry' : '下次重试'} ${new Date(j.nextAttemptAt).toLocaleString()}`
+                    : ''}
                 </p>
               ))}
           </details>

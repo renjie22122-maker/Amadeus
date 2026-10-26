@@ -153,7 +153,21 @@ export async function createApp(options: { directory: string; dist?: string; run
       ? {}
       : {
           memories: memoryReviewViews(store),
-          memoryLearning: store.list('memory-learning').slice(-30),
+          memoryLearning: [
+            ...store.list<any>('memory-learning').map((j) => ({ ...j, stage: 'extraction' })),
+            ...store
+              .list<any>('memory-graph-learning')
+              .map((j) => ({
+                ...j,
+                stage: 'relations',
+                at: j.finishedAt || j.startedAt || j.nextAttemptAt,
+              })),
+            ...store
+              .list<any>('memory-index-maintenance')
+              .map((j) => ({ ...j, scope: j.id, stage: 'index' })),
+          ]
+            .sort((a, b) => (b.at || 0) - (a.at || 0))
+            .slice(0, 90),
           documents: store.list('document'),
         }),
     settings: config.public(),

@@ -318,6 +318,10 @@ export interface Memory {
   applicability?: 'conversation' | 'scope' | 'uncertain';
   stability?: 'stable' | 'evolving' | 'temporary';
   observedAt?: number;
+  experienceOutcome?: 'success' | 'failure';
+  reinforcementCount?: number;
+  reinforcedAt?: number;
+  reinforcedEventId?: number;
   topic?: string;
   automatic?: boolean;
   kind?: 'preference' | 'fact' | 'goal' | 'decision' | 'episode' | 'experience';

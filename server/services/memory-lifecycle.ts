@@ -1,3 +1,4 @@
+import { experienceOutcome } from './memory-experience.js';
 import { sharedChatMemorySupported } from './chat-memory-support.js';
 import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { memoryPartition, memoryConversation } from '../../shared/memory-scope.js';
@@ -102,7 +103,7 @@ export class MemoryLifecycle {
         return (
           scope === m.scope &&
           event?.type === 'tool.completed' &&
-          event.data.verification?.passed === true &&
+          !!experienceOutcome(event.data) &&
           (!e.quote || JSON.stringify(event.data).includes(e.quote))
         );
       })

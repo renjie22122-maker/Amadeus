@@ -9,6 +9,8 @@ export type MemorySource = {
   text: string;
   sender?: string;
   peerType?: string;
+  evidenceRole?: 'verified-tool';
+  experienceOutcome?: 'success' | 'failure';
 };
 /** Only host-created receipts/origins establish authorship; never parse prompt wrappers. */
 export function chatMemorySources(store: Store, conversationId: string): MemorySource[] {

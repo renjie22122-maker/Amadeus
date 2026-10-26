@@ -23,7 +23,7 @@ const resultSchema = z.object({
     .max(16),
 });
 
-// One bounded batch per idle maintenance cycle. Existing consent/connection applies;
+// One bounded batch per maintenance cycle. Existing consent/connection applies;
 // interrupted paid calls are recorded and never silently replayed.
 export async function learnMemoryGraph(
   store: Store,
@@ -58,7 +58,18 @@ export async function learnMemoryGraph(
         m.sourceConversationId === c.id &&
         m.automatic &&
         memoryValid(m) &&
-        !store.maybe('memory-graph-learning', keyFor(m)) &&
+        (() => {
+          const prior = store.maybe<any>('memory-graph-learning', keyFor(m));
+          return (
+            !prior ||
+            (['needs-review', 'retry_wait'].includes(prior.status) &&
+              (prior.attempts || 1) < 5 &&
+              (prior.nextAttemptAt || 0) <= Date.now()) ||
+            (prior.status === 'running' &&
+              (prior.attempts || 1) < 5 &&
+              (prior.startedAt || 0) + (profile.timeoutMs || 65000) + 30000 < Date.now())
+          );
+        })() &&
         life.evidenceValid(m) &&
         !/(?:sk-[a-z0-9_-]{12,}|password|api[_ -]?key|密钥|密码)/i.test(m.content),
     )
@@ -81,13 +92,14 @@ export async function learnMemoryGraph(
       id: keyFor(m),
       memoryId: m.id,
       scope,
+      attempts: (store.maybe<any>('memory-graph-learning', keyFor(m))?.attempts || 0) + 1,
       status: 'running',
       startedAt: Date.now(),
     });
   try {
     const result = await boundedReview(
       provider.complete({
-        profile: { ...profile, maxOutputTokens: 2048 },
+        profile,
         tools: [],
         signal,
         onText: () => {},
@@ -105,6 +117,7 @@ export async function learnMemoryGraph(
       }),
       signal,
     );
+    if (result.message.calls?.length) throw Error('Unexpected tool calls in relation extraction');
     const raw = result.message.content.trim();
     const data = resultSchema.parse(
       JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)),
@@ -187,15 +200,25 @@ export async function learnMemoryGraph(
         });
       }
     });
-  } catch {
+  } catch (error) {
     for (const { m } of batch)
       store.put('memory-graph-learning', {
         id: keyFor(m),
         scope,
         memoryId: m.id,
-        status: 'needs-review',
+        attempts: store.maybe<any>('memory-graph-learning', keyFor(m))?.attempts || 1,
+        nextAttemptAt:
+          Date.now() +
+          60000 *
+            2 ** Math.min(4, store.maybe<any>('memory-graph-learning', keyFor(m))?.attempts || 1),
+        category: error instanceof Error ? error.name : 'UnknownError',
+        status:
+          (store.maybe<any>('memory-graph-learning', keyFor(m))?.attempts || 1) >= 5
+            ? 'exhausted'
+            : 'retry_wait',
         reason:
-          'Extraction failed, was interrupted, or source/consent changed; no automatic replay.',
+          'No relations committed. Retrying eligible unchanged sources with backoff, up to five attempts; consent is rechecked.',
       });
   }
+  return batch.length;
 }

@@ -1,3 +1,4 @@
+import { chatMemorySources } from './chat-memory-source.js';
 import type { Memory } from '../../shared/types.js';
 import { memoryConversation } from '../../shared/memory-scope.js';
 import { Store } from '../storage/store.js';
@@ -10,15 +11,20 @@ export function memoryActivity(store: Store, memories: Memory[], at = Date.now()
     if (!chat || m.sourceEventId == null) continue;
     let events = cache.get(chat);
     if (!events) {
-      events = store
-        .events(chat, 0, 'user.message')
-        .filter((e) => !e.data.scheduledTrigger)
-        .filter((e) => e.createdAt <= at);
+      events = m.scope.startsWith('chat:')
+        ? chatMemorySources(store, chat)
+            .map((s) => ({ id: s.id, createdAt: s.at }))
+            .filter((e) => e.createdAt <= at)
+        : store
+            .events(chat, 0, 'user.message')
+            .filter((e) => !e.data.scheduledTrigger)
+            .filter((e) => e.createdAt <= at);
       cache.set(chat, events);
     }
     // Unknown source means unavailable activity evidence, not arbitrarily old.
-    if (events.some((e) => e.id === m.sourceEventId))
-      ages.set(m.id, events.filter((e) => e.id > m.sourceEventId!).length);
+    const anchor = m.reinforcedEventId || m.sourceEventId;
+    if (events.some((e) => e.id === anchor))
+      ages.set(m.id, events.filter((e) => e.id > anchor).length);
   }
   return ages;
 }

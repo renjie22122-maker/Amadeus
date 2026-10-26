@@ -95,6 +95,7 @@ export function recallMemories(
       revision: m.revision,
       status: m.status,
       kind: m.kind,
+      experienceOutcome: m.experienceOutcome,
       stability: m.stability,
       observedAt: m.observedAt ?? m.validFrom ?? m.createdAt,
       freshness:
