@@ -1,3 +1,4 @@
+import { providerFailureDiagnostic } from '../providers/failure.js';
 import { modelPricing } from '../../shared/model-pricing.js';
 import type { Run, Profile, Usage } from '../../shared/types.js';
 import type { ModelRequest, ModelProvider } from '../providers/protocol.js';
@@ -51,6 +52,12 @@ export async function completeModel(
     accountModelUsage(store, run, result.usage, input.profile, id(), requestedAt);
     return result;
   } catch (error) {
+    store.event(run.conversationId, run.id, 'model.request-failed', {
+      failure: providerFailureDiagnostic(error),
+      elapsedMs: Date.now() - requestedAt,
+      timeoutMs: input.profile.timeoutMs,
+      usageReported: !!(error as { usage?: Usage })?.usage?.measured,
+    });
     const usage = (error as { usage?: Usage })?.usage || {
       input: 0,
       output: 0,

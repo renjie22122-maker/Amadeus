@@ -197,7 +197,7 @@ export async function* sse(response: Response, idleTimeoutMs = 60000): AsyncGene
             reject(
               new AppError(
                 'MODEL_STREAM_IDLE',
-                'Model stream stopped delivering bytes; no request was replayed.',
+                'Model stream stopped delivering bytes before completion. No tool calls from this incomplete response were executed.',
                 504,
               ),
             );

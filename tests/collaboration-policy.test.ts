@@ -64,13 +64,13 @@ test('off, recovery, depth, tool policy and removed model block recommendations'
   settings.profiles = [];
   assert.ok(collaborationPolicy(ctx).blockers.includes('default-model-unavailable'));
 });
-test('child execution budget is tree scoped and zero means unlimited', (t) => {
+test('active child capacity is tree scoped and zero means unlimited', (t) => {
   const { ctx, settings } = fixture(t);
   ctx.store.put('run', {
     id: 'child',
     parentRunId: 'lead',
     conversationId: 'other',
-    status: 'completed',
+    status: 'running',
   });
   ctx.store.put('run', { id: 'unrelated', conversationId: 'private', status: 'running' });
   settings.maxChildren = 1;
@@ -86,4 +86,16 @@ test('resource-conflicting tasks are not advertised as independent', (t) => {
     task('b', [], { execution: 'isolated', writePaths: ['shared/file'] }),
   ];
   assert.deepEqual(collaborationPolicy(ctx, tasks).independentReadyTaskIds, ['a']);
+});
+
+test('completed nested members release shared slots and historical runs do not exhaust delegation', (t) => {
+  const { ctx, settings } = fixture(t);
+  settings.maxChildren = 2;
+  for (let i = 0; i < 12; i++)
+    ctx.store.put('run', { id: 'old' + i, parentRunId: 'lead', status: 'completed' });
+  ctx.store.put('run', { id: 'worker', parentRunId: 'lead', status: 'waiting_children' });
+  ctx.store.put('run', { id: 'nested', parentRunId: 'worker', status: 'running' });
+  assert.equal(collaborationPolicy(ctx, []).remainingActiveChildren, 0);
+  ctx.store.put('run', { id: 'nested', parentRunId: 'worker', status: 'completed' });
+  assert.equal(collaborationPolicy(ctx, []).remainingActiveChildren, 1);
 });

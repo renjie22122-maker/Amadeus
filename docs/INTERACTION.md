@@ -162,3 +162,17 @@ Mermaid fences support native flowcharts, sequence/class/entity/state diagrams, 
 Controls offer 50%–200% zoom, flowchart direction/spacing, content/window fit and SVG download. Source/copy always preserves the original. Only after parsing fails, a bounded copy-transport repair handles trailing backslashes, escaped angle brackets and leading whitespace entities, with a visible notice. It never invents nodes or edges. Parse errors expose their message, subsequent streamed source retries, and failures do not block other diagrams. Strict security and size/edge limits remain enforced.
 
 Real-browser regression covers eight diagram families, Chinese multiline flowcharts, concurrent rendering, error recovery, zoom, source switching and download links.
+
+## 2026-10-26: long tasks, attachments and recovery
+
+Pending attachments use one horizontally scrollable, keyboard-focusable row rather than growing the composer. Opening and removal remain available.
+
+`maxChildren` now counts active descendants across the run tree, not historical executions. Completed, failed and interrupted children release slots; queued, approval-waiting and child-waiting runs still occupy them. The new default is 0 (unlimited); explicit existing settings are retained. Model concurrency is separately controlled by `maxParallelRuns`. Continuations retain member history and get an independent step counter, without a cumulative continuation quota. Depth, permissions and unresolved-effect checks remain enforced.
+
+Team discussions accept `maxMessages=0` (the new-team default). Explicit finite limits remain supported and can be changed by the coordinator without erasing history. Existing progress detection warns about unchanged tool trajectories and interrupts persistent repetition. Three identical delegations in one tree ending in the same failure trigger a one-minute cooldown, rather than consuming a lifetime execution budget. These signals are observations, not correctness verdicts.
+
+Transport retries for one model step share the configured request timeout, with at most five retries. Successful steps reset the deadline, so long tasks are not given a cumulative duration limit. Partial tool calls are never executed and completed effects are not replayed. Failure diagnostics record phase, elapsed time and whether measured usage was reported; missing usage is unknown, not free. Provider stalls and network failures can still occur.
+
+Failed scheduled runs clear active pointers, retain the last-run link and stay paused. Legacy stale pointers are repaired without relaunching or duplicate notifications. Remote chat interruption notices are readable, and partial replies are not passed off as completed answers.
+
+Integration includes `feat/mcp-connections`, its newer context guidance/problem framing, HTTP MCP, OAuth and durable remote tasks. The older standalone framing branch does not overwrite the newer optional workflow. Remote task recovery queries the original task without replaying the tool call.

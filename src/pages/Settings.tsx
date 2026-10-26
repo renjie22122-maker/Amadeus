@@ -578,7 +578,9 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
             />
           </label>
           <label>
-            {t('Maximum children per run tree')}
+            {t('settings') === 'Settings'
+              ? 'Active children per run tree'
+              : '每棵任务树同时活跃的子任务'}
             <input
               type="number"
               min="0"
@@ -588,8 +590,8 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
             />
             <small>
               {t('settings') === 'Settings'
-                ? '0 = unlimited; delegation depth still applies'
-                : '0 = 不设上限；委派深度仍独立生效'}
+                ? '0 = unlimited; finished children release slots. No cumulative continuation quota. Depth still applies.'
+                : '0 = 不设上限；完成后释放名额，续跑次数不累计限额。委派深度仍独立生效'}
             </small>
           </label>
           <label>

@@ -152,12 +152,19 @@ export function Composer({
           }}
         >
           {detail && detail.attachments.some((a) => !a.messageEventId) && (
-            <div className="attachment-chips">
+            <div
+              className="attachment-chips"
+              role="region"
+              aria-label={
+                zh ? '待发送附件，可横向滚动' : 'Pending attachments, horizontally scrollable'
+              }
+              tabIndex={0}
+            >
               {detail.attachments
                 .filter((a) => !a.messageEventId)
                 .map((a: any) => (
                   <span className="draft-attachment" key={a.id}>
-                    <AttachmentPreview attachment={a} />
+                    <AttachmentPreview attachment={a} compact />
                     <button
                       type="button"
                       disabled={sending || pasting || modelSaving}

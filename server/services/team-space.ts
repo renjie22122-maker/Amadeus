@@ -1,3 +1,4 @@
+import { configuredLimit } from '../core/limits.js';
 import { TeamCollaboration, collaborationUsage } from './team-collaboration.js';
 import type { Conversation, Run } from '../../shared/types.js';
 import { Store, id } from '../storage/store.js';
@@ -69,7 +70,7 @@ export class Teams {
       );
     }
     assert(
-      Number.isInteger(maxMessages) && maxMessages >= 1 && maxMessages <= 1000,
+      Number.isInteger(maxMessages) && maxMessages >= 0 && maxMessages <= 1000,
       'TEAM_LIMIT',
       'Set 1–1000 discussion messages per member.',
     );
@@ -220,9 +221,9 @@ export class Teams {
       'Only the coordinator can change discussion limits.',
     );
     assert(
-      Number.isInteger(maxMessages) && maxMessages >= 1 && maxMessages <= 1000,
+      Number.isInteger(maxMessages) && maxMessages >= 0 && maxMessages <= 1000,
       'TEAM_LIMIT',
-      'Set 1–1000 messages per member.',
+      'Set 0–1000 messages per member; 0 means no cumulative limit.',
     );
     t.maxMessages = maxMessages;
     t.revision++;
@@ -271,7 +272,7 @@ export class Teams {
       assert(
         messages.filter((m) => m.sender === run.id).length +
           collaborationUsage(this.store, run.id, t.id) <
-          t.maxMessages,
+          configuredLimit(t.maxMessages),
         'DISCUSSION_LIMIT',
         'Configured per-member discussion limit reached; summarize or end participation.',
       );
@@ -398,14 +399,17 @@ export class Teams {
         used:
           this.messages(run).filter((m) => m.sender === run.id).length +
           collaborationUsage(this.store, run.id, t.id),
-        remaining: Math.max(
-          0,
-          t.maxMessages -
-            this.messages(run).filter((m) => m.sender === run.id).length -
-            collaborationUsage(this.store, run.id, t.id),
-        ),
+        remaining:
+          t.maxMessages === 0
+            ? null
+            : Math.max(
+                0,
+                t.maxMessages -
+                  this.messages(run).filter((m) => m.sender === run.id).length -
+                  collaborationUsage(this.store, run.id, t.id),
+              ),
         notice:
-          'Message allowance is not evidence quality or consensus. Summarize when no new evidence remains; request coordinator adjustment if necessary.',
+          'Zero limit means unlimited; historical message count is not a task budget. Message allowance is not evidence quality or consensus. Summarize when no new evidence remains; request coordinator adjustment if necessary.',
       },
       basis:
         t.mode === 'creative'

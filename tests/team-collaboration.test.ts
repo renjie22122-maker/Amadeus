@@ -293,3 +293,21 @@ test('research-linked peer review needs a distinguishing observation, not agreem
     f.store.close();
   }
 });
+
+test('zero discussion quota permits continued useful contributions without erasing history', () => {
+  const f = fixture();
+  try {
+    f.teams.updateLimits(f.lead, 0);
+    for (let i = 0; i < 25; i++) f.teams.post(f.author, 'Evidence item ' + i, ['reviewer']);
+    f.submit();
+    const state = f.teams.project(f.author);
+    assert(state);
+    assert.equal(state.discussionBudget.limit, 0);
+    assert.equal(state.discussionBudget.remaining, null);
+    assert.equal(state.messages.length, 25);
+    f.teams.updateLimits(f.lead, 10);
+    assert.throws(() => f.teams.post(f.author, 'additional', ['reviewer']), /limit/);
+  } finally {
+    f.store.close();
+  }
+});

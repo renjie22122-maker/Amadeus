@@ -1,3 +1,4 @@
+import { delegationFingerprint, assertDelegationRecovery } from './delegation-recovery.js';
 import { selectDelegationModel } from '../services/delegation-models.js';
 import { Teams } from '../services/team-space.js';
 import { configuredLimit } from './limits.js';
@@ -51,12 +52,16 @@ export class DelegationManager {
       'Configured delegation depth reached.',
     );
     const root = this.root(parent);
+    const fingerprint = delegationFingerprint(task, deliverable);
+    assertDelegationRecovery(this.store, root, fingerprint);
     assert(
-      this.store.runMetadata().filter((r) => r.parentRunId && this.root(r) === root).length +
+      this.store
+        .runMetadata()
+        .filter((r) => r.parentRunId && !terminal(r.status) && this.root(r) === root).length +
         (this.pendingSpawns.get(root) || 0) <
         configuredLimit(settings.maxChildren),
       'CHILD_LIMIT',
-      'Configured total child limit reached for this run tree.',
+      'Active child capacity reached for this run tree. Wait for a member to finish, then reuse it; completed runs do not consume capacity.',
     );
     this.pendingSpawns.set(root, (this.pendingSpawns.get(root) || 0) + 1);
     try {
@@ -123,6 +128,7 @@ export class DelegationManager {
         0,
         { parentRunId: parent.id, depth: parent.depth + 1, fresh: true, controlTicket },
       );
+      this.store.put('delegation-attempt', { id: run.id, root, fingerprint, at: Date.now() });
       new Teams(this.store).enrollSpawn(parent, run);
       this.store.event(c.id, parent.id, 'child.started', {
         runId: run.id,
@@ -264,12 +270,16 @@ export class DelegationManager {
       'Inspect unresolved member operations before continuing; nothing was replayed.',
     );
     const root = this.root(parent);
+    const fingerprint = delegationFingerprint(message);
+    assertDelegationRecovery(this.store, root, fingerprint);
     assert(
-      this.store.runMetadata().filter((r) => r.parentRunId && this.root(r) === root).length +
+      this.store
+        .runMetadata()
+        .filter((r) => r.parentRunId && !terminal(r.status) && this.root(r) === root).length +
         (this.pendingSpawns.get(root) || 0) <
         configuredLimit(settings.maxChildren),
       'CHILD_LIMIT',
-      'Configured child execution limit reached.',
+      'Active child capacity reached. Wait for an active member to finish; historical continuations do not consume capacity.',
     );
     this.pendingSpawns.set(root, (this.pendingSpawns.get(root) || 0) + 1);
     try {
@@ -345,6 +355,7 @@ export class DelegationManager {
           0,
           { parentRunId: parent.id, depth: parent.depth + 1, fresh: false, controlTicket },
         );
+        this.store.put('delegation-attempt', { id: next.id, root, fingerprint, at: Date.now() });
         new Teams(this.store).enrollSpawn(parent, next);
         this.store.event(c.id, parent.id, 'child.started', {
           runId: next.id,

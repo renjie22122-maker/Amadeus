@@ -300,3 +300,31 @@ test('conversation cards return only scoped schedules, commands and cross-chat r
   f.scheduler.tick(1);
   assert.deepEqual(f.calls[0].scheduledTrigger, { id: 's', name: 'Check' });
 });
+
+test('interrupted schedule clears active pointers but retains inspection link and stays paused', (t) => {
+  const f = fixture(t);
+  f.save({ intervalMs: 60000 });
+  f.scheduler.tick(1);
+  const runId = f.calls[0].runId;
+  f.store.put('run', { id: runId, status: 'interrupted' });
+  f.scheduler.tick(2);
+  const task = f.store.get<any>('scheduled-work', 's');
+  assert.equal(task.status, 'needs_attention');
+  assert.equal(task.enabled, false);
+  assert.equal(task.lastRunId, runId);
+  assert.equal(task.runId, undefined);
+  assert.equal(task.startedAt, undefined);
+  f.scheduler.tick(999999);
+  assert.equal(f.calls.length, 1);
+});
+
+test('legacy failed schedule pointers repair silently without replay', (t) => {
+  const f = fixture(t);
+  f.store.put('run', { id: 'old', status: 'interrupted' });
+  f.save({ status: 'needs_attention', enabled: false, runId: 'old', startedAt: 1 });
+  f.scheduler.tick(100);
+  assert.equal(f.store.get<any>('scheduled-work', 's').runId, undefined);
+  assert.equal(f.store.get<any>('scheduled-work', 's').lastRunId, 'old');
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.store.list('schedule-result').length, 0);
+});

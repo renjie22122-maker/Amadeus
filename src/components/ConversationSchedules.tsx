@@ -117,7 +117,7 @@ export function ConversationSchedules({
                   </span>
                   <span aria-hidden="true">·</span>
                   <span>
-                    {task.runId
+                    {task.runId && task.status !== 'needs_attention'
                       ? zh
                         ? '正在处理本次任务'
                         : 'Processing this run'

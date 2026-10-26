@@ -673,8 +673,22 @@ kbd {
 .attachment-chips {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
-  padding: 12px 14px 0;
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 8px 14px;
+  scrollbar-width: thin;
+}
+.attachment-chips > .draft-attachment {
+  flex: 0 0 auto;
+  max-width: min(280px, 80vw);
+}
+.draft-attachment .file-download-card {
+  display: flex;
+  min-width: 0;
+  padding: 6px;
 }
 .attachment-chips a {
   display: flex;
@@ -4641,4 +4655,15 @@ input.team-switch:checked::after {
   overflow-wrap: anywhere;
   max-height: 220px;
   overflow: auto;
+}
+
+/* Compact pending files; full media previews stay in the conversation/workbench. */
+.draft-attachment .file-download-info strong,
+.draft-attachment .file-download-info small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.draft-attachment .local-media-attachment {
+  width: 220px;
 }

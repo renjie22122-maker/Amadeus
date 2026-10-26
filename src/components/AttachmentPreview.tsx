@@ -3,7 +3,9 @@ import { useState } from 'react';
 import { Download, FileText } from 'lucide-react';
 export function AttachmentPreview({
   attachment: a,
+  compact = false,
 }: {
+  compact?: boolean;
   attachment: {
     id: string;
     name: string;
@@ -17,29 +19,30 @@ export function AttachmentPreview({
   const [failed, setFailed] = useState(false);
   const url = '/api/attachments/' + encodeURIComponent(a.id);
   return (
-    <div className="local-media-attachment">
-      {a.mime.startsWith('video/') ? (
-        <video
-          onError={() => setFailed(true)}
-          controls
-          playsInline
-          preload="metadata"
-          src={url + '?inline=1'}
-          aria-label={a.name}
-        />
-      ) : a.mime.startsWith('audio/') ? (
-        <audio
-          onError={() => setFailed(true)}
-          controls
-          preload="metadata"
-          src={url + '?inline=1'}
-          aria-label={a.name}
-        />
-      ) : ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(a.mime) ? (
-        <a href={url + '?preview=1'} target="_blank" rel="noopener noreferrer">
-          <img src={url + '?preview=1'} alt={a.name} loading="lazy" />
-        </a>
-      ) : null}
+    <div className="local-media-attachment" title={compact ? a.name : undefined}>
+      {!compact &&
+        (a.mime.startsWith('video/') ? (
+          <video
+            onError={() => setFailed(true)}
+            controls
+            playsInline
+            preload="metadata"
+            src={url + '?inline=1'}
+            aria-label={a.name}
+          />
+        ) : a.mime.startsWith('audio/') ? (
+          <audio
+            onError={() => setFailed(true)}
+            controls
+            preload="metadata"
+            src={url + '?inline=1'}
+            aria-label={a.name}
+          />
+        ) : ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(a.mime) ? (
+          <a href={url + '?preview=1'} target="_blank" rel="noopener noreferrer">
+            <img src={url + '?preview=1'} alt={a.name} loading="lazy" />
+          </a>
+        ) : null)}
       {failed && <small>无法预览，可下载查看 / Preview unavailable; download below.</small>}
       {workbench ? (
         <div className="file-open-card">
@@ -80,7 +83,7 @@ export function AttachmentPreview({
           <Download size={18} aria-hidden="true" />
         </a>
       )}
-      {a.sha256 && (
+      {!compact && a.sha256 && (
         <details className="file-download-details">
           <summary>文件校验 / Checksum</summary>
           <code>SHA-256 {a.sha256}</code>

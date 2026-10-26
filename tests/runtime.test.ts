@@ -2727,3 +2727,45 @@ test('automatic evidence repair continues the real tool loop without a human app
     f.store.close();
   }
 });
+
+test('same parent can repeatedly continue one member beyond the active child capacity', async () => {
+  const f = await setup({ complete: async () => result('done') });
+  try {
+    f.config.save({ ...f.config.get(), maxChildren: 1 });
+    const parent = f.runtime.start('chat', 'long task');
+    await until(() => f.store.get<any>('run', parent.id).status === 'completed');
+    const key = await f.runtime.spawn(parent, 'bounded work', 'result');
+    await until(() => f.store.get<any>('run', key).status === 'completed');
+    for (let i = 0; i < 10; i++) {
+      const next: any = await f.runtime.continueMember(parent, key, 'Next verification ' + i);
+      await until(() => f.store.get<any>('run', next.runId).status === 'completed');
+    }
+    assert.equal((f.runtime.members(parent) as any[]).length, 1);
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});
+test('expired model step timeout does not restart another full timeout window', async () => {
+  let calls = 0;
+  const f = await setup({
+    complete: async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 1050));
+      throw new AppError('MODEL_TIMEOUT', 'timeout', 504);
+    },
+  });
+  try {
+    f.config.save({
+      ...f.config.get(),
+      profiles: f.config.get().profiles.map((p) => ({ ...p, timeoutMs: 1000 })),
+    });
+    const run = f.runtime.start('chat', 'hello');
+    await until(() => f.store.get<any>('run', run.id).status === 'interrupted', 5000);
+    assert.equal(calls, 1);
+    assert.equal(f.store.get<any>('run', run.id).usageComplete, false);
+  } finally {
+    await f.runtime.shutdown();
+    f.store.close();
+  }
+});

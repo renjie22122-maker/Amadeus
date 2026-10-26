@@ -25,3 +25,12 @@ test('network recovery excludes credentials, cancellation, coding bugs and conte
   assert.equal(termination(new AppError('INVALID_ARGUMENTS', 'bad')).recoverable, true);
   assert.equal(termination(new AppError('MODEL_TIMEOUT', 'timeout')).recoverable, true);
 });
+
+import { remainingModelTime, canReconnectModel } from '../server/core/model-recovery.js';
+test('model transport retries share one deadline while preserving the five retry cap', () => {
+  assert.equal(remainingModelTime(300000, 299000), 1000);
+  assert.equal(canReconnectModel(0, 300000, 299000), false);
+  assert.equal(canReconnectModel(0, 300000, 10000), true);
+  assert.equal(canReconnectModel(5, 300000, 10000), false);
+  assert.equal(remainingModelTime(300000, 310000), 0);
+});

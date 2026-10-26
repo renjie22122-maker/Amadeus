@@ -1,3 +1,4 @@
+import { configuredLimit } from '../core/limits.js';
 import { researchReferenceCurrent } from './research-case.js';
 import type { Run } from '../../shared/types.js';
 import { Store, id } from '../storage/store.js';
@@ -113,7 +114,7 @@ export class TeamCollaboration {
         .list<any>('team-discussion')
         .filter((m) => m.teamId === t.id && m.sender === run.id).length;
       assert(
-        messages + collaborationUsage(this.store, run.id, t.id) < t.maxMessages,
+        messages + collaborationUsage(this.store, run.id, t.id) < configuredLimit(t.maxMessages),
         'DISCUSSION_LIMIT',
         'Member discussion budget exhausted. Coordinator may adjust it or explicitly retain unresolved work; do not send redundant messages.',
       );

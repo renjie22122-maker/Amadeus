@@ -1288,7 +1288,11 @@ export function App() {
                             {language === 'zh'
                               ? '每成员最多可发送的团队消息数（不是辩论轮次）：'
                               : 'Discussion message limit per member: '}
-                            {detail.teamSpace.maxMessages}
+                            {detail.teamSpace.maxMessages === 0
+                              ? t('settings') === 'Settings'
+                                ? 'Unlimited'
+                                : '不限'
+                              : detail.teamSpace.maxMessages}
                             <form
                               key={detail.teamSpace.id + ':' + detail.teamSpace.maxMessages}
                               onSubmit={(e) => {
@@ -1307,7 +1311,7 @@ export function App() {
                                 }
                                 name="maxMessages"
                                 type="number"
-                                min="1"
+                                min="0"
                                 max="1000"
                                 defaultValue={detail.teamSpace.maxMessages}
                               />
@@ -1465,8 +1469,12 @@ export function App() {
                           {totalUsage!.modelCalls} model calls · parent + children
                         </span>
                         <span>
-                          {(totalUsage!.inputTokens + totalUsage!.outputTokens).toLocaleString()}{' '}
-                          tokens
+                          {totalUsage!.usageComplete === false &&
+                          totalUsage!.inputTokens + totalUsage!.outputTokens === 0
+                            ? language === 'zh'
+                              ? '用量未报告'
+                              : 'Usage not reported'
+                            : `${(totalUsage!.inputTokens + totalUsage!.outputTokens).toLocaleString()} tokens${totalUsage!.usageComplete === false ? (language === 'zh' ? '（已报告部分）' : ' (reported portion)') : ''}`}
                         </span>
                         <span>
                           {totalUsage!.estimatedUsd === null
@@ -1474,8 +1482,16 @@ export function App() {
                             : '~$' + totalUsage!.estimatedUsd!.toFixed(5)}
                         </span>
                         <span>
-                          {t('Input')} {totalUsage!.inputTokens.toLocaleString()} · {t('Output')}{' '}
-                          {totalUsage!.outputTokens.toLocaleString()}
+                          {t('Input')}{' '}
+                          {totalUsage!.usageComplete === false &&
+                          totalUsage!.inputTokens + totalUsage!.outputTokens === 0
+                            ? '—'
+                            : totalUsage!.inputTokens.toLocaleString()}{' '}
+                          · {t('Output')}{' '}
+                          {totalUsage!.usageComplete === false &&
+                          totalUsage!.inputTokens + totalUsage!.outputTokens === 0
+                            ? '—'
+                            : totalUsage!.outputTokens.toLocaleString()}
                         </span>
                         <span>
                           {totalUsage!.usageComplete &&

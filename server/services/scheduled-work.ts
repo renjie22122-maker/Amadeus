@@ -85,6 +85,21 @@ export class ScheduledWorkService {
   }
   tick(now = Date.now()) {
     for (let task of this.store.list<ScheduledWork>('scheduled-work')) {
+      // Repair stale pre-upgrade pointers without relaunching or notifying twice.
+      if (task.status === 'needs_attention' && task.runId) {
+        const settled = this.store.maybeRunHeader(task.runId);
+        if (settled && terminal(settled.status)) {
+          task = {
+            ...task,
+            enabled: false,
+            lastRunId: settled.id,
+            runId: undefined,
+            runConversationId: undefined,
+            startedAt: undefined,
+          };
+          this.store.put('scheduled-work', task);
+        }
+      }
       if (!task.enabled && (!task.runId || task.status === 'needs_attention')) continue;
       try {
         // Settle dispatched work even while paused; never dispatch again while paused.
@@ -238,8 +253,17 @@ export class ScheduledWorkService {
             .run('scheduled:' + task.runId);
         const error = String(e.message || e);
         this.record(task, 'needs_attention', now, error);
+        const settled = task.runId ? this.store.maybeRunHeader(task.runId) : undefined;
         this.store.put('scheduled-work', {
           ...this.store.get<ScheduledWork>('scheduled-work', task.id),
+          ...(settled && terminal(settled.status)
+            ? {
+                lastRunId: settled.id,
+                runId: undefined,
+                runConversationId: undefined,
+                startedAt: undefined,
+              }
+            : {}),
           enabled: false,
           status: 'needs_attention',
           error,

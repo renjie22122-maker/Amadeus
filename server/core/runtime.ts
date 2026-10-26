@@ -1,3 +1,4 @@
+import { remainingModelTime, canReconnectModel } from './model-recovery.js';
 import { modelStepBudget } from '../services/model-step-budget.js';
 import { ConversationTitles, shortTitle } from '../services/conversation-titles.js';
 import { discoverTaskSkills } from '../services/skill-discovery.js';
@@ -480,6 +481,7 @@ export class Runtime implements TeamPort {
         protocolRepairs = 0,
         lengthRepairs = 0,
         networkRepairs = 0,
+        modelDeadline = 0,
         deliveryRepairs = 0,
         formatRepairs = 0;
       const cognitive = new CognitiveController(this.store);
@@ -609,9 +611,17 @@ export class Runtime implements TeamPort {
         try {
           result = await this.modelPool.run(
             signal,
-            () =>
-              this.complete(run, {
-                profile,
+            () => {
+              modelDeadline ||= Date.now() + profile.timeoutMs;
+              const timeoutMs = remainingModelTime(modelDeadline);
+              if (!timeoutMs)
+                throw new AppError(
+                  'MODEL_TIMEOUT',
+                  'Model step retry deadline exceeded; completed operations were not replayed.',
+                  504,
+                );
+              return this.complete(run, {
+                profile: { ...profile, timeoutMs },
                 messages: [
                   ...run.checkpoints,
                   ...modelStepBudget(
@@ -632,11 +642,16 @@ export class Runtime implements TeamPort {
                     text,
                   });
                 },
-              }),
+              });
+            },
             this.executionScope(run),
           );
         } catch (error) {
-          if (!signal.aborted && transientModelFailure(error) && networkRepairs < 5) {
+          if (
+            !signal.aborted &&
+            transientModelFailure(error) &&
+            canReconnectModel(networkRepairs, modelDeadline)
+          ) {
             const attempt = ++networkRepairs;
             const delayMs = modelReconnectDelay(attempt);
             const partial = this.streams.get(key);
@@ -653,6 +668,7 @@ export class Runtime implements TeamPort {
               attempt,
               maxAttempts: 5,
               delayMs,
+              remainingMs: remainingModelTime(modelDeadline),
               toolsExecuted: false,
             });
             await recoveryDelay(delayMs, undefined, { signal });
@@ -727,6 +743,7 @@ export class Runtime implements TeamPort {
         protocolRepairs = 0;
         lengthRepairs = 0;
         networkRepairs = 0;
+        modelDeadline = 0;
         if (signal.aborted) throw abortError();
         if (!result.message.calls?.length) {
           const contract = this.store.maybe<ResponseContract>('response-contract', run.id);

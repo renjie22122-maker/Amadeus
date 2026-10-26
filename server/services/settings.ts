@@ -203,7 +203,7 @@ const schema = z.object({
   defaultProfileId: z.string(),
   maxParallelRuns: z.number().int().min(0).max(12).default(3),
   maxAgentDepth: z.number().int().min(0).max(5).default(2),
-  maxChildren: z.number().int().min(0).max(32).default(8),
+  maxChildren: z.number().int().min(0).max(32).default(0),
   compactionRatio: z.number().min(0.3).max(0.9).default(0.75),
   dockerImage: z.string().default('node:24-bookworm-slim'),
   commandBackend: z

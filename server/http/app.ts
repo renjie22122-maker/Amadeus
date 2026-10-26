@@ -180,16 +180,11 @@ export async function createApp(options: { directory: string; dist?: string; run
       error: j.error,
       updatedAt: j.updatedAt,
     })),
-    mcp: store
-      .list<any>('mcp-job')
-      .map(({ result, recovery, ...job }) => ({
-        ...job,
-        resumable:
-          !!recovery &&
-          !!job.remoteTask &&
-          job.status !== 'completed' &&
-          !job.cancellationRequested,
-      })),
+    mcp: store.list<any>('mcp-job').map(({ result, recovery, ...job }) => ({
+      ...job,
+      resumable:
+        !!recovery && !!job.remoteTask && job.status !== 'completed' && !job.cancellationRequested,
+    })),
     teams: store.list<any>('team-space').map((j) => ({ id: j.id, status: j.status })),
   }));
 
@@ -473,7 +468,7 @@ export async function createApp(options: { directory: string; dist?: string; run
     return { ok: true };
   });
   app.post<{ Params: { id: string } }>('/api/runs/:id/team-discussion-limit', async (req) => {
-    const a = z.object({ maxMessages: z.number().int().min(1).max(1000) }).parse(req.body);
+    const a = z.object({ maxMessages: z.number().int().min(0).max(1000) }).parse(req.body);
     const service = new Teams(store),
       team = service.get(store.get<Run>('run', req.params.id));
     assert(team, 'TEAM_MISSING', 'No team.');

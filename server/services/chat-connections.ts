@@ -1185,7 +1185,9 @@ export class ChatConnections {
                       ? '收到你的消息了，但这次未生成有效答复。请重新提问或说明希望我回应的内容。'
                       : result?.data.text
                         ? chatPlainText(result.data.text)
-                        : `Task ${run.status}. Inspect the local conversation for details.`,
+                        : run.status === 'interrupted'
+                          ? '这次处理已中断，未能完成回复。已完成的操作会保留；可在 Amadeus 查看原因并继续任务。'
+                          : '这次处理未能完成，请在 Amadeus 查看错误详情。',
                   ];
               for (const [index, message] of texts.entries())
                 this.reply(

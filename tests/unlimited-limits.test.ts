@@ -75,7 +75,11 @@ test('zero child limit passes the real spawn gate above 32, finite limits still 
   const root: any = { id: 'root', depth: 0, conversationId: 'chat' };
   const runs = [
     root,
-    ...Array.from({ length: 40 }, (_, i) => ({ id: String(i), parentRunId: 'root' })),
+    ...Array.from({ length: 40 }, (_, i) => ({
+      id: String(i),
+      parentRunId: 'root',
+      status: 'running',
+    })),
   ];
   let maxChildren = 0;
   const directory = await mkdtemp(join(tmpdir(), 'child-gate-'));
@@ -99,17 +103,19 @@ test('zero child limit passes the real spawn gate above 32, finite limits still 
   await assert.rejects(manager.spawn(root, 'task', 'result'), /PASSED_CHILD_GATE/);
   maxChildren = 8;
   await assert.rejects(manager.spawn(root, 'task', 'result'), (e: any) => e.code === 'CHILD_LIMIT');
+  for (const run of runs.slice(1)) store.put('run', { ...run, status: 'completed' });
+  await assert.rejects(manager.spawn(root, 'new useful task', 'result'), /PASSED_CHILD_GATE/);
   maxChildren = 0;
   root.depth = 3;
   await assert.rejects(manager.spawn(root, 'task', 'result'), (e: any) => e.code === 'DEPTH_LIMIT');
 });
 
-test('zero configuration roundtrips; defaults remain finite and negatives are invalid', async () => {
+test('zero configuration roundtrips; model concurrency remains finite and negatives are invalid', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agentdemo-unlimited-'));
   const file = join(root, 'settings.json');
   const config = new Configuration(file);
   assert.equal(config.get().maxParallelRuns, 3);
-  assert.equal(config.get().maxChildren, 8);
+  assert.equal(config.get().maxChildren, 0);
   config.save({ ...config.get(), maxParallelRuns: 0, maxChildren: 0 });
   const saved = new Configuration(file).get();
   assert.equal(saved.maxParallelRuns, 0);
