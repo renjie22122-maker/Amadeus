@@ -47,7 +47,7 @@ export const notebookInput = z
     sourceEventIds: z.array(z.number().int().positive()).max(30).default([]),
   })
   .strict();
-const key = (c: ChatConnection) =>
+export const notebookKey = (c: ChatConnection) =>
   JSON.stringify([
     c.id,
     c.conversationId,
@@ -58,8 +58,8 @@ const key = (c: ChatConnection) =>
   ]);
 export function chatNotebook(store: Store, c: ChatConnection) {
   return (
-    store.maybe<any>('chat-notebook', key(c)) || {
-      id: key(c),
+    store.maybe<any>('chat-notebook', notebookKey(c)) || {
+      id: notebookKey(c),
       conversationId: c.conversationId,
       revision: 0,
       style: remoteConversationStyle,
@@ -92,6 +92,9 @@ export function inspectNotebook(store: Store, c: ChatConnection) {
     .all(c.conversationId) as any[];
   return {
     ...chatNotebook(store, c),
+    maintenance: store.maybe<any>('chat-notebook-maintenance', notebookKey(c)) || {
+      status: 'pending',
+    },
     sources: rows
       .filter((e) => sourceMatches(JSON.parse(e.data), c))
       .map((e) => ({
@@ -106,7 +109,7 @@ export function inspectNotebook(store: Store, c: ChatConnection) {
       )
       .all(c.conversationId)
       .map((e: any) => JSON.parse(e.data))
-      .filter((e: any) => e.notebookId === key(c))
+      .filter((e: any) => e.notebookId === notebookKey(c))
       .map(({ previous, current, ...metadata }: any) => metadata),
   };
 }
@@ -172,8 +175,18 @@ export function updateNotebook(
       reason: a.reason,
     };
     store.put('chat-notebook', next);
+    if (author === 'human' && a.automatic === true && !previous.automatic) {
+      const progress = store.maybe<any>('chat-notebook-maintenance', notebookKey(c));
+      if (progress)
+        store.put('chat-notebook-maintenance', {
+          ...progress,
+          status: 'pending',
+          attempts: 0,
+          nextAt: 0,
+        });
+    }
     store.event(c.conversationId, null, 'chat.notebook.updated', {
-      notebookId: key(c),
+      notebookId: notebookKey(c),
       revision: next.revision,
       author,
       reason: a.reason,
@@ -229,7 +242,7 @@ export function notebookRevision(store: Store, c: ChatConnection, revision: numb
       "SELECT data FROM events WHERE conversation_id=? AND type='chat.notebook.updated' AND json_extract(data,'$.revision')=? ORDER BY id DESC",
     )
     .all(c.conversationId, revision) as any[];
-  const record = rows.map((r) => JSON.parse(r.data)).find((r) => r.notebookId === key(c));
+  const record = rows.map((r) => JSON.parse(r.data)).find((r) => r.notebookId === notebookKey(c));
   assert(record, 'CHAT_NOTEBOOK_REVISION', 'Revision is unavailable for this chat.');
   return record;
 }

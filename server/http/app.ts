@@ -63,7 +63,7 @@ export async function createApp(options: { directory: string; dist?: string; run
   const chatTransports = new ChatTransports(chatConnections);
   runtime.mcp.jobs?.recover();
   runtime.startTeamMaintenance();
-  const { memoryLearning, knowledgeEmbedding, maintenance, scheduledWork } =
+  const { notebookMaintenance, memoryLearning, knowledgeEmbedding, maintenance, scheduledWork } =
     startMaintenanceServices(store, config, runtime, directory);
   const app = Fastify({ logger: false, bodyLimit: 8 * 1024 * 1024 });
   const cookie = randomBytes(32).toString('hex'),
@@ -155,13 +155,11 @@ export async function createApp(options: { directory: string; dist?: string; run
           memories: memoryReviewViews(store),
           memoryLearning: [
             ...store.list<any>('memory-learning').map((j) => ({ ...j, stage: 'extraction' })),
-            ...store
-              .list<any>('memory-graph-learning')
-              .map((j) => ({
-                ...j,
-                stage: 'relations',
-                at: j.finishedAt || j.startedAt || j.nextAttemptAt,
-              })),
+            ...store.list<any>('memory-graph-learning').map((j) => ({
+              ...j,
+              stage: 'relations',
+              at: j.finishedAt || j.startedAt || j.nextAttemptAt,
+            })),
             ...store
               .list<any>('memory-index-maintenance')
               .map((j) => ({ ...j, scope: j.id, stage: 'index' })),
@@ -1200,6 +1198,7 @@ export async function createApp(options: { directory: string; dist?: string; run
     await chatTransports.close();
     closeLocalEmbedding();
     await maintenance.close();
+    await notebookMaintenance.close();
     await memoryLearning.close();
     await runtime.shutdown();
     await runtime.media.close();

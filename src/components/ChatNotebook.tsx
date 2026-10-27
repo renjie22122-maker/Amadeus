@@ -1,5 +1,5 @@
 import { styleReferences, blendStyleReferences } from '../../shared/chat-personas';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { api } from '../api';
 import {
   toneGroups,
@@ -17,6 +17,8 @@ export function ChatNotebook({
   zh: boolean;
   notify: (s: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [maintenance, setMaintenance] = useState<any>(null);
   const [data, setData] = useState<any>(null),
     [busy, setBusy] = useState(false),
     [dirty, setDirty] = useState(false),
@@ -29,6 +31,7 @@ export function ChatNotebook({
   const load = async () => {
     try {
       const d = await api('/chat-connections/' + id + '/notebook');
+      setMaintenance(d.maintenance);
       setData({
         brief: '',
         references: [],
@@ -42,6 +45,23 @@ export function ChatNotebook({
       notify(e.message);
     }
   };
+  useEffect(() => {
+    if (!open) return;
+    let disposed = false;
+    const timer = setInterval(() => {
+      void api('/chat-connections/' + id + '/notebook')
+        .then((d: any) => {
+          if (disposed) return;
+          setMaintenance(d.maintenance);
+          if (!dirty && !busy) setData({ ...d, tone: { ...defaults, ...d.tone } });
+        })
+        .catch(() => {});
+    }, 10000);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [id, open, dirty, busy]);
   const edit = (values: any) => {
     setData((d: any) => ({ ...d, ...values }));
     setDirty(true);
@@ -74,6 +94,7 @@ export function ChatNotebook({
     <details
       className="chat-notebook"
       onToggle={(e) => {
+        setOpen(e.currentTarget.open);
         if (e.currentTarget.open && !data) void load();
       }}
     >
@@ -95,6 +116,7 @@ export function ChatNotebook({
             <label>
               {tr('一句话风格意图', 'Style intent')}
               <textarea
+                aria-label={tr('一句话风格意图', 'Style intent')}
                 rows={2}
                 maxLength={2000}
                 value={data.brief || ''}
@@ -282,6 +304,7 @@ export function ChatNotebook({
                 )}
               </small>
             </details>
+
             <div className="chat-connection-actions">
               {tonePresets.map((preset) => (
                 <button
@@ -328,6 +351,39 @@ export function ChatNotebook({
               {tr('恢复中性', 'Reset tone')}
             </button>
           </details>
+          <p role="status">
+            {tr('后台整理：', 'Background maintenance: ')}
+            {!data.automatic
+              ? tr('已关闭', 'Disabled')
+              : {
+                  pending: tr('等待增量整理', 'Pending'),
+                  running: tr('整理中', 'Processing'),
+                  updated: tr('已修订', 'Updated'),
+                  unchanged: tr('已检查，无变化', 'Checked, no change'),
+                  retrying: tr('失败，等待自动重试', 'Retry scheduled'),
+                  needs_attention: tr(
+                    '连续五次失败，需检查模型连接；关闭并保存后重新开启可重试',
+                    'Five attempts failed; check model connection, then disable/save and re-enable to retry',
+                  ),
+                  waiting_model: tr('等待配置模型', 'Waiting for model'),
+                }[maintenance?.status as string] || tr('等待增量整理', 'Pending')}
+            {maintenance?.at && <> · {new Date(maintenance.at).toLocaleString()}</>}
+            {maintenance?.checkedMessages != null && (
+              <>
+                {' '}
+                · {tr('本批消息', 'Batch messages')} {maintenance.checkedMessages}
+              </>
+            )}
+            {data.automatic && maintenance?.status === 'retrying' && maintenance.nextAt && (
+              <>
+                {' '}
+                · {tr('下次重试', 'Next retry')} {new Date(maintenance.nextAt).toLocaleTimeString()}
+              </>
+            )}
+            {dirty && (
+              <span> · {tr('草稿未保存，自动刷新不会覆盖', 'Unsaved draft retained')}</span>
+            )}
+          </p>
           <label className="chat-notebook-auto">
             <input
               type="checkbox"
@@ -335,8 +391,8 @@ export function ChatNotebook({
               onChange={(e) => edit({ automatic: e.target.checked })}
             />{' '}
             {tr(
-              '允许 Bot 按需学习并整理本会话设定和日记',
-              'Allow contextual learning of this chat style and diary',
+              '允许后台自动增量整理本会话设定和日记',
+              'Allow background incremental learning of this chat style and diary',
             )}
           </label>
           <details>
@@ -365,8 +421,8 @@ export function ChatNotebook({
             />
             <p className="muted">
               {tr(
-                'Bot 可根据有来源的交流整理；观察、推测和成员个人偏好应保留区别。完整历史仍在原会话。',
-                'The bot may reflect on attributed exchanges; observations, inference and individual preferences remain distinct. Full history stays in the conversation.',
+                'Bot 可根据有来源的交流整理；观察、推测和成员个人偏好应保留区别。完整历史仍在原会话。后台使用本会话配置的模型，可能消耗 API 额度。',
+                'The bot may reflect on attributed exchanges; observations, inference and individual preferences remain distinct. Full history stays in the conversation. Background maintenance uses this chat model and may incur API usage.',
               )}
             </p>
           </details>

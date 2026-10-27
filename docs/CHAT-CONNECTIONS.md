@@ -205,3 +205,11 @@ Remote chat settings include 30 supplied OC references plus additional personali
 Named combinations retain intent, selected references, tone axes and optional MBTI within this chat only, excluding diary, history and permissions. Save applies them to the next turn. Only active references enter model context; the catalog and saved combinations are excluded from model tool results. Automatic learning preserves human controls.
 
 Native mentions use platform member IDs. The tool can resolve a unique exact nickname or card from the current group roster. Ambiguous names, missing matches and route changes fail explicitly. Member caches are route-bound; delivery still revalidates scope.
+
+### Background incremental notebook maintenance
+
+With automatic learning enabled, the main service checks attributed new messages every 30 seconds. It coalesces bursts, with roughly two minutes of maximum deferral for a continuously active chat. One global batch runs at a time: at most 30 messages and 20,000 characters, with continuation offsets for long messages. It uses the conversation model and may incur API usage. It never sends platform messages, calls tools or changes permissions.
+
+Only this connection's text style and concise diary are revised, with source IDs and revision history. Human tone axes, MBTI, presets and style intent remain unchanged. New arrivals stay pending; concurrent human edits, opt-out, route changes or invalidated evidence discard stale output. No useful change records a check without creating a revision. Durable progress survives restarts; failures back off for at most five attempts. Completed batches are not replayed. After fixing the model connection, disable/save and re-enable automatic learning to resume a blocked batch.
+
+The expanded settings panel refreshes maintenance status every ten seconds without overwriting unsaved drafts. It shows pending, processing, updated, unchanged, retrying or attention required. Revision conflicts require reloading before saving. Sources remain isolated by connection, account and peer; local conversations and other chats are excluded. Historical messages are consumed incrementally, not all injected into one request.

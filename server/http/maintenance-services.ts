@@ -1,3 +1,4 @@
+import { ChatNotebookMaintenance } from '../services/chat-notebook-maintenance.js';
 import { MemoryLifecycle } from '../services/memory-lifecycle.js';
 import { MemoryLearning } from '../services/memory-learning.js';
 import { KnowledgeMaintenance } from '../services/knowledge-maintenance.js';
@@ -15,6 +16,8 @@ export function startMaintenanceServices(
   new MemoryLifecycle(store).reconcileConflicts();
   const memoryLearning = new MemoryLearning(store, config);
   memoryLearning.start();
+  const notebookMaintenance = new ChatNotebookMaintenance(store, config);
+  notebookMaintenance.start();
   const knowledgeEmbedding = new Embeddings(() => config.get().embedding);
   const maintenance = new KnowledgeMaintenance(
     store,
@@ -27,5 +30,5 @@ export function startMaintenanceServices(
   const scheduledWork = new ScheduledWorkService(store, runtime);
   scheduledWork.start();
 
-  return { memoryLearning, knowledgeEmbedding, maintenance, scheduledWork };
+  return { notebookMaintenance, memoryLearning, knowledgeEmbedding, maintenance, scheduledWork };
 }
