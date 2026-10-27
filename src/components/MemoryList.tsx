@@ -376,6 +376,10 @@ export function MemoryList({
           <small className="muted">
             {
               {
+                'isolated-chat': label(
+                  'Isolated by connected-chat boundary',
+                  '按接入会话边界隔离，并非手动设置',
+                ),
                 manual: label('Reach explicitly selected', '范围由手动设置决定'),
                 local: label(
                   'Local applicability or memory-type rule',

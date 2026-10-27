@@ -826,3 +826,19 @@ test('a durable old memory can be revised after several compactions and beyond r
     f.store.close();
   }
 });
+
+test('history-only extraction advances source progress without creating or reinforcing durable memory', async () => {
+  const f = await fixture();
+  const learning = new MemoryLearning(f.store, f.config, () => ({
+    complete: async () => response([{ ...f.item, retention: 'history' }]),
+  }));
+  try {
+    await learning.tick();
+    assert.equal(f.store.list('memory').length, 0);
+    assert.ok(f.store.list('history-digest').length > 0);
+    assert.equal(f.store.list<any>('memory-learning')[0].status, 'completed');
+  } finally {
+    await learning.close();
+    f.store.close();
+  }
+});

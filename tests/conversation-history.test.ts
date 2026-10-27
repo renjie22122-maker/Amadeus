@@ -1,3 +1,4 @@
+import { memoryReachReason } from '../shared/memory-scope.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -5,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../server/storage/store.js';
 import {
+  browseHistory,
   historyConversations,
   maintainHistory,
   saveHistoryDigest,
@@ -164,4 +166,48 @@ test('legacy bot origins preserve authorship but source author edits invalidate 
   assert.deepEqual(readHistoryDigest(store, 'bot', topic.digestId), { unavailable: true });
   const reply = store.event('bot', null, 'assistant.message', { text: 'coffee answer' });
   assert.equal((readHistorySource(store, 'bot', 'bot', reply.id) as any).speaker, 'assistant');
+});
+
+test('chronological history reaches old messages with attribution, cursors and domain isolation', (t) => {
+  const store = setup(t);
+  const first = store.event('bot', null, 'chat.memory-source', {
+    senderId: 'alice',
+    text: 'I own an old controller.',
+  });
+  for (let i = 0; i < 45; i++)
+    store.event('bot', null, 'chat.memory-source', { senderId: 'bob', text: 'later ' + i });
+  store.event('bot2', null, 'chat.memory-source', { senderId: 'alice', text: 'OTHER CHAT' });
+  const old = browseHistory(store, 'bot', { order: 'oldest', limit: 1 });
+  assert.equal(old.results[0].eventId, first.id);
+  assert.equal(old.results[0].speaker, 'alice');
+  assert.ok(old.nextCursor);
+  const next = browseHistory(store, 'bot', { order: 'oldest', cursor: old.nextCursor!, limit: 1 });
+  assert.equal(next.results[0].speaker, 'bob');
+  assert.notEqual(next.results[0].eventId, first.id);
+  assert.equal(browseHistory(store, 'bot', { conversationId: 'bot2' }).unavailable, true);
+  store.put('memory-source-forgotten', { id: sourceKey('chat:bot', 'bot', first.id) });
+  assert.notEqual(browseHistory(store, 'bot', { order: 'oldest' }).results[0].eventId, first.id);
+  assert.equal(browseHistory(store, 'bot', { since: Date.now() + 99999 }).results.length, 0);
+});
+test('empty filtered chronological pages expose a continuation instead of claiming no history', (t) => {
+  const store = setup(t);
+  for (let i = 0; i < 201; i++)
+    store.event('bot', null, 'user.message', { content: 'unattributed prompt wrapper' });
+  const last = store.event('bot', null, 'chat.memory-source', {
+    senderId: 'member',
+    text: 'attributed original',
+  });
+  const page = browseHistory(store, 'bot', { order: 'oldest' });
+  assert.equal(page.results.length, 0);
+  assert.ok(page.nextCursor);
+  const next = browseHistory(store, 'bot', { order: 'oldest', cursor: page.nextCursor! });
+  assert.equal(next.results[0].eventId, last.id);
+});
+
+test('remote isolation is not mislabeled as a manual reach selection', () => {
+  assert.equal(
+    memoryReachReason({ scope: 'chat:bot', recallScope: 'conversation' } as any),
+    'isolated-chat',
+  );
+  assert.equal(memoryReachReason({ scope: 'user', recallScope: 'conversation' } as any), 'manual');
 });

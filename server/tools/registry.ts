@@ -1,5 +1,9 @@
 import { HistorySemantic } from '../services/history-semantic.js';
-import { readHistoryDigest, readHistorySource } from '../services/conversation-history.js';
+import {
+  browseHistory,
+  readHistoryDigest,
+  readHistorySource,
+} from '../services/conversation-history.js';
 import { conversationMemoryScope } from '../../shared/memory-scope.js';
 import { prepareFileReview, reviewableFileMutation } from '../services/file-review.js';
 import { restrictedChat } from '../services/chat-access.js';
@@ -1203,6 +1207,21 @@ export function tools() {
           validUntil: null,
         }),
       ),
+  });
+  registry.add({
+    name: 'browse_conversation_history',
+    effect: 'read',
+    description:
+      'Browse recorded history chronologically in the permitted memory domain, defaulting to this conversation. Use oldest for earliest available messages, newest for recent history, optional epoch-millisecond time bounds and nextCursor for more pages. Does not require a search keyword or embedding. This is stored history, not a claim about everything currently visible to the model. Each source has its own speaker.',
+    schema: z.object({
+      conversationId: z.string().optional(),
+      order: z.enum(['oldest', 'newest']).default('newest'),
+      cursor: z.number().int().positive().optional(),
+      since: z.number().int().nonnegative().optional(),
+      until: z.number().int().nonnegative().optional(),
+      limit: z.number().int().min(1).max(20).default(10),
+    }),
+    run: (a, c) => text(browseHistory(c.store, c.conversation.id, a)),
   });
   registry.add({
     name: 'search_conversation_history',

@@ -277,3 +277,57 @@ export function searchHistory(
       'Paged lexical search of eligible recorded text; no results is not proof the topic was never discussed. Bot history requires trusted sender receipts; media is not transcribed by this search.',
   };
 }
+
+/** Chronological browsing does not require guessing search terms or embedding availability. */
+export function browseHistory(
+  store: Store,
+  callerId: string,
+  options: {
+    conversationId?: string;
+    order?: 'oldest' | 'newest';
+    cursor?: number;
+    since?: number;
+    until?: number;
+    limit?: number;
+  } = {},
+) {
+  const target = options.conversationId || callerId;
+  const c = historyConversations(store, callerId).find((c) => c.id === target);
+  if (!c) return { unavailable: true, results: [], nextCursor: null };
+  const asc = options.order === 'oldest',
+    limit = Math.max(1, Math.min(20, options.limit || 10));
+  const rows = store.db
+    .prepare(
+      `SELECT id FROM events WHERE conversation_id=? AND id ${asc ? '>' : '<'} ?
+    AND created_at>=? AND created_at<=? AND type IN ('user.message','assistant.message','chat.memory-source')
+    ORDER BY id ${asc ? 'ASC' : 'DESC'} LIMIT 201`,
+    )
+    .all(
+      target,
+      options.cursor ?? (asc ? 0 : Number.MAX_SAFE_INTEGER),
+      options.since ?? 0,
+      options.until ?? Number.MAX_SAFE_INTEGER,
+    ) as { id: number }[];
+  const results = [];
+  let scanned = 0;
+  for (const row of rows.slice(0, 200)) {
+    scanned++;
+    const source = historySource(store, c, row.id);
+    if (!source) continue;
+    results.push({
+      ...source,
+      text: source.text.slice(0, 1500),
+      truncated: source.text.length > 1500,
+      conversationId: target,
+      citation: `chat:${target}#event:${row.id}`,
+    });
+    if (results.length >= limit) break;
+  }
+  return {
+    results,
+    nextCursor: scanned < rows.length ? (rows[scanned - 1]?.id ?? null) : null,
+    order: asc ? 'oldest' : 'newest',
+    coverage:
+      'Eligible recorded history in this conversation and requested time range, not the current model context or guaranteed complete platform history. Speaker IDs belong to each individual source; never attribute another speaker to the requester. Follow nextCursor even if this page is empty. Read long sources with read_history_source.',
+  };
+}

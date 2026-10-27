@@ -11,6 +11,7 @@ export const coreTools = new Set([
   'glob',
   'grep',
   'inspect_chat',
+  'browse_conversation_history',
   'inspect_chat_notebook',
   'update_chat_notebook',
   'list_chat_members',

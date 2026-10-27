@@ -39,7 +39,8 @@ export function memoryPartition(m: Memory) {
 
 export function memoryReachReason(
   m: Memory,
-): 'manual' | 'local' | 'uncertain' | 'shared' | 'legacy' {
+): 'isolated-chat' | 'manual' | 'local' | 'uncertain' | 'shared' | 'legacy' {
+  if (m.scope.startsWith('chat:')) return 'isolated-chat';
   if (m.recallScope && m.recallScope !== 'auto') return 'manual';
   if (m.applicability === 'uncertain') return 'uncertain';
   if (memoryReach(m) === 'conversation') return 'local';

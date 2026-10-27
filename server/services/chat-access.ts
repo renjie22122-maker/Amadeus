@@ -13,6 +13,7 @@ export const socialChatTools = new Set([
   'read_history_source',
   'search_memory_graph',
   'inspect_chat',
+  'browse_conversation_history',
   'inspect_chat_notebook',
   'update_chat_notebook',
   'list_chat_members',
