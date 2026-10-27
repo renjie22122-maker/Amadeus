@@ -263,7 +263,20 @@ export async function reviewMemoryConflicts(
 /** Audit details are projected for the UI, never injected into stored memory content. */
 export function memoryReviewViews(store: Store) {
   const reviews = new Map(store.list<any>('memory-relation-review').map((r) => [r.id, r]));
-  return store.list<Memory>('memory').map((m) => {
+  const reorganizations = new Map(store.list<any>('memory-reorganization').map((r) => [r.id, r]));
+  return store.list<Memory>('memory').map((original) => {
+    const audit = reorganizations.get(original.id);
+    const m = audit
+      ? {
+          ...original,
+          reorganization: {
+            status: audit.status,
+            action: audit.action,
+            reason: audit.reason,
+            at: audit.at,
+          },
+        }
+      : original;
     const r = reviews.get(m.id);
     return !r || r.memoryRevision !== m.revision
       ? m

@@ -266,7 +266,7 @@ export class MemoryLifecycle {
     }
     return report;
   }
-  update(key: string, patch: Partial<Memory>, revision?: number) {
+  update(key: string, patch: Partial<Memory>, revision?: number, reason = 'edited') {
     const old = this.store.get<Memory>('memory', key);
     assert(
       revision == null || old.revision === revision,
@@ -307,7 +307,7 @@ export class MemoryLifecycle {
           ? 'disputed'
           : 'candidate';
     if (patch.active === true) next.conflictReviewRequired = false;
-    return this.record(old, next, 'edited');
+    return this.record(old, next, reason);
   }
   resolve(
     winnerId: string,

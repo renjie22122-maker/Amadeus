@@ -1,3 +1,4 @@
+import { reorganizeMemories } from './memory-reorganization.js';
 import { terms } from './memory-retrieval.js';
 import { experienceOutcome } from './memory-experience.js';
 import {
@@ -392,6 +393,7 @@ export class MemoryLearning {
           await this.indexLocally(c);
           const profile = this.config.profile(c.profileId),
             target = memoryTarget(profile);
+
           const graphProcessed = await learnMemoryGraph(
             this.store,
             c,
@@ -451,6 +453,31 @@ export class MemoryLearning {
             ),
           );
           if (reviewed) return;
+          if (
+            await reorganizeMemories(
+              this.store,
+              c,
+              profile,
+              this.provider(profile),
+              AbortSignal.any([this.controller.signal, AbortSignal.timeout(65000)]),
+              () => {
+                const latest = this.store.maybe<Conversation>('conversation', c.id);
+                return (
+                  !!latest &&
+                  latest.automaticMemory === true &&
+                  this.ready(latest, Date.now()) &&
+                  memoryTarget(this.config.profile(latest.profileId)) === target &&
+                  this.config.profile(latest.profileId).model === profile.model &&
+                  conversationMemoryScope(latest) === conversationMemoryScope(c)
+                );
+              },
+              sensitive,
+              new MemoryLifecycle(this.store, (stage, m) =>
+                memoryHooks(this.store, this.config, stage, m),
+              ),
+            )
+          )
+            return;
         }
 
         continue;

@@ -293,6 +293,7 @@ export interface Skill {
   createdAt: number;
 }
 export interface Memory {
+  reorganization?: { status: string; action?: string; reason?: string; at: number };
   /** Read-only UI projection of the separate source-review audit. */
   relationReview?: {
     status: string;

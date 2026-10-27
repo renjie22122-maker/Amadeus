@@ -458,6 +458,36 @@ export function MemoryList({
               </p>
             </div>
           )}
+          {m.reorganization && (
+            <details>
+              <summary>
+                {label('Historical memory review', '旧记忆整理')} ·{' '}
+                {m.reorganization.status === 'completed'
+                  ? label('Reviewed', '已复审')
+                  : m.reorganization.status === 'running'
+                    ? label('Reviewing', '整理中')
+                    : m.reorganization.status === 'retry_wait'
+                      ? label('Retry scheduled', '等待重试')
+                      : label('Held', '暂缓处理')}
+              </summary>
+              <p>
+                {m.reorganization.action === 'merge'
+                  ? label('Merged; original retained.', '已归并；原条目保留。')
+                  : m.reorganization.action === 'history'
+                    ? label(
+                        'Kept as history; excluded from routine recall.',
+                        '保留为历史，不参与日常召回。',
+                      )
+                    : m.reorganization.action === 'uncertain'
+                      ? label('Insufficient evidence; recall held.', '证据不足，已暂停召回。')
+                      : m.reorganization.action === 'revise'
+                        ? label('Revised against original conversation.', '已依据原聊天修订。')
+                        : ''}
+              </p>
+              <p>{m.reorganization.reason}</p>
+              <small>{new Date(m.reorganization.at).toLocaleString()}</small>
+            </details>
+          )}
           {m.relationReview && (
             <details>
               <summary>
