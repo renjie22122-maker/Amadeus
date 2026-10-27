@@ -1,3 +1,4 @@
+import type { Store } from '../storage/store.js';
 import type { MemorySource } from './chat-memory-source.js';
 import type { Memory } from '../../shared/types.js';
 /** Old sources explain new evidence; they never advance the incremental cursor. */
@@ -63,3 +64,44 @@ export function reinforcement(memory: Memory, source: MemorySource, conversation
     reinforcementCount: (memory.reinforcementCount || 0) + 1,
   };
 }
+
+/** Assistant text explains references; it is never added to source evidence. */
+export function memoryDialogueContext(
+  store: Store,
+  conversationId: string,
+  sources: MemorySource[],
+  anchors: MemorySource[],
+  eligible: (source: MemorySource) => boolean,
+) {
+  const selected = new Map<
+    number,
+    { id: number; role: 'assistant'; text: string; beforeSourceId: number }
+  >();
+  let budget = 8000;
+  for (const anchor of [...anchors].reverse().slice(0, 16)) {
+    if (anchor.evidenceRole || !eligible(anchor)) continue;
+    const previous = sources.filter((s) => s.id < anchor.id && !s.evidenceRole).at(-1);
+    // Do not bridge an excluded/forgotten turn with the assistant's paraphrase of it.
+    if (!previous || !eligible(previous)) continue;
+    const rows = store.db
+      .prepare(
+        `SELECT id,json_extract(data,'$.content') AS content
+      FROM events WHERE conversation_id=? AND type='assistant.message' AND id>? AND id<?
+      ORDER BY id DESC LIMIT 2`,
+      )
+      .all(conversationId, previous.id, anchor.id) as { id: number; content: unknown }[];
+    for (const row of rows) {
+      if (selected.has(row.id) || typeof row.content !== 'string' || !row.content.trim()) continue;
+      if (!eligible({ id: row.id, at: anchor.at, text: row.content })) continue;
+      const text = row.content.slice(0, Math.min(2000, budget));
+      if (!text) continue;
+      selected.set(row.id, { id: row.id, role: 'assistant', text, beforeSourceId: anchor.id });
+      budget -= text.length;
+    }
+    if (!budget) break;
+  }
+  return [...selected.values()].sort((a, b) => a.id - b.id);
+}
+
+export const coherentMemoryGuidance = `Choose a reusable semantic unit, not a sentence or a whole transcript: one subject and one independently useful task facet, with its relevant constraints, conditions and rationale together. Several short turns completing one idea should normally yield one coherent record with multiple source quotes, not a list of fragments. Separate independently changing topics, different people and incompatible conditions; do not glue unrelated preferences into a large biography. In ordinary conversations, distinguish enduring needs from one-time requests; in projects, retain a coherent decision with rationale and constraints or an evidenced procedure with prerequisites and verification, rather than separate memories for each instruction. Use updatesMemoryId to refine the matching eligible automatic record when a new turn completes or qualifies that same idea, and return at most one update for each ID. Keep earlier still-valid details and cite their original sources. Topic similarity alone is not equivalence, adoption or permission to merge.
+Assistant dialogueContext is contextual scaffolding only: it can explain what a human's 'that', correction or explicit adoption refers to, but cannot itself prove human preferences, facts, success or consent. Never cite a dialogueContext ID as evidence, infer agreement from silence, or store the assistant's proposals as accepted requirements. When adoption is ambiguous, keep it in history instead of inventing a durable fact. Existing memories' recallScope/applicability are boundaries to preserve; coherent wording does not grant broader sharing.`;

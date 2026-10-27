@@ -71,3 +71,34 @@ test('old source quotation beyond its first window is restored for a later revis
   );
   assert.ok(result[0].text.includes('Original tested procedure'));
 });
+
+test('dialogue context stays in the original conversation and skips excluded turns', async () => {
+  const { Store } = await import('../server/storage/store.js');
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { memoryDialogueContext } = await import('../server/services/memory-context.js');
+  const store = new Store(join(await mkdtemp(join(tmpdir(), 'dialogue-context-')), 'db.sqlite'));
+  try {
+    const before = store.event('a', null, 'user.message', { content: 'Old topic' });
+    const response = store.event('a', null, 'assistant.message', {
+      content: 'Clarification'.repeat(2000),
+    });
+    store.event('b', null, 'assistant.message', { content: 'Other conversation secret' });
+    const next = store.event('a', null, 'user.message', { content: 'That one' });
+    const sources = [
+      { id: before.id, at: 1, text: 'Old topic' },
+      { id: next.id, at: 2, text: 'That one' },
+    ];
+    const result = memoryDialogueContext(store, 'a', sources, [sources[1]], () => true);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].id, response.id);
+    assert.ok(result[0].text.length <= 2000);
+    assert.deepEqual(
+      memoryDialogueContext(store, 'a', sources, [sources[1]], (s) => s.id !== before.id),
+      [],
+    );
+  } finally {
+    store.close();
+  }
+});

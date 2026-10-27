@@ -842,3 +842,92 @@ test('history-only extraction advances source progress without creating or reinf
     f.store.close();
   }
 });
+
+test('ordinary and project discussions refine one coherent memory with sources intact', async () => {
+  for (const projectId of [null, 'project-one']) {
+    const f = await fixture();
+    f.store.put('conversation', { ...f.c, projectId });
+    let count = 0;
+    const learning = new MemoryLearning(f.store, f.config, () => ({
+      complete: async (req) => {
+        const input = JSON.parse(req.messages[1].content);
+        if (++count === 1) return response([{ ...f.item, applicability: 'scope' }]);
+        assert.ok(
+          input.dialogueContext.some(
+            (x: any) =>
+              x.role === 'assistant' &&
+              x.text === 'Would you like a worked example with each concise explanation?',
+          ),
+        );
+        assert.ok(!input.messages.some((x: any) => x.text.startsWith('Would you like')));
+        assert.equal(input.existing[0].applicability, 'scope');
+        const latest = input.messages.at(-1);
+        return response([
+          {
+            ...f.item,
+            content: 'Prefers concise explanations with a worked example.',
+            applicability: 'scope',
+            eventId: latest.id,
+            quote: latest.text,
+            updatesMemoryId: input.existing[0].id,
+            supportingEvidence: [{ eventId: f.eid, quote: f.item.quote }],
+          },
+        ]);
+      },
+    }));
+    try {
+      await learning.tick();
+      f.store.event('chat', 'run', 'assistant.message', {
+        content: 'Would you like a worked example with each concise explanation?',
+      });
+      f.store.event('chat', 'run', 'user.message', {
+        content: 'Yes, add that to my preferred explanation style.',
+      });
+      await learning.tick();
+      const memories = f.store.list<any>('memory');
+      assert.equal(memories.length, 1);
+      assert.equal(memories[0].revision, 2);
+      assert.equal(memories[0].scope, projectId ? 'project:' + projectId : 'user');
+      assert.ok(memories[0].sourceRefs.includes('chat:chat#event:' + f.eid));
+      assert.equal(memories[0].evidence.length, 2);
+    } finally {
+      await learning.close();
+      f.store.close();
+    }
+  }
+});
+
+test('assistant dialogue cannot serve as human evidence and changed dialogue invalidates application', async () => {
+  for (const mode of ['assistant-evidence', 'changed']) {
+    const f = await fixture();
+    const assistant = f.store.event('chat', 'run', 'assistant.message', {
+      content: 'I suggest permanently enabling a new preference.',
+    });
+    const human = f.store.event('chat', 'run', 'user.message', { content: 'Maybe, let me think.' });
+    const learning = new MemoryLearning(f.store, f.config, () => ({
+      complete: async () => {
+        if (mode === 'changed')
+          f.store.db
+            .prepare('UPDATE events SET data=? WHERE id=?')
+            .run(JSON.stringify({ content: 'Different proposal' }), assistant.id);
+        return response([
+          {
+            ...f.item,
+            eventId: mode === 'changed' ? human.id : assistant.id,
+            quote:
+              mode === 'changed'
+                ? 'Maybe, let me think.'
+                : 'I suggest permanently enabling a new preference.',
+          },
+        ]);
+      },
+    }));
+    try {
+      await learning.tick();
+      assert.equal(f.store.list('memory').length, 0);
+    } finally {
+      await learning.close();
+      f.store.close();
+    }
+  }
+});
