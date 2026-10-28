@@ -20,6 +20,7 @@ export interface ChatBridge {
     limit: number,
   ): Promise<any>;
   importMedia(c: ChatConnection, messageId: string): Promise<string[]>;
+  importFavorites?(c: ChatConnection, count?: number): Promise<unknown>;
   retract?(c: ChatConnection, deliveryId: string, senderId: string | null): Promise<unknown>;
 }
 const services = new WeakMap<Store, { channels: ChatConnections; bridge: ChatBridge }>();
@@ -44,6 +45,12 @@ export function currentChat(store: Store, conversationId: string, runId: string)
   service.channels.authorize(c);
   return { ...service, c, currentSenderId: row.sender_id || null };
 }
+export function localChatBridge(store: Store, c: ChatConnection) {
+  const service = services.get(store);
+  assert(service, 'CHAT_UNAVAILABLE', 'Chat transport unavailable.');
+  service.channels.authorize(c);
+  return service.bridge;
+}
 export function chatCapabilities(c: ChatConnection) {
   return {
     groupInfo: c.peerType === 'group' && ['onebot11', 'onebot12'].includes(c.transport),
@@ -52,6 +59,10 @@ export function chatCapabilities(c: ChatConnection) {
     quotedReply: ['onebot11', 'onebot12'].includes(c.transport),
     nativeFaces: c.transport === 'onebot11',
     images: true,
+    stickerLibrary: true,
+    favoriteStickersImport: c.transport === 'onebot11',
+    subscriptionStickerPacks: false,
+    socialFeedPublishing: false,
     scheduledFollowups: { supported: true, controllerApproval: true, destination: 'same-chat' },
     browserVoice: {
       supported: true,

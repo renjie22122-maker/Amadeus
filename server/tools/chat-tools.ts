@@ -1,4 +1,10 @@
 import {
+  listChatStickers,
+  saveChatSticker,
+  stickerInput,
+  stickerReferences,
+} from '../services/chat-stickers.js';
+import {
   modelNotebook,
   inspectNotebook,
   updateNotebook,
@@ -216,10 +222,37 @@ export function installChatTools(registry: ToolRegistry) {
     },
   });
   registry.add({
+    name: 'list_chat_stickers',
+    effect: 'read',
+    parallelSafe: true,
+    description:
+      'Search the persistent local sticker library for this exact chat. Returns reusable sticker IDs and attachment references. Inspect pixels with read_image before selecting an unfamiliar image; labels alone are not visual evidence. Empty library is not absence of image-sending capability.',
+    schema: z.object({
+      query: z.string().max(100).default(''),
+      offset: z.number().int().min(0).default(0),
+      limit: z.number().int().min(1).max(30).default(20),
+    }),
+    run: async (a, ctx) => {
+      const { c } = currentChat(ctx.store, ctx.conversation.id, ctx.run.id);
+      return text(listChatStickers(ctx.store, c, a.query, a.offset, a.limit));
+    },
+  });
+  registry.add({
+    name: 'save_chat_sticker',
+    effect: 'coordinate',
+    description:
+      'Save an inspected, suitable same-chat image to the persistent local sticker library with a concise name and usage tags. Use an imported attachment reference; never save every incoming photo or private screenshot automatically. Does not send anything. Deduplicates identical image bytes within this route.',
+    schema: stickerInput,
+    run: async (a, ctx) => {
+      const { c } = currentChat(ctx.store, ctx.conversation.id, ctx.run.id);
+      return text(saveChatSticker(ctx.store, c, a));
+    },
+  });
+  registry.add({
     name: 'prepare_chat_reply',
     effect: 'coordinate',
     description:
-      'Prepare delivery to the current chat: optional ordered messages for natural conversational beats (available proactively in casual chat, not only on explicit requests to split), mediaOnly for voice/image/video without extra text or emoji, plus native mentions, quote, QQ face IDs or same-chat media/sticker references. Replaces prior plan, does not send immediately. No @all or arbitrary recipients. Use ordinary text/Unicode emoji when native features are unavailable. Inspect an image before choosing it as a sticker. By default the final answer supplies text. Explicit messages replace that text; mediaOnly suppresses it including speaker emoji placeholders. Media generation still requires generate_media and existing permissions. When casual conversation benefits from a reaction, feel free to use a fitting inspected same-chat sticker or native face; do not force stickers or generate/search for one every turn. Do not emit raw CQ codes.',
+      'Prepare delivery to the current chat: optional ordered messages for natural conversational beats (available proactively in casual chat, not only on explicit requests to split), mediaOnly for voice/image/video without extra text or emoji, plus native mentions, quote, QQ face IDs or same-chat media/sticker references or persistent stickerIds from list_chat_stickers. Replaces prior plan, does not send immediately. No @all or arbitrary recipients. Use ordinary text/Unicode emoji when native features are unavailable. Inspect an image before choosing it as a sticker. By default the final answer supplies text. Explicit messages replace that text; mediaOnly suppresses it including speaker emoji placeholders. Media generation still requires generate_media and existing permissions. When casual conversation benefits from a reaction, feel free to use a fitting inspected same-chat sticker or native face; do not force stickers or generate/search for one every turn. Do not emit raw CQ codes.',
     schema: z.object({
       messages: z
         .array(z.string().trim().min(1).max(4000))
@@ -230,6 +263,10 @@ export function installChatTools(registry: ToolRegistry) {
           'One entry per intended platform bubble, in order. Choose by conversational meaning, not line breaks. Omit for one coherent final answer; do not force multiple bubbles. These entries replace the final answer on the platform.',
         ),
       mediaOnly: z.boolean().default(false),
+      stickerIds: z
+        .array(z.string().regex(/^[a-f0-9]{64}$/))
+        .max(3)
+        .default([]),
       mentions: z
         .array(z.string().min(1).max(160))
         .max(5)
@@ -258,7 +295,15 @@ export function installChatTools(registry: ToolRegistry) {
       const latest = currentChat(ctx.store, ctx.conversation.id, ctx.run.id).c;
       if (latest.revision !== c.revision || latest.peerId !== c.peerId)
         throw Error('Chat changed while preparing reply');
-      a = { ...a, mentions };
+      a = {
+        ...a,
+        mentions,
+        references: [
+          ...new Set([...a.references, ...stickerReferences(ctx.store, c, a.stickerIds)]),
+        ],
+      };
+      if (a.references.length > 3)
+        throw Error('At most three combined image/media references per reply.');
       validateReplyPlan(ctx.store, c, a);
       for (const ref of a.references) {
         if (ref.startsWith('attachment:')) {
@@ -275,6 +320,7 @@ export function installChatTools(registry: ToolRegistry) {
       });
       return text({
         prepared: true,
+        note: 'Prepared is not delivered. Images upload from local bytes after completion; do not claim successful sending before a delivery receipt.',
         mentions,
         target: c.peerId,
         delivery: 'queued-after-run-completes',

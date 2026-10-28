@@ -1,3 +1,5 @@
+import { listChatStickers, saveChatSticker, removeChatSticker } from '../services/chat-stickers.js';
+import { localChatBridge } from '../services/chat-interaction.js';
 import { assert } from '../core/errors.js';
 import { id } from '../storage/store.js';
 import {
@@ -10,6 +12,54 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ChatConnections } from '../services/chat-connections.js';
 export function chatConnectionRoutes(app: FastifyInstance, channels: ChatConnections) {
+  const favoriteJobs = new Map<string, { status: string; result?: any; error?: string }>();
+  app.get<{ Params: { id: string } }>('/api/chat-connections/:id/stickers', async (req) => {
+    const q = z
+      .object({
+        query: z.string().max(100).default(''),
+        offset: z.coerce.number().int().min(0).default(0),
+      })
+      .parse(req.query);
+    return listChatStickers(channels.store, channels.get(req.params.id), q.query, q.offset);
+  });
+  app.post<{ Params: { id: string } }>('/api/chat-connections/:id/stickers', async (req) =>
+    saveChatSticker(channels.store, channels.get(req.params.id), req.body),
+  );
+  app.delete<{ Params: { id: string; stickerId: string } }>(
+    '/api/chat-connections/:id/stickers/:stickerId',
+    async (req) =>
+      removeChatSticker(channels.store, channels.get(req.params.id), req.params.stickerId),
+  );
+  app.post<{ Params: { id: string } }>(
+    '/api/chat-connections/:id/stickers/import-favorites',
+    async (req) => {
+      const { count } = z
+        .object({ count: z.number().int().min(1).max(200).default(48) })
+        .parse(req.body || {});
+      const c = channels.get(req.params.id),
+        bridge = localChatBridge(channels.store, c);
+      assert(bridge.importFavorites, 'CHAT_UNSUPPORTED', 'Favorites import is unavailable.');
+      if (favoriteJobs.get(c.id)?.status === 'processing') return { status: 'processing' };
+      favoriteJobs.set(c.id, { status: 'processing' });
+      void bridge.importFavorites(c, count).then(
+        (result) => favoriteJobs.set(c.id, { status: 'completed', result }),
+        () =>
+          favoriteJobs.set(c.id, {
+            status: 'failed',
+            error: 'Favorites unavailable; check bridge connection and supported API.',
+          }),
+      );
+      return { status: 'processing' };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    '/api/chat-connections/:id/stickers/import-status',
+    async (req) => {
+      channels.get(req.params.id);
+      return favoriteJobs.get(req.params.id) || { status: 'idle' };
+    },
+  );
   app.get<{ Params: { id: string } }>('/api/chat-connections/:id/notebook', async (req) =>
     inspectNotebook(channels.store, channels.get(req.params.id)),
   );

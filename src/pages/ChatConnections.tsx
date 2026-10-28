@@ -1,3 +1,4 @@
+import { ChatStickerLibrary } from '../components/ChatStickerLibrary';
 import { ChatNotebook } from '../components/ChatNotebook';
 import { BrowserVoiceChat } from '../components/BrowserVoiceChat';
 import '../chat-connections.css';
@@ -243,6 +244,7 @@ export function ChatConnectionsPage({
               </button>
             </div>
             <ChatNotebook id={c.id} zh={zh} notify={notify} />
+            <ChatStickerLibrary id={c.id} zh={zh} notify={notify} />
             {c.deliveries.some((d: any) => ['uncertain', 'failed'].includes(d.state)) && (
               <button
                 onClick={() =>

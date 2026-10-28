@@ -18,6 +18,8 @@ export const socialChatTools = new Set([
   'update_chat_notebook',
   'list_chat_members',
   'read_chat_media',
+  'list_chat_stickers',
+  'save_chat_sticker',
   'read_chat_message',
   'inspect_knowledge_status',
   'prepare_chat_reply',
