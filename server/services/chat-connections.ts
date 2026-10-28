@@ -1182,7 +1182,14 @@ export class ChatConnections {
                 .prepare(
                   'INSERT OR IGNORE INTO chat_outbox(id,connection_id,state,text,created_at,reference) VALUES(?,?,?,?,?,?)',
                 )
-                .run(c.id + ':' + reference, c.id, 'pending', '', Date.now(), reference);
+                .run(
+                  c.id + ':' + run.id + ':' + reference,
+                  c.id,
+                  'pending',
+                  '',
+                  Date.now(),
+                  reference,
+                );
           if (!silent) {
             const jobs = new Map<string, any>();
             for (const event of this.store.eventsForRun(run.id, ['media.updated'])) {
@@ -1477,7 +1484,14 @@ export class ChatConnections {
           .prepare(
             'INSERT OR IGNORE INTO chat_outbox (id,connection_id,state,text,created_at,reference) VALUES(?,?,?,?,?,?)',
           )
-          .run(c.id + ':' + file.reference, c.id, 'pending', file.name, Date.now(), file.reference);
+          .run(
+            c.id + ':' + event.run_id + ':' + file.reference,
+            c.id,
+            'pending',
+            file.name,
+            Date.now(),
+            file.reference,
+          );
       this.store.put('chat-file-cursor', { id: c.id, eventId: event.id });
     }
   }

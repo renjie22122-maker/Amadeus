@@ -1485,3 +1485,41 @@ test('controller can continue a protected-context failure through the normal che
   assert.equal(calls[0][3].recoveredFrom, 'full');
   assert.deepEqual(calls[0][3].attachmentIds, []);
 });
+
+test('a previously sent image can be selected again in another run, once per run', (t) => {
+  const ref = 'attachment:reusable',
+    f = completedRemoteReply(t, { references: [ref, ref] });
+  f.store.db
+    .prepare(
+      'INSERT INTO chat_outbox(id,connection_id,state,text,created_at,reference) VALUES(?,?,?,?,?,?)',
+    )
+    .run(f.c.id + ':' + ref, f.c.id, 'sent', '', Date.now(), ref);
+  f.channel.tick(Date.now() + 20000);
+  f.channel.tick(Date.now() + 20000);
+  let rows = f.store.db.prepare('SELECT * FROM chat_outbox WHERE reference=?').all(ref) as any[];
+  assert.equal(rows.length, 2);
+  assert.equal(rows.filter((x) => x.state === 'pending').length, 1);
+  f.store.put('run', {
+    id: 'another-run',
+    conversationId: 'chat',
+    status: 'completed',
+    createdAt: Date.now(),
+  });
+  f.store.db
+    .prepare(
+      'INSERT INTO chat_inbox(id,connection_id,received_at,state,text,run_id) VALUES(?,?,?,?,?,?)',
+    )
+    .run('another-inbox', f.c.id, Date.now(), 'running', '', 'another-run');
+  f.store.put('chat-reply-plan', {
+    id: 'another-run',
+    connectionId: f.c.id,
+    revision: f.c.revision,
+    references: [ref],
+  });
+  f.store.event('chat', 'another-run', 'assistant.message', { final: true, text: 'again' });
+  f.channel.tick(Date.now() + 20000);
+  f.channel.tick(Date.now() + 20000);
+  rows = f.store.db.prepare('SELECT * FROM chat_outbox WHERE reference=?').all(ref) as any[];
+  assert.equal(rows.length, 3);
+  assert.equal(new Set(rows.map((x) => x.id)).size, 3);
+});
