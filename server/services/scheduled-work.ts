@@ -1,3 +1,4 @@
+import { chatFollowupPolicy } from './chat-reply-policy.js';
 import { currentChat } from './chat-interaction.js';
 import { notebookContext } from './chat-notebook.js';
 import { Store, id } from '../storage/store.js';
@@ -231,6 +232,7 @@ export class ScheduledWorkService {
           });
           remotePrefix =
             notebookContext(this.store, connection) +
+            chatFollowupPolicy +
             `[Scheduled remote follow-up in the original ${connection.peerType || 'private'} chat. Use inspect_chat to inspect this route, prepare_chat_reply for ordered messages or mediaOnly. Do not change recipients. Respect the authorized purpose and quiet hours in the task. Report unchanged if there is nothing useful to send.]\n`;
         }
         this.runtime.start(

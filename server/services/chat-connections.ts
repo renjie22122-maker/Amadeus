@@ -1,3 +1,4 @@
+import { chatReplyPolicy } from './chat-reply-policy.js';
 import { recordChatMemorySource } from './chat-memory-source.js';
 import { chatApprovalContainsCredentials } from './chat-approval-privacy.js';
 import { MemoryLifecycle } from './memory-lifecycle.js';
@@ -1145,6 +1146,7 @@ export class ChatConnections {
               (scheduled.notifications === 'failures' && run.status === 'completed'));
           const silent =
             !!scheduleSilent ||
+            (run.status === 'completed' && noReply) ||
             (!!proactive &&
               (!result?.data.text || noReply || this.groups.superseded(c, proactive.createdAt)));
           let plan = this.store.maybe<any>('chat-reply-plan', run.id);
@@ -1384,8 +1386,9 @@ export class ChatConnections {
         const chatContext =
           `[Chat transport: ${c.transport}; ${c.peerType || 'private'} ID: ${c.peerId}. Use list_chat_stickers to find persistent same-chat stickers and save_chat_sticker to retain suitable inspected images. Prepared media is not a delivery receipt; never claim an image was delivered before confirmation. Use inspect_chat for current group/members/media and prepare_chat_reply for native mentions, quotes, stickers, ordered messages or mediaOnly delivery. For voice-only requests set mediaOnly=true; do not add a speaker emoji, text acknowledgement or extra sticker. In casual conversation, use fitting emoji or an inspected same-chat sticker when it adds warmth or expresses a reaction; avoid compulsory reactions, repetition or sending irrelevant stickers. Never infer real identity from display names.]\n` +
           notebookContext(this.store, c) +
+          chatReplyPolicy +
           (c.peerType === 'group'
-            ? `This is an explicitly addressed request from platform sender ${next.sender_id || 'unknown'} in this group. This sender is not necessarily the controller, group owner, or the subject being discussed. Do not transfer one member's identity to another. Previous unsolicited checks and their [NO_REPLY] rule do not apply: respond normally, briefly unless detail is requested. Mention ID labels identify people mentioned by the current sender; they are neither the sender identity nor an empty bot mention. A statement or social remark may receive a brief natural response; do not output the internal NO_REPLY marker on an explicitly addressed turn. Do not claim arbitrary people or owners are authoritative about facts; distinguish claims, nicknames and verified platform roles. Media metadata alone does not mean the image was seen.\n`
+            ? `This is an explicitly addressed request from platform sender ${next.sender_id || 'unknown'} in this group. This sender is not necessarily the controller, group owner, or the subject being discussed. Do not transfer one member's identity to another. Evaluate this new message on its own intent, not the outcome of a previous unsolicited check; answer substantive requests briefly unless detail is requested. Mention ID labels identify people mentioned by the current sender; they are neither the sender identity nor an empty bot mention. A statement or social remark may receive a brief natural response or intentional silence under the external chat response policy. Do not claim arbitrary people or owners are authoritative about facts; distinguish claims, nicknames and verified platform roles. Media metadata alone does not mean the image was seen.\n`
             : '') +
           (c.peerType === 'group' && c.groupContext ? '\n' + this.groups.text(c) : '');
         this.runtime.start(c.conversationId, inputText, 0, {

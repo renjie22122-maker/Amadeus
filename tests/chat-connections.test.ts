@@ -1523,3 +1523,25 @@ test('a previously sent image can be selected again in another run, once per run
   assert.equal(rows.length, 3);
   assert.equal(new Set(rows.map((x) => x.id)).size, 3);
 });
+
+for (const peerType of ['private', 'group'] as const) {
+  test(`intentional silence completes ${peerType} inbox without a fallback or replay`, (t) => {
+    const { store, channel, c } = completedRemoteReply(t, {}, '[NO_REPLY]');
+    store.put('chat-connection', { ...c, peerType });
+    channel.tick(Date.now() + 20000);
+    channel.tick(Date.now() + 20000);
+    assert.equal(store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get()!.n, 0);
+    assert.equal(store.db.prepare('SELECT state FROM chat_inbox').get()!.state, 'done');
+  });
+}
+test('silence marker cannot hide an interrupted run', (t) => {
+  const { store, channel } = completedRemoteReply(t, {}, '[NO_REPLY]');
+  store.put('run', {
+    id: 'delivery-run',
+    conversationId: 'chat',
+    status: 'interrupted',
+    createdAt: Date.now(),
+  });
+  channel.tick(Date.now() + 20000);
+  assert.equal(store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get()!.n, 1);
+});

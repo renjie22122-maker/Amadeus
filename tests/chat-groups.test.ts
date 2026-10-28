@@ -1029,7 +1029,7 @@ test('unaddressed media stays readable context without initiating participation;
     'receiving',
   );
 });
-test('direct group replies cannot leak NO_REPLY and natively mention the actual sender, not controller', (t) => {
+test('direct group replies natively mention the actual sender, not controller', (t) => {
   const { channels, c, store, calls } = ordinaryGroup(t);
   channels.receive(
     c.id,
@@ -1046,7 +1046,7 @@ test('direct group replies cannot leak NO_REPLY and natively mention the actual 
     status: 'completed',
     createdAt: Date.now(),
   });
-  store.event(c.conversationId, runId, 'assistant.message', { text: '[NO_REPLY]', final: true });
+  store.event(c.conversationId, runId, 'assistant.message', { text: 'Hello', final: true });
   channels.tick(Date.now() + 20000);
   const out: any = store.db
     .prepare('SELECT text,reply_plan FROM chat_outbox WHERE connection_id=?')
