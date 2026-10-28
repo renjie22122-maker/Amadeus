@@ -1,3 +1,4 @@
+import { nextWindowTime, executionWindowSchema } from '../server/services/schedule-window.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -327,4 +328,97 @@ test('legacy failed schedule pointers repair silently without replay', (t) => {
   assert.equal(f.store.get<any>('scheduled-work', 's').lastRunId, 'old');
   assert.equal(f.calls.length, 0);
   assert.equal(f.store.list('schedule-result').length, 0);
+});
+
+const dailyWindow = {
+  timeZone: 'Asia/Shanghai',
+  start: '08:00',
+  end: '23:30',
+  weekdays: [0, 1, 2, 3, 4, 5, 6],
+};
+test('host window defers overnight without model, run count or notifications; restart coalesces', (t) => {
+  const f = fixture(t),
+    night = Date.parse('2026-10-28T15:48:00Z'),
+    morning = Date.parse('2026-10-29T00:00:00Z');
+  f.save({ dueAt: night, intervalMs: 1800000, maxRuns: 3, executionWindow: dailyWindow });
+  f.scheduler.tick(night);
+  assert.equal(f.calls.length, 0);
+  const task = f.store.get<any>('scheduled-work', 's');
+  assert.equal(task.deferredUntil, morning);
+  assert.equal(task.status, 'waiting_window');
+  assert.equal(task.dispatchCount || 0, 0);
+  assert.equal(f.store.list('schedule-result').length, 0);
+  new ScheduledWorkService(f.store, f.runtime).tick(morning - 1);
+  assert.equal(f.calls.length, 0);
+  f.scheduler.tick(morning);
+  f.scheduler.tick(morning);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.store.get<any>('scheduled-work', 's').dispatchCount, 1);
+});
+test('window boundaries, overnight weekdays and DST use the configured zone', () => {
+  const at = Date.parse('2026-10-28T15:30:00Z');
+  assert.equal(nextWindowTime(dailyWindow, at - 1), at - 1);
+  assert.equal(nextWindowTime(dailyWindow, at), Date.parse('2026-10-29T00:00:00Z'));
+  const overnight = { timeZone: 'UTC', start: '22:00', end: '02:00', weekdays: [5] };
+  const saturday = Date.parse('2026-10-31T01:00:00Z');
+  assert.equal(nextWindowTime(overnight, saturday), saturday);
+  assert.equal(
+    nextWindowTime(overnight, Date.parse('2026-10-31T02:00:00Z')),
+    Date.parse('2026-11-06T22:00:00Z'),
+  );
+  const dst = { timeZone: 'America/New_York', start: '03:00', end: '04:00', weekdays: [0] };
+  assert.equal(
+    nextWindowTime(dst, Date.parse('2026-03-08T06:59:00Z')),
+    Date.parse('2026-03-08T07:00:00Z'),
+  );
+  assert(!executionWindowSchema.safeParse({ ...dailyWindow, timeZone: 'invalid' }).success);
+  assert(!executionWindowSchema.safeParse({ ...dailyWindow, weekdays: [] }).success);
+  assert(!executionWindowSchema.safeParse({ ...dailyWindow, start: '24:00' }).success);
+});
+test('deadline still stops a host-deferred task without an API call', (t) => {
+  const f = fixture(t),
+    night = Date.parse('2026-10-28T16:00:00Z');
+  f.save({ dueAt: night, endAt: night + 60000, executionWindow: dailyWindow });
+  f.scheduler.tick(night);
+  f.scheduler.tick(night + 60000);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.store.get<any>('scheduled-work', 's').status, 'limit_reached');
+});
+test('model deferral only slows approved cadence and does not reset launch bounds', (t) => {
+  const f = fixture(t);
+  f.save({ intervalMs: 60000, maxRuns: 2 });
+  f.scheduler.tick(1);
+  const runId = f.calls[0].runId;
+  f.store.put('schedule-report', { id: runId, outcome: 'unchanged', nextCheckAt: 240000 });
+  f.store.put('run', { id: runId, status: 'completed' });
+  f.scheduler.tick(2);
+  assert.equal(f.store.get<any>('scheduled-work', 's').dueAt, 240000);
+  f.scheduler.tick(239999);
+  assert.equal(f.calls.length, 1);
+  f.scheduler.tick(240000);
+  assert.equal(f.calls.length, 2);
+});
+test('model update preserves task identity and refuses changes during approval', async (t) => {
+  const f = fixture(t);
+  f.save();
+  const tools: any[] = [];
+  installScheduledTools({ add: (tool: any) => tools.push(tool) } as any);
+  const update = tools.find((tool) => tool.name === 'update_scheduled_followup');
+  const c: any = {
+    store: f.store,
+    conversation: { id: 'c' },
+    run: { id: 'caller' },
+    inputs: { request: async () => {} },
+  };
+  await update.run({ id: 's', changes: { executionWindow: dailyWindow } }, c);
+  assert.equal(f.store.list('scheduled-work').length, 1);
+  assert.deepEqual(f.store.get<any>('scheduled-work', 's').executionWindow, dailyWindow);
+  c.inputs.request = async () => {
+    f.store.put('scheduled-work', { ...f.store.get<any>('scheduled-work', 's'), runId: 'active' });
+  };
+  await assert.rejects(() => update.run({ id: 's', changes: { prompt: 'new' } }, c));
+  assert.equal(f.store.get<any>('scheduled-work', 's').prompt, 'inspect');
+  await assert.rejects(() =>
+    update.run({ id: 's', changes: {} }, { ...c, conversation: { id: 'other' } }),
+  );
 });

@@ -36,6 +36,11 @@ export function ScheduledTasks({
     endAt: '',
     jobId: '',
     trigger: 'time',
+    windowEnabled: false,
+    windowZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    windowStart: '09:00',
+    windowEnd: '18:00',
+    windowDays: [0, 1, 2, 3, 4, 5, 6],
   });
   const [form, setForm] = useState(blank),
     [editing, setEditing] = useState(false),
@@ -72,6 +77,11 @@ export function ScheduledTasks({
   };
   const edit = (s: any, copy = false) => {
     setForm({
+      windowEnabled: !!s.executionWindow,
+      windowZone: s.executionWindow?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      windowStart: s.executionWindow?.start || '09:00',
+      windowEnd: s.executionWindow?.end || '18:00',
+      windowDays: s.executionWindow?.weekdays || [0, 1, 2, 3, 4, 5, 6],
       id: copy ? '' : s.id,
       name: s.name || '',
       prompt: s.prompt,
@@ -91,6 +101,7 @@ export function ScheduledTasks({
   };
   const status = (s: string) =>
     ({
+      waiting_window: tr('等待允许时段 · 未调用模型', 'Waiting for allowed hours · no model call'),
       waiting: tr('已安排', 'Scheduled'),
       limit_reached: tr('已到停止条件', 'Launch limit reached'),
       running: tr('运行中', 'Running'),
@@ -189,6 +200,14 @@ export function ScheduledTasks({
             e.preventDefault();
             void act(async () => {
               const data: any = {
+                executionWindow: form.windowEnabled
+                  ? {
+                      timeZone: form.windowZone,
+                      start: form.windowStart,
+                      end: form.windowEnd,
+                      weekdays: form.windowDays,
+                    }
+                  : null,
                 name: form.name,
                 prompt: form.prompt,
                 dueAt: form.when ? new Date(form.when).getTime() : Date.now(),
@@ -372,6 +391,83 @@ export function ScheduledTasks({
               'For completion review, select a command above. Limits prevent new launches, not active work; reaching a limit is not verification success.',
             )}
           </p>
+          <fieldset>
+            <legend>
+              {tr('宿主运行条件（调用模型前检查）', 'Host conditions (before model calls)')}
+            </legend>
+            <label>
+              <input
+                type="checkbox"
+                style={{ width: 'auto' }}
+                checked={form.windowEnabled}
+                onChange={(e) => setForm((f) => ({ ...f, windowEnabled: e.target.checked }))}
+              />
+              {tr('仅在允许时段运行', 'Run only during allowed hours')}
+            </label>
+            {form.windowEnabled && (
+              <>
+                <label>
+                  {tr('时区（IANA）', 'Time zone (IANA)')}
+                  <input
+                    required
+                    value={form.windowZone}
+                    onChange={(e) => field('windowZone', e.target.value)}
+                    placeholder="Asia/Shanghai"
+                  />
+                </label>
+                <div className="schedule-fields">
+                  <label>
+                    {tr('开始（包含）', 'Start (inclusive)')}
+                    <input
+                      type="time"
+                      required
+                      value={form.windowStart}
+                      onChange={(e) => field('windowStart', e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    {tr('结束（不包含）', 'End (exclusive)')}
+                    <input
+                      type="time"
+                      required
+                      value={form.windowEnd}
+                      onChange={(e) => field('windowEnd', e.target.value)}
+                    />
+                  </label>
+                </div>
+                <div className="schedule-actions">
+                  {[0, 1, 2, 3, 4, 5, 6].map((day) => (
+                    <label key={day}>
+                      <input
+                        type="checkbox"
+                        style={{ width: 'auto' }}
+                        checked={form.windowDays.includes(day)}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            windowDays: e.target.checked
+                              ? [...f.windowDays, day]
+                              : f.windowDays.filter((d: number) => d !== day),
+                          }))
+                        }
+                      />
+                      {
+                        (zh
+                          ? ['日', '一', '二', '三', '四', '五', '六']
+                          : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'])[day]
+                      }
+                    </label>
+                  ))}
+                </div>
+                <p className="muted">
+                  {tr(
+                    '时段外自动延后，不调用模型、不消耗启动次数；跨午夜按开始日计，相同起止表示全天。错过的触发合并一次，不积压补跑。此条件限制启动，不强制中断已开始的工作。',
+                    'Outside these hours, defer without model calls or launch usage. Overnight windows belong to the starting day; equal endpoints mean all day. Missed triggers coalesce. This limits starts, not work already running.',
+                  )}
+                </p>
+              </>
+            )}
+          </fieldset>
           <fieldset className="schedule-destinations">
             <legend>{tr('对话方式', 'Conversation mode')}</legend>
             {['same-chat', 'new-chat'].map((mode) => (
@@ -457,7 +553,36 @@ export function ScheduledTasks({
                     : tr('仅一次', 'Once')}
                 </dd>
                 <dt>{tr('下次运行', 'Next run')}</dt>
-                <dd>{s.enabled ? new Date(s.dueAt).toLocaleString() : '—'}</dd>
+                <dd>
+                  {s.enabled
+                    ? new Date(Math.max(s.dueAt, s.deferredUntil || 0)).toLocaleString()
+                    : '—'}
+                </dd>
+                {s.executionWindow && (
+                  <>
+                    <dt>{tr('允许运行', 'Allowed hours')}</dt>
+                    <dd>
+                      {s.executionWindow.timeZone} · {s.executionWindow.start}–
+                      {s.executionWindow.end} ·{' '}
+                      {s.executionWindow.weekdays
+                        .map(
+                          (d: number) =>
+                            (zh
+                              ? ['日', '一', '二', '三', '四', '五', '六']
+                              : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'])[d],
+                        )
+                        .join(', ')}
+                    </dd>
+                  </>
+                )}
+                {s.hostDeferredAt && (
+                  <>
+                    <dt>
+                      {tr('最近宿主延后（无模型调用）', 'Last host deferral (no model call)')}
+                    </dt>
+                    <dd>{new Date(s.hostDeferredAt).toLocaleString()}</dd>
+                  </>
+                )}
                 <dt>{tr('对话方式', 'Conversation')}</dt>
                 <dd>
                   {s.destination === 'new-chat'

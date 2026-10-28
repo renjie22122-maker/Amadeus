@@ -72,6 +72,7 @@ export function scheduledWorkRoutes(app: FastifyInstance, store: Store, config: 
     const target = validate(next);
     return store.put('scheduled-work', {
       ...next,
+      deferredUntil: undefined,
       error: undefined,
       status: old.runId ? old.status : next.enabled ? 'waiting' : 'paused',
       target,

@@ -245,3 +245,11 @@ QQ 原生收藏指聊天输入框的**「表情 → 我的收藏」**，不是 Q
 ### 自然收尾与主动问候
 
 接入的私聊和群聊可在确认、告别或自然收尾时选择 `[NO_REPLY]`。已完成的静默轮次正常结算，不再发送“请重新提问”兜底；失败和审批仍需通知，实质问题和任务仍应回应。不影响本地纯对话、项目提示词或权限。远程定时唤醒区分未获回应的主动邀请与已完成的正常回答，不再把“最后一句来自 Bot”本身视作永久等待状态。静默时段、授权目的和频率限制继续有效，由上下文判断，不按固定关键词决定。
+
+### 宿主过滤后台唤醒
+
+`executionWindow` 保存 IANA 时区、HH:mm 起止时间及星期（0 周日—6 周六）。时段外由宿主延后，发生在创建运行和模型调用之前；任务卡显示下次可运行时间与最近宿主延后，不反复产生通知，不占启动次数。相同起止表示全天，跨午夜归属于开始日；按 UTC 分钟检查兼容夏令时。它限制新任务启动，不强制中断运行中的工作，也不是独立的平台投递宵禁。
+
+错过的周期合并一次，继续遵循原间隔对齐、截止时间、次数限制；会话忙时等待。模型可以通过 `report_scheduled_result.nextCheckAt` 延后下次检查，不能提前加频。`update_scheduled_followup` 经审批原地修改任务，保留身份、历史、收件人和权限，并拒绝审批期间的并发变更。人可在任务编辑页设置同样的时段。旧任务仅写在提示词里的时段不会自动猜测迁移，需要明确配置。
+
+设计参考：[ChatGPT 定时任务](https://learn.chatgpt.com/docs/automations)区分任务与运行历史；[OpenAI 自动化](https://developers.openai.com/api/docs/guides/agents-api/sessions/automations)区分派发与完成；[DeepSeek Harness 宿主调度](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/schedule.md)保存显式时区与任务身份、合并错过触发；[Claude Code 调度](https://code.claude.com/docs/en/scheduled-tasks)区分会话轮询、持久任务和事件驱动。本轮没有实现任意 Cron、外部事件订阅或云端执行，不宣称功能完全对等。

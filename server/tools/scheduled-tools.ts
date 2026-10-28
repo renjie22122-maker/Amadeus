@@ -48,6 +48,8 @@ export function installScheduledTools(registry: ToolRegistry) {
         capabilities: {
           once: true,
           repeated: true,
+          hostExecutionWindow: true,
+          deferNextCheck: true,
           afterBackgroundCommand: !route,
           requiresRunningService: true,
           notifications: route ? 'original-remote-chat-and-in-app' : 'in-app',
@@ -85,7 +87,7 @@ export function installScheduledTools(registry: ToolRegistry) {
     name: 'schedule_followup',
     effect: 'write',
     description:
-      'Schedule a requested follow-up, once or repeatedly, in this chat or a new chat per run. Configure notifications and optionally wait for a background command. Requires confirmation. The service automatically starts a model turn without another user message while the computer/service stay running. Use jobId to review completed outputs before downstream work; maxRuns/endAt bound future launches. Preserves current permissions, and never replays unknown effects. Remote controller requests deliver back to this exact group/private chat; repeated remote follow-ups require a bounded duration/count, at least 15-minute intervals and a clear purpose (including consensual social check-ins). Agree on timing and quiet hours when needed; do not create unsolicited schedules.',
+      'Schedule a requested follow-up, once or repeatedly, in this chat or a new chat per run. Configure notifications and optionally wait for a background command. Requires confirmation. The service automatically starts a model turn without another user message while the computer/service stay running. Use jobId to review completed outputs before downstream work; maxRuns/endAt bound future launches. Preserves current permissions, and never replays unknown effects. Remote controller requests deliver back to this exact group/private chat; repeated remote follow-ups require a bounded duration/count, at least 15-minute intervals and a clear purpose (including consensual social check-ins). Use executionWindow (IANA timeZone, start/end HH:mm, weekdays 0=Sunday through 6=Saturday) for host-enforced quiet hours or working days BEFORE model calls; same endpoints mean all day, overnight windows belong to their starting weekday. Do not encode clear timing restrictions only in prose. Agree on timing and quiet hours when needed; do not create unsolicited schedules.',
     schema: scheduleFields,
     run: async (a, c) => {
       const route = remoteRoute(c);
@@ -137,13 +139,64 @@ export function installScheduledTools(registry: ToolRegistry) {
     },
   });
   registry.add({
+    name: 'update_scheduled_followup',
+    effect: 'write',
+    description:
+      'Update an authorized existing follow-up in this conversation in place, preserving its identity and history. Configure host executionWindow rather than spending model calls on quiet-hour checks. Requires approval; does not change destination, permissions or recipients. Inspect current schedules first. Cannot edit an active run.',
+    schema: z.object({
+      id: z.string(),
+      changes: scheduleFields.omit({ destination: true, jobId: true }).partial().strict(),
+    }),
+    run: async (a, c) => {
+      const route = remoteRoute(c);
+      const old = c.store.get<ScheduledWork>('scheduled-work', a.id);
+      assert(
+        old.conversationId === c.conversation.id,
+        'SCOPE',
+        'Schedule belongs to another conversation.',
+      );
+      assert(!old.runId, 'RUN_ACTIVE', 'Wait for the active run before editing.');
+      assert(
+        JSON.stringify(old.remoteDelivery) === JSON.stringify(route),
+        'CHAT_SCOPE',
+        'Schedule route differs from current context.',
+      );
+      const next = { ...old, ...a.changes };
+      assert(
+        !route || !next.intervalMs || (next.intervalMs >= 900000 && !!(next.maxRuns || next.endAt)),
+        'CHAT_SCHEDULE_LIMIT',
+        'Remote interval and end bounds still apply.',
+      );
+      await c.inputs.request(
+        c.run,
+        'approval',
+        { reason: 'Update future model work', id: old.id, changes: a.changes },
+        c.signal,
+      );
+      assert(
+        JSON.stringify(c.store.get('scheduled-work', old.id)) === JSON.stringify(old) &&
+          JSON.stringify(remoteRoute(c)) === JSON.stringify(route),
+        'SCHEDULE_CHANGED',
+        'Schedule or route changed during approval; inspect again.',
+      );
+      return text(
+        c.store.put('scheduled-work', {
+          ...next,
+          deferredUntil: undefined,
+          status: next.enabled ? 'waiting' : next.status,
+        }),
+      );
+    },
+  });
+  registry.add({
     name: 'report_scheduled_result',
     effect: 'coordinate',
     description:
-      'Report the outcome of this scheduled run only. unchanged suppresses meaningful-only notifications; update notifies; complete stops future repeats after this run succeeds. This is a model report, not independent verification. Never use complete while the requested follow-up remains pending.',
+      'Report the outcome of this scheduled run only. unchanged suppresses meaningful-only notifications; update notifies; complete stops future repeats after this run succeeds. For a recurring task, optional nextCheckAt delays the next check (never accelerates its approved cadence); it does not change endAt, maxRuns or allowed hours. This is a model report, not independent verification. Never use complete while the requested follow-up remains pending.',
     schema: z.object({
       outcome: z.enum(['unchanged', 'update', 'complete']),
       summary: z.string().trim().min(1).max(2000),
+      nextCheckAt: z.number().int().nonnegative().max(8640000000000000).optional(),
     }),
     run: async (a, c) => {
       const task = c.store
@@ -153,6 +206,14 @@ export function installScheduledTools(registry: ToolRegistry) {
             t.runId === c.run.id && (t.runConversationId || t.conversationId) === c.conversation.id,
         );
       assert(task, 'SCOPE', 'Only the active scheduled run can report its result.');
+      assert(
+        a.nextCheckAt == null ||
+          (!!task.intervalMs &&
+            a.nextCheckAt > Date.now() &&
+            (task.endAt == null || a.nextCheckAt < task.endAt)),
+        'SCHEDULE_TIME',
+        'Next check must be a future time within the recurring task deadline.',
+      );
       return text(c.store.put('schedule-report', { id: c.run.id, scheduleId: task.id, ...a }));
     },
   });

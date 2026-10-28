@@ -6,6 +6,7 @@ export const socialChatTools = new Set([
   'inspect_schedules',
   'schedule_followup',
   'pause_scheduled_followup',
+  'update_scheduled_followup',
   'report_scheduled_result',
   'recall_memories',
   'search_conversation_history',

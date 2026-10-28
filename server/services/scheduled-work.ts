@@ -1,3 +1,4 @@
+import { executionWindowSchema, nextWindowTime, type ExecutionWindow } from './schedule-window.js';
 import { chatFollowupPolicy } from './chat-reply-policy.js';
 import { currentChat } from './chat-interaction.js';
 import { notebookContext } from './chat-notebook.js';
@@ -6,6 +7,7 @@ import { terminal } from '../core/lifecycle.js';
 import type { Conversation } from '../../shared/types.js';
 import { z } from 'zod';
 export const scheduleFields = z.object({
+  executionWindow: executionWindowSchema.nullable().optional(),
   name: z.string().trim().max(120).optional(),
   prompt: z.string().trim().min(1).max(10000),
   dueAt: z.number().int().nonnegative().max(8640000000000000),
@@ -23,6 +25,9 @@ export const scheduleFields = z.object({
   notifications: z.enum(['all', 'meaningful', 'failures', 'off']).optional(),
 });
 export interface ScheduledWork {
+  executionWindow?: ExecutionWindow | null;
+  deferredUntil?: number;
+  hostDeferredAt?: number;
   remoteDelivery?: { connectionId: string; revision: number; senderId: string };
   id: string;
   conversationId: string;
@@ -124,9 +129,12 @@ export class ScheduledWorkService {
               status: !task.enabled ? 'paused' : task.intervalMs && !stop ? 'waiting' : 'completed',
               // Fixed interval, aligned to the initial due time. Missed slots coalesce.
               dueAt: task.intervalMs
-                ? task.dueAt +
-                  Math.max(1, Math.floor((now - task.dueAt) / task.intervalMs) + 1) *
-                    task.intervalMs
+                ? Math.max(
+                    task.dueAt +
+                      Math.max(1, Math.floor((now - task.dueAt) / task.intervalMs) + 1) *
+                        task.intervalMs,
+                    this.store.maybe<any>('schedule-report', run.id)?.nextCheckAt || 0,
+                  )
                 : task.dueAt,
             });
             continue;
@@ -146,6 +154,19 @@ export class ScheduledWorkService {
             'Schedule launch limit reached; unfinished work is not verified complete.',
           );
           continue;
+        }
+        if (!task.runId && task.dueAt <= now && task.executionWindow) {
+          if (task.deferredUntil && task.deferredUntil > now) continue;
+          const next = nextWindowTime(task.executionWindow, now);
+          if (next > now) {
+            this.store.put('scheduled-work', {
+              ...task,
+              status: 'waiting_window',
+              deferredUntil: next,
+              hostDeferredAt: now,
+            });
+            continue;
+          }
         }
         const c = this.store.get<Conversation>('conversation', task.conversationId);
         if (
@@ -184,6 +205,7 @@ export class ScheduledWorkService {
           startedAt: task.startedAt || now,
           dispatchCount: (task.dispatchCount || 0) + (task.runId ? 0 : 1),
           status: 'dispatching',
+          deferredUntil: undefined,
         };
         this.store.put('scheduled-work', task);
         if (chatId !== c.id && !this.store.maybe('conversation', chatId)) {

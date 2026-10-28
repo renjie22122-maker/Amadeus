@@ -46,6 +46,7 @@ export function ConversationSchedules({
       running: ['运行中', 'Running'],
       dispatching: ['启动中', 'Starting'],
       waiting: ['已安排', 'Scheduled'],
+      waiting_window: ['等待允许时段 · 未调用模型', 'Waiting for allowed hours · no model call'],
       paused: ['已暂停', 'Paused'],
       completed: ['已完成', 'Completed'],
       needs_attention: ['需要处理', 'Needs attention'],
@@ -130,12 +131,15 @@ export function ConversationSchedules({
                             ? '命令完成后'
                             : 'After command completion'
                           : (zh ? '下次 ' : 'Next ') +
-                            new Date(task.dueAt).toLocaleString([], {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
+                            new Date(Math.max(task.dueAt, task.deferredUntil || 0)).toLocaleString(
+                              [],
+                              {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              },
+                            )}
                   </span>
                 </div>
               </div>
