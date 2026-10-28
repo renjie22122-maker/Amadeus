@@ -241,11 +241,13 @@ export function installChatTools(registry: ToolRegistry) {
     name: 'save_chat_sticker',
     effect: 'coordinate',
     description:
-      'Save an inspected, suitable same-chat image to the persistent local sticker library with a concise name and usage tags. Use an imported attachment reference; never save every incoming photo or private screenshot automatically. Does not send anything. Deduplicates identical image bytes within this route.',
+      'Save an inspected, suitable same-chat image to QQ native favorites when supported, with a persistent local cache with a concise name and usage tags. Use an imported attachment reference; never save every incoming photo or private screenshot automatically. Does not send chat messages. QQ favorites are account-wide; do not collect private photos or screenshots. Check native.state before claiming QQ collection succeeded. Deduplicates identical image bytes within this route.',
     schema: stickerInput,
     run: async (a, ctx) => {
-      const { c } = currentChat(ctx.store, ctx.conversation.id, ctx.run.id);
-      return text(saveChatSticker(ctx.store, c, a));
+      const { c, bridge } = currentChat(ctx.store, ctx.conversation.id, ctx.run.id);
+      return text(
+        bridge.saveSticker ? await bridge.saveSticker(c, a) : saveChatSticker(ctx.store, c, a),
+      );
     },
   });
   registry.add({

@@ -20,6 +20,7 @@ export interface ChatBridge {
     limit: number,
   ): Promise<any>;
   importMedia(c: ChatConnection, messageId: string): Promise<string[]>;
+  saveSticker?(c: ChatConnection, input: unknown): Promise<unknown>;
   importFavorites?(c: ChatConnection, count?: number): Promise<unknown>;
   retract?(c: ChatConnection, deliveryId: string, senderId: string | null): Promise<unknown>;
 }
@@ -60,6 +61,7 @@ export function chatCapabilities(c: ChatConnection) {
     nativeFaces: c.transport === 'onebot11',
     images: true,
     stickerLibrary: true,
+    nativeFavoriteCollection: c.transport === 'onebot11',
     favoriteStickersImport: c.transport === 'onebot11',
     subscriptionStickerPacks: false,
     socialFeedPublishing: false,

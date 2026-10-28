@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { api } from '../api';
-type Entry = { id: string; reference: string; name: string; tags: string[]; available: boolean };
+type Entry = {
+  id: string;
+  reference: string;
+  name: string;
+  tags: string[];
+  available: boolean;
+  native?: { state: string };
+};
 type Library = { items: Entry[]; total: number; capabilities: { favoritesImport: boolean } };
 export function ChatStickerLibrary({
   id,
@@ -48,9 +55,13 @@ export function ChatStickerLibrary({
     >
       <summary>{zh ? '表情库 · 仅此会话' : 'Sticker library · this chat only'}</summary>
       <p>
-        {zh
-          ? '保存本聊天中已导入的图片，发送时重新上传本地文件。名称和标签便于检索，不代表模型已经看过图片。'
-          : 'Save imported chat images and upload local bytes when sending. Labels do not replace inspecting images.'}
+        {!data?.capabilities.favoritesImport
+          ? zh
+            ? '保存本会话表情并复用本地图片。标签不代替看图。'
+            : 'Save local stickers for this chat. Labels do not replace inspecting images.'
+          : zh
+            ? 'QQ 中保存到「表情 → 我的收藏」，本地库保留缓存。发送优先读取 QQ 收藏，失败用缓存。名称和标签便于检索，不代表模型已经看过图片。'
+            : 'Save to QQ favorite stickers, retaining a local cache. Delivery prefers QQ favorites with local fallback. Labels do not replace inspecting images.'}
       </p>
       <div className="row">
         <input
@@ -138,6 +149,23 @@ export function ChatStickerLibrary({
             )}
             <strong style={{ overflowWrap: 'anywhere' }}>{x.name}</strong>
             <p>{x.tags.join(' · ')}</p>
+            <small>
+              {x.native?.state === 'confirmed'
+                ? zh
+                  ? 'QQ 表情 · 我的收藏已确认'
+                  : 'QQ favorite confirmed'
+                : x.native?.state === 'unconfirmed'
+                  ? zh
+                    ? 'QQ 收藏待核对 · 本地已缓存'
+                    : 'QQ addition unconfirmed; cached locally'
+                  : x.native?.state === 'failed'
+                    ? zh
+                      ? 'QQ 收藏失败 · 本地已缓存'
+                      : 'QQ collection failed; cached locally'
+                    : zh
+                      ? '本地表情'
+                      : 'Local sticker'}
+            </small>
             <button
               onClick={() => {
                 setReference(x.reference);
@@ -210,7 +238,7 @@ export function ChatStickerLibrary({
       </details>
       <small>
         {zh
-          ? '移出表情库不会删除原聊天附件。模型可按需收藏已看过的合适图片；不会自动收集所有群图片。'
+          ? '移出本地库不会删除 QQ 收藏或原聊天附件。QQ 收藏属于机器人账号；仅收藏适合复用的表情，不收私人照片。模型可按需收藏已看过的合适图片；不会自动收集所有群图片。'
           : 'Removal preserves the original attachment. The model can save suitable inspected images, without collecting every group image.'}
       </small>
     </details>

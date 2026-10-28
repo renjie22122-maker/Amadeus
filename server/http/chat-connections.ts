@@ -22,9 +22,13 @@ export function chatConnectionRoutes(app: FastifyInstance, channels: ChatConnect
       .parse(req.query);
     return listChatStickers(channels.store, channels.get(req.params.id), q.query, q.offset);
   });
-  app.post<{ Params: { id: string } }>('/api/chat-connections/:id/stickers', async (req) =>
-    saveChatSticker(channels.store, channels.get(req.params.id), req.body),
-  );
+  app.post<{ Params: { id: string } }>('/api/chat-connections/:id/stickers', async (req) => {
+    const c = channels.get(req.params.id),
+      bridge = localChatBridge(channels.store, c);
+    return bridge.saveSticker
+      ? await bridge.saveSticker(c, req.body)
+      : saveChatSticker(channels.store, c, req.body);
+  });
   app.delete<{ Params: { id: string; stickerId: string } }>(
     '/api/chat-connections/:id/stickers/:stickerId',
     async (req) =>

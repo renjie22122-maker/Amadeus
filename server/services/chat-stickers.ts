@@ -1,3 +1,4 @@
+import type { NativeFavorite } from './chat-native-favorites.js';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
@@ -22,6 +23,7 @@ export type ChatSticker = {
   tags: string[];
   createdAt: number;
   origin: 'chat' | 'favorites';
+  native?: NativeFavorite;
 };
 export function listChatStickers(
   store: Store,
@@ -98,6 +100,7 @@ export function saveChatSticker(
     tags: [...new Set(data.tags)],
     createdAt: old?.createdAt || Date.now(),
     origin: old?.origin || origin,
+    native: old?.native,
   };
   store.put('chat-sticker', row);
   return row;

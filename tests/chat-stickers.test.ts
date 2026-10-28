@@ -108,7 +108,7 @@ test('favorites importer uses the declared API, deduplicates and never sends mes
     return png;
   };
   const result = await transports.importFavoriteStickers(c);
-  assert.deepEqual(actions, ['fetch_custom_face']);
+  assert.deepEqual(actions, ['fetch_custom_face_detail', 'fetch_custom_face']);
   assert.equal(result.imported.length, 1);
   assert.equal(result.failed, 1);
   assert.equal(listChatStickers(store, c).total, 1);
@@ -172,4 +172,176 @@ test('reply plans resolve persistent stickers to local upload references without
   assert.match(result.note, /not delivered/);
   assert.deepEqual(checked, [x.reference]);
   assert.deepEqual(store.get<any>('chat-reply-plan', 'r').references, [x.reference]);
+});
+
+import { createHash } from 'node:crypto';
+import { saveNativeFavorite, favoriteBytes } from '../server/services/chat-native-favorites.js';
+function nativeFixture(t: any) {
+  const f = fixture(t),
+    bytes = Buffer.from('image fixture'),
+    ref = f.image('chat', createHash('sha256').update(bytes).digest('hex'));
+  return { ...f, bytes, ref, md5: createHash('md5').update(bytes).digest('hex') };
+}
+test('native favorite addition is verified from QQ details and repeated save does not add again', async (t) => {
+  const { store, c, bytes, ref, md5 } = nativeFixture(t);
+  let added = false,
+    adds = 0;
+  const request = async (action: string) => {
+    if (action === 'add_custom_face') {
+      added = true;
+      adds++;
+      return { result: 0 };
+    }
+    return added
+      ? [{ md5: md5.toUpperCase(), resId: 'native-id', url: 'https://example.com/favorite' }]
+      : [];
+  };
+  const input = { reference: ref, name: 'reaction' };
+  const saved = await saveNativeFavorite(store, c, input, request, () => true);
+  assert.equal(saved.native?.state, 'confirmed');
+  await saveNativeFavorite(store, c, input, request, () => true);
+  assert.equal(adds, 1);
+  assert.deepEqual(
+    await favoriteBytes(
+      store,
+      c,
+      ref,
+      request,
+      async () => bytes,
+      () => true,
+    ),
+    bytes,
+  );
+  assert.equal(
+    await favoriteBytes(
+      store,
+      { ...c, peerId: 'other' },
+      ref,
+      request,
+      async () => bytes,
+      () => true,
+    ),
+    undefined,
+  );
+});
+test('native add timeout is reconciled without replaying an unknown write', async (t) => {
+  const { store, c, ref } = nativeFixture(t);
+  let adds = 0;
+  const request = async (action: string) => {
+    if (action === 'add_custom_face') {
+      adds++;
+      throw Error('response lost');
+    }
+    return [];
+  };
+  const input = { reference: ref, name: 'reaction' };
+  const first = await saveNativeFavorite(store, c, input, request, () => true);
+  assert.equal(first.native?.state, 'unconfirmed');
+  await saveNativeFavorite(store, c, input, request, () => true);
+  assert.equal(adds, 1);
+});
+test('native read failure or mismatched bytes uses cache; route changes never fall through', async (t) => {
+  const { store, c, ref, md5 } = nativeFixture(t);
+  const request = async () => [{ md5, resId: 'native-id', url: 'https://example.com/favorite' }];
+  await saveNativeFavorite(store, c, { reference: ref, name: 'x' }, request, () => true);
+  assert.equal(
+    await favoriteBytes(
+      store,
+      c,
+      ref,
+      request,
+      async () => Buffer.from('wrong'),
+      () => true,
+    ),
+    undefined,
+  );
+  assert.equal(
+    await favoriteBytes(
+      store,
+      c,
+      ref,
+      async () => {
+        throw Error('offline');
+      },
+      async () => Buffer.alloc(0),
+      () => true,
+    ),
+    undefined,
+  );
+  await assert.rejects(
+    () =>
+      favoriteBytes(
+        store,
+        c,
+        ref,
+        request,
+        async () => Buffer.from('wrong'),
+        () => false,
+      ),
+    /Chat changed/,
+  );
+});
+test('native collection failure stays visible, cache remains and changed input cannot be uploaded', async (t) => {
+  const { store, c, ref } = nativeFixture(t);
+  const x = await saveNativeFavorite(
+    store,
+    c,
+    { reference: ref, name: 'x' },
+    async (action) => (action === 'add_custom_face' ? { result: 1 } : []),
+    () => true,
+  );
+  assert.equal(x.native?.state, 'failed');
+  assert.equal(listChatStickers(store, c).items[0].available, true);
+  writeFileSync(store.get<any>('attachment', ref.slice(11)).path, 'changed');
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      saveNativeFavorite(
+        store,
+        c,
+        { reference: ref, name: 'x' },
+        async () => {
+          calls++;
+          return [];
+        },
+        () => true,
+      ),
+    /changed/,
+  );
+  assert.equal(calls, 0);
+});
+
+test('bounded native listing misses do not re-add a previously verified favorite', async (t) => {
+  const { store, c, ref, md5 } = nativeFixture(t);
+  const x = await saveNativeFavorite(
+    store,
+    c,
+    { reference: ref, name: 'x' },
+    async () => [{ md5, resId: 'r', url: 'https://example.com/i' }],
+    () => true,
+  );
+  let calls = 0;
+  const y = await saveNativeFavorite(
+    store,
+    c,
+    { reference: ref, name: 'x' },
+    async (action) => {
+      assert.equal(action, 'fetch_custom_face_detail');
+      calls++;
+      return [];
+    },
+    () => true,
+  );
+  assert.equal(calls, 1);
+  assert.deepEqual(y.native, x.native);
+  const z = await saveNativeFavorite(
+    store,
+    c,
+    { reference: ref, name: 'x' },
+    async () => {
+      throw Error('offline');
+    },
+    () => true,
+  );
+  assert.deepEqual(z.native, x.native);
 });
