@@ -6,6 +6,7 @@ export const coreTools = new Set([
   'inspect_schedules',
   'pause_scheduled_followup',
   'update_scheduled_followup',
+  'delete_scheduled_followup',
   'report_scheduled_result',
   'inspect_tool_plan',
   'set_response_contract',

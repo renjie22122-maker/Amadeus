@@ -422,3 +422,59 @@ test('model update preserves task identity and refuses changes during approval',
     update.run({ id: 's', changes: {} }, { ...c, conversation: { id: 'other' } }),
   );
 });
+
+test('paused schedules resume in place, retain history and enforce exhausted limits', async (t) => {
+  const f = fixture(t);
+  f.save({ enabled: false, status: 'paused', dispatchCount: 2, maxRuns: 3 });
+  f.store.put('schedule-result', { id: 'history', scheduleId: 's' });
+  const tools: any[] = [];
+  installScheduledTools({ add: (tool: any) => tools.push(tool) } as any);
+  const update = tools.find((tool) => tool.name === 'update_scheduled_followup');
+  const c: any = {
+    store: f.store,
+    conversation: { id: 'c' },
+    run: { id: 'caller' },
+    inputs: { request: async () => {} },
+  };
+  await update.run(update.schema.parse({ id: 's', changes: { dueAt: 100 } }), c);
+  assert.equal(f.store.get<any>('scheduled-work', 's').status, 'paused');
+  await update.run(update.schema.parse({ id: 's', changes: { enabled: true } }), c);
+  const task = f.store.get<any>('scheduled-work', 's');
+  assert.equal(task.status, 'waiting');
+  assert.equal(task.dispatchCount, 2);
+  assert.equal(f.store.list('scheduled-work').length, 1);
+  assert.equal(f.store.list('schedule-result').length, 1);
+  await assert.rejects(
+    () => update.run({ id: 's', changes: { enabled: true, maxRuns: 2 } }, c),
+    /limit exhausted/,
+  );
+  await assert.rejects(
+    () => update.run({ id: 's', changes: { enabled: true, endAt: 1 } }, c),
+    /deadline/,
+  );
+});
+
+test('schedule deletion preserves results and rejects foreign, active and changed tasks', async (t) => {
+  const f = fixture(t);
+  f.save();
+  f.store.put('schedule-result', { id: 'history', scheduleId: 's' });
+  const tools: any[] = [];
+  installScheduledTools({ add: (tool: any) => tools.push(tool) } as any);
+  const remove = tools.find((tool) => tool.name === 'delete_scheduled_followup');
+  const c: any = {
+    store: f.store,
+    conversation: { id: 'c' },
+    run: { id: 'caller' },
+    inputs: { request: async () => {} },
+  };
+  await assert.rejects(() => remove.run({ id: 's' }, { ...c, conversation: { id: 'other' } }));
+  c.inputs.request = async () =>
+    f.store.put('scheduled-work', { ...f.store.get<any>('scheduled-work', 's'), runId: 'active' });
+  await assert.rejects(() => remove.run({ id: 's' }, c));
+  await assert.rejects(() => remove.run({ id: 's' }, c));
+  f.save();
+  c.inputs.request = async () => {};
+  await remove.run({ id: 's' }, c);
+  assert.equal(f.store.list('scheduled-work').length, 0);
+  assert.equal(f.store.list('schedule-result').length, 1);
+});

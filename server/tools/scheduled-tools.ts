@@ -46,6 +46,9 @@ export function installScheduledTools(registry: ToolRegistry) {
           .list<ScheduledWork>('scheduled-work')
           .filter((t) => t.conversationId === c.conversation.id),
         capabilities: {
+          update: true,
+          resume: true,
+          delete: true,
           once: true,
           repeated: true,
           hostExecutionWindow: true,
@@ -142,10 +145,14 @@ export function installScheduledTools(registry: ToolRegistry) {
     name: 'update_scheduled_followup',
     effect: 'write',
     description:
-      'Update an authorized existing follow-up in this conversation in place, preserving its identity and history. Configure host executionWindow rather than spending model calls on quiet-hour checks. Requires approval; does not change destination, permissions or recipients. Inspect current schedules first. Cannot edit an active run.',
+      'Update an authorized existing follow-up in this conversation in place, preserving its identity and history. Configure host executionWindow rather than spending model calls on quiet-hour checks. Requires approval; does not change destination, permissions or recipients. Set changes.enabled=true to resume a paused task in place, false to pause. Changing its time alone preserves paused state. Inspect current schedules first. Cannot edit an active run. Resume preserves counters; explicitly extend exhausted maxRuns/endAt when authorized.',
     schema: z.object({
       id: z.string(),
-      changes: scheduleFields.omit({ destination: true, jobId: true }).partial().strict(),
+      changes: scheduleFields
+        .omit({ destination: true, jobId: true })
+        .partial()
+        .extend({ enabled: z.boolean().optional() })
+        .strict(),
     }),
     run: async (a, c) => {
       const route = remoteRoute(c);
@@ -162,6 +169,18 @@ export function installScheduledTools(registry: ToolRegistry) {
         'Schedule route differs from current context.',
       );
       const next = { ...old, ...a.changes };
+      if (a.changes.enabled === true) {
+        assert(
+          next.endAt == null || next.endAt > Date.now(),
+          'SCHEDULE_LIMIT',
+          'Schedule deadline has passed; explicitly extend endAt before resuming.',
+        );
+        assert(
+          next.maxRuns == null || (next.dispatchCount || 0) < next.maxRuns,
+          'SCHEDULE_LIMIT',
+          'Launch limit exhausted; explicitly increase maxRuns before resuming.',
+        );
+      }
       assert(
         !route || !next.intervalMs || (next.intervalMs >= 900000 && !!(next.maxRuns || next.endAt)),
         'CHAT_SCHEDULE_LIMIT',
@@ -183,9 +202,46 @@ export function installScheduledTools(registry: ToolRegistry) {
         c.store.put('scheduled-work', {
           ...next,
           deferredUntil: undefined,
-          status: next.enabled ? 'waiting' : next.status,
+          error: undefined,
+          status: next.enabled ? 'waiting' : 'paused',
         }),
       );
+    },
+  });
+  registry.add({
+    name: 'delete_scheduled_followup',
+    effect: 'write',
+    description:
+      'Delete an authorized schedule in this conversation, preserving its past results and conversation history. Inspect schedules first. Requires approval. Pause instead if it should be resumed later. Wait for dispatched work to settle before deleting; deletion does not cancel or replay work.',
+    schema: z.object({ id: z.string() }),
+    run: async (a, c) => {
+      const route = remoteRoute(c);
+      const old = c.store.get<ScheduledWork>('scheduled-work', a.id);
+      assert(
+        old.conversationId === c.conversation.id,
+        'SCOPE',
+        'Schedule belongs to another conversation.',
+      );
+      assert(!old.runId, 'RUN_ACTIVE', 'Wait for dispatched work to settle before deleting.');
+      assert(
+        JSON.stringify(old.remoteDelivery) === JSON.stringify(route),
+        'CHAT_SCOPE',
+        'Schedule route differs from current context.',
+      );
+      await c.inputs.request(
+        c.run,
+        'approval',
+        { reason: 'Delete future scheduled work; retain history', id: old.id, name: old.name },
+        c.signal,
+      );
+      assert(
+        JSON.stringify(c.store.get('scheduled-work', old.id)) === JSON.stringify(old) &&
+          JSON.stringify(remoteRoute(c)) === JSON.stringify(route),
+        'SCHEDULE_CHANGED',
+        'Schedule or route changed during approval; inspect again.',
+      );
+      c.store.remove('scheduled-work', old.id);
+      return text({ deleted: true, id: old.id, historyPreserved: true });
     },
   });
   registry.add({

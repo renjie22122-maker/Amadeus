@@ -253,3 +253,6 @@ QQ 原生收藏指聊天输入框的**「表情 → 我的收藏」**，不是 Q
 错过的周期合并一次，继续遵循原间隔对齐、截止时间、次数限制；会话忙时等待。模型可以通过 `report_scheduled_result.nextCheckAt` 延后下次检查，不能提前加频。`update_scheduled_followup` 经审批原地修改任务，保留身份、历史、收件人和权限，并拒绝审批期间的并发变更。人可在任务编辑页设置同样的时段。旧任务仅写在提示词里的时段不会自动猜测迁移，需要明确配置。
 
 设计参考：[ChatGPT 定时任务](https://learn.chatgpt.com/docs/automations)区分任务与运行历史；[OpenAI 自动化](https://developers.openai.com/api/docs/guides/agents-api/sessions/automations)区分派发与完成；[DeepSeek Harness 宿主调度](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/schedule.md)保存显式时区与任务身份、合并错过触发；[Claude Code 调度](https://code.claude.com/docs/en/scheduled-tasks)区分会话轮询、持久任务和事件驱动。本轮没有实现任意 Cron、外部事件订阅或云端执行，不宣称功能完全对等。
+
+
+模型可通过 update_scheduled_followup 的 changes.enabled=true 原地恢复暂停任务，false 暂停；仅修改时间不会恢复。delete_scheduled_followup 删除计划但保留历史。恢复不重置运行次数或截止时间，耗尽时需明确调整限制。增改删沿用审批、绑定控制人及会话隔离；运行中的任务须先等待结算，不能借恢复重放未知副作用。
