@@ -16,6 +16,13 @@ export const computerActionSchema = {
     'scroll',
     'drag',
     'click_element',
+    'click_image',
+    'focus_element',
+    'set_value',
+    'invoke_element',
+    'select_element',
+    'expand_element',
+    'collapse_element',
     'wait_for',
   ]),
   captureBackend: z.enum(['wgc', 'print-window']).default('wgc'),
@@ -63,10 +70,12 @@ export const computerActionSchema = {
       /^(?:(?:CTRL|ALT|SHIFT)\+)*(?:[A-Z0-9]|ENTER|ESC|TAB|BACKSPACE|DELETE|HOME|END|PAGEUP|PAGEDOWN|UP|DOWN|LEFT|RIGHT|SPACE|F(?:[1-9]|1[0-2]))$/,
     )
     .optional(),
+  pointerDurationMs: z.number().int().min(80).max(1500).optional(),
   button: z.enum(['left', 'right', 'middle']).default('left'),
   delta: z.number().int().min(-1200).max(1200).optional(),
   horizontal: z.boolean().default(false),
   maxControls: z.number().int().min(20).max(1000).default(300),
+  screenshotId: z.string().uuid().optional(),
   observationId: z.string().uuid().optional(),
   elementIndex: z.number().int().min(0).optional(),
 };
@@ -76,6 +85,53 @@ export function createDesktopSession(
   now = Date.now,
   sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
 ) {
+  const images = new Map<
+    string,
+    {
+      at: number;
+      windowId: string;
+      capture: any;
+      x: number;
+      y: number;
+      scaleX: number;
+      scaleY: number;
+      width: number;
+      height: number;
+    }
+  >();
+  const elementActions = [
+    'click_element',
+    'focus_element',
+    'set_value',
+    'invoke_element',
+    'select_element',
+    'expand_element',
+    'collapse_element',
+  ];
+  function saveImage(result: any, original: any, windowId: string | undefined) {
+    if (!windowId) return result;
+    const screenshotId = randomUUID();
+    if (images.size >= 8) images.delete(images.keys().next().value!);
+    images.set(screenshotId, {
+      at: now(),
+      windowId,
+      capture: {
+        x: original.x,
+        y: original.y,
+        width: original.width,
+        height: original.height,
+        backend: original.capture,
+        processId: original.processId,
+      },
+      x: result.x,
+      y: result.y,
+      scaleX: result.scaleX || 1,
+      scaleY: result.scaleY || 1,
+      width: result.width,
+      height: result.height,
+    });
+    return { ...result, screenshotId, expiresInSeconds: 60 };
+  }
   const observations = new Map<string, { at: number; windowId: string; controls: any[] }>();
   function remember(result: any, windowId: string) {
     const id = randomUUID();
@@ -142,7 +198,34 @@ export function createDesktopSession(
       }
     }
     if (a.action === 'wait_for') return finish({ action: a.action, inputDispatched: false });
-    if (a.action === 'click_element') {
+    if (a.action === 'click_image') {
+      const image = a.screenshotId && images.get(a.screenshotId);
+      if (!image || image.windowId !== a.windowId || now() - image.at > 60000)
+        throw Error('DESKTOP_STALE: capture the target again.');
+      if (
+        a.x === undefined ||
+        a.y === undefined ||
+        a.x < 0 ||
+        a.y < 0 ||
+        a.x >= image.width ||
+        a.y >= image.height
+      )
+        throw Error('DESKTOP_POINT: image pixel is outside the observed screenshot.');
+      images.clear();
+      observations.clear();
+      return finish(
+        await native({
+          action: 'click',
+          windowId: a.windowId,
+          button: a.button,
+          x: Math.floor(image.x + a.x / image.scaleX),
+          y: Math.floor(image.y + a.y / image.scaleY),
+          expectedCapture: image.capture,
+          pointerDurationMs: a.pointerDurationMs,
+        }),
+      );
+    }
+    if (elementActions.includes(a.action)) {
       const saved = a.observationId && observations.get(a.observationId);
       if (!saved || saved.windowId !== a.windowId || a.elementIndex === undefined)
         throw Error('DESKTOP_STALE: inspect the target window again.');
@@ -163,6 +246,20 @@ export function createDesktopSession(
       if (current.width <= 0 || current.height <= 0)
         throw Error('DESKTOP_ELEMENT: control has no visible bounds.');
       observations.clear();
+      images.clear();
+      if (a.action === 'set_value' && a.text === undefined)
+        throw Error('DESKTOP_TEXT: set_value requires literal text.');
+      if (a.action !== 'click_element')
+        return finish(
+          await native({
+            action: a.action,
+            windowId: a.windowId,
+            text: a.text,
+            runtimeId: current.runtimeId,
+            expectedName: current.name,
+            expectedRole: current.role,
+          }),
+        );
       return finish(
         await native({
           action: 'click',
@@ -170,6 +267,7 @@ export function createDesktopSession(
           button: a.button,
           x: Math.round(current.x + current.width / 2),
           y: Math.round(current.y + current.height / 2),
+          ...(a.pointerDurationMs !== undefined ? { pointerDurationMs: a.pointerDurationMs } : {}),
         }),
       );
     }
@@ -185,7 +283,10 @@ export function createDesktopSession(
     if (a.action === 'key' && !a.key) throw Error('DESKTOP_KEY: key required.');
     if (a.action === 'scroll' && a.delta === undefined)
       throw Error('DESKTOP_SCROLL: delta required.');
-    if (!['windows', 'cursor', 'screenshot', 'inspect'].includes(a.action)) observations.clear();
+    if (!['windows', 'cursor', 'screenshot', 'inspect'].includes(a.action)) {
+      observations.clear();
+      images.clear();
+    }
     const result = await native(a);
     if (a.action === 'inspect') return remember(result, a.windowId!);
     if (a.action === 'screenshot' && (a.region || a.scale !== 1)) {
@@ -203,21 +304,26 @@ export function createDesktopSession(
         .resize(width, height)
         .png()
         .toBuffer();
-      return {
-        ...result,
-        image: image.toString('base64'),
-        x: result.x + region.x,
-        y: result.y + region.y,
-        width,
-        height,
-        screenWidth: region.width,
-        screenHeight: region.height,
-        scaleX: width / region.width,
-        scaleY: height / region.height,
-        coordinates: 'screenX = x + imageX / scaleX; screenY = y + imageY / scaleY',
-      };
+      return saveImage(
+        {
+          ...result,
+          image: image.toString('base64'),
+          x: result.x + region.x,
+          y: result.y + region.y,
+          width,
+          height,
+          screenWidth: region.width,
+          screenHeight: region.height,
+          scaleX: width / region.width,
+          scaleY: height / region.height,
+          coordinates: 'screenX = x + imageX / scaleX; screenY = y + imageY / scaleY',
+        },
+        result,
+        a.windowId,
+      );
     }
-    if (['windows', 'cursor', 'screenshot'].includes(a.action)) return result;
+    if (a.action === 'screenshot') return saveImage(result, result, a.windowId);
+    if (['windows', 'cursor'].includes(a.action)) return result;
     return finish(result);
   };
 }

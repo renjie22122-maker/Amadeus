@@ -3,6 +3,7 @@ import sys,json,re,socket,ipaddress,urllib.request,urllib.parse,urllib.error,htt
 from pathlib import Path
 UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 MAX_BYTES=300*1024*1024
+DIAGNOSTICS={'stage':'initializing','credentialsProvided':False,'cookieState':'not_provided'}
 
 def public_ip(value):
     address=ipaddress.ip_address(value.split('%')[0])
@@ -30,18 +31,26 @@ def platform_url(raw):
 
 def cookie_jar(path,platform):
     jar=http.cookiejar.MozillaCookieJar()
+    DIAGNOSTICS['stage']='credentials'
     if path:
-        original=http.cookiejar.MozillaCookieJar(path); original.load(ignore_discard=True,ignore_expires=False)
+        try:
+            original=http.cookiejar.MozillaCookieJar(path); original.load(ignore_discard=True,ignore_expires=False)
+        except (OSError,http.cookiejar.LoadError):
+            DIAGNOSTICS['cookieState']='unreadable'
+            raise ValueError('VIDEO_CREDENTIALS: configured cookie file cannot be read')
         allowed=('bilibili.com','b23.tv') if platform=='bilibili' else ('youtube.com',)
         for cookie in original:
             domain=cookie.domain.lstrip('.')
             if any(domain==d or domain.endswith('.'+d) for d in allowed): jar.set_cookie(cookie)
+    DIAGNOSTICS['credentialsProvided']=bool(len(jar))
+    DIAGNOSTICS['cookieState']=('loaded' if len(jar) else 'empty_or_expired') if path else 'not_provided'
     return jar
 
 def opener(jar):
     return urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPCookieProcessor(jar))
 
 def bili_api(path,query,jar):
+    DIAGNOSTICS['stage']=path
     url='https://api.bilibili.com'+path+'?'+urllib.parse.urlencode(query)
     req=urllib.request.Request(url,headers={'User-Agent':UA,'Referer':'https://www.bilibili.com/'})
     for attempt in range(3):
@@ -62,6 +71,7 @@ def bili_api(path,query,jar):
 def bili_identity(url,jar):
     u=urllib.parse.urlsplit(url)
     if u.hostname=='b23.tv':
+        DIAGNOSTICS['stage']='short_link_redirect'
         with opener(jar).open(urllib.request.Request(url,headers={'User-Agent':UA}),timeout=20) as response: url=response.url
         if platform_url(url)!='bilibili': raise ValueError('VIDEO_URL: invalid redirect')
         u=urllib.parse.urlsplit(url)
@@ -218,6 +228,7 @@ def main(a):
     platform=platform_url(a['url']); protect_network(); jar=cookie_jar(a.get('cookiesFile'),platform)
     if platform=='bilibili' and a['action'] in ('comments','dynamic'): return bili_social(a,jar)
     if platform=='bilibili' and a['action'] in ('probe','subtitle','frames','audio'): return bili_video(a,jar)
+    DIAGNOSTICS['stage']=a['action']
     return extract(a,jar)
 
 if __name__=='__main__':
@@ -232,4 +243,4 @@ if __name__=='__main__':
         elif any(v in msg.lower() for v in ('unavailable','private video','deleted','geo-restricted')): code='VIDEO_UNAVAILABLE'; detail='The platform reports this video is unavailable or private.'
         else: code=msg.split(':')[0] if re.match(r'^[A-Z_]+:',msg) and not msg.startswith('ERROR:') else 'VIDEO_EXTRACT'; detail='Video reader failed ('+type(e).__name__+'); check adapter version and source availability.'
         status=re.search(r'HTTP Error (\d{3})',msg); platform_code=re.search(r'Bilibili code (-?\d+)',msg)
-        print(json.dumps({'ok':False,'code':code,'error':detail,'httpStatus':int(status[1]) if status else None,'platformCode':int(platform_code[1]) if platform_code else None})); sys.exit(1)
+        print(json.dumps({'ok':False,'code':code,'error':detail,'httpStatus':int(status[1]) if status else None,'platformCode':int(platform_code[1]) if platform_code else None,'diagnostics':DIAGNOSTICS})); sys.exit(1)

@@ -71,3 +71,11 @@ Account grants also support `allowLocalConversations` (default false) and `priva
 ### Account range settings in the UI
 
 Open **Settings → Video reading · account access**. For each configured Bilibili/YouTube account, choose local/project conversations, QQ private chats, or named individual conversations (including groups). Group selection uses Amadeus conversation IDs internally, not a manually entered QQ group number. The save button in this panel applies immediately without restarting. Clearing a specific conversation entry does not override a broader local/private grant. The first Cookies file path remains local configuration; the UI never reads or displays Cookie contents. Concurrent stale saves are rejected, and scope edits preserve credentials and runtime paths.
+
+## Account save diagnostics and observed desktop actions
+
+Both the per-account Save button and the main Settings Save button persist pending video-account scopes. The panel distinguishes unsaved, saving, effective and failed states. Scope-only saves do not reconnect model or MCP services. A group must be explicitly authorized; an anonymous HTTP 412 with configured but unavailable credentials reports VIDEO_ACCOUNT_SCOPE instead of suggesting repeated anonymous retries. Credential loading failures and platform rejection are reported separately, without cookie values.
+
+Desktop screenshots expose short-lived screenshot IDs for image-relative clicks, including crop/zoom transforms. Clicks reject stale window geometry. Observed UIA controls support focus, value, invoke, selection and expansion patterns; unsupported patterns fail explicitly. Mouse actions follow a continuous eased path (normally 120–650 ms, adjustable 80–1,500 ms). They stop if the user moves the pointer, focus changes or the target window moves; covered click targets are rejected. Native control operations do not move the pointer. Input receipts do not prove the application completed its work.
+
+Windows live fixture checks cover native value editing, invocation, screenshot-bound clicks, moved-window rejection and continuous pointer steps. Bilibili tests using an authorized group scope retrieved three video frames and 20 comments; subtitle availability varies by video and platform response. These checks do not establish parity with proprietary desktop agents or cover every application.

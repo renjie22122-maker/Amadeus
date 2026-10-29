@@ -175,3 +175,93 @@ test('screenshot crops and zooms with an explicit screen coordinate transform', 
     /REGION/,
   );
 });
+
+test('image clicks bind crop/scale/window and expire after any input', async () => {
+  const sharp = (await import('sharp')).default;
+  const image = (
+    await sharp({ create: { width: 100, height: 100, channels: 3, background: 'white' } })
+      .png()
+      .toBuffer()
+  ).toString('base64');
+  const calls: any[] = [];
+  let time = 0;
+  const run = createDesktopSession(
+    async (a) => {
+      calls.push(a);
+      return a.action === 'screenshot'
+        ? {
+            image,
+            width: 100,
+            height: 100,
+            x: 200,
+            y: 300,
+            processId: 12,
+            capture: 'windows-graphics-capture',
+          }
+        : { inputDispatched: true };
+    },
+    () => time,
+  );
+  const shot = await run({
+    action: 'screenshot',
+    windowId: '1',
+    region: { x: 10, y: 20, width: 40, height: 40 },
+    scale: 2,
+  });
+  const click = {
+    action: 'click_image',
+    windowId: '1',
+    screenshotId: shot.screenshotId,
+    x: 20,
+    y: 30,
+  };
+  await assert.rejects(run({ ...click, windowId: '2' }), /STALE/);
+  await assert.rejects(run({ ...click, x: 80 }), /outside/);
+  await run(click);
+  assert.equal(calls.at(-1).x, 220);
+  assert.equal(calls.at(-1).y, 335);
+  assert.equal(calls.at(-1).expectedCapture.processId, 12);
+  await assert.rejects(run(click), /STALE/);
+  const expired = await run({ action: 'screenshot', windowId: '1' });
+  time = 60001;
+  await assert.rejects(run({ ...click, screenshotId: expired.screenshotId }), /STALE/);
+});
+
+test('native element actions require scoped observations and do not substitute raw typing', async () => {
+  const element = {
+    runtimeId: [1],
+    name: 'Editor',
+    role: 'ControlType.Edit',
+    enabled: true,
+    password: false,
+    x: 1,
+    y: 1,
+    width: 20,
+    height: 20,
+  };
+  const calls: any[] = [];
+  const run = createDesktopSession(async (a) => {
+    calls.push(a);
+    return a.action === 'inspect' ? { controls: [element] } : { inputDispatched: true };
+  });
+  const state = await run({ action: 'inspect', windowId: '1' });
+  await run({
+    action: 'set_value',
+    windowId: '1',
+    observationId: state.observationId,
+    elementIndex: 0,
+    text: 'literal',
+  });
+  assert.equal(calls.at(-1).action, 'set_value');
+  assert.deepEqual(calls.at(-1).runtimeId, [1]);
+  assert.equal(calls.at(-1).text, 'literal');
+  await assert.rejects(
+    run({
+      action: 'invoke_element',
+      windowId: '1',
+      observationId: state.observationId,
+      elementIndex: 0,
+    }),
+    /STALE/,
+  );
+});

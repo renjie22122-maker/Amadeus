@@ -1,4 +1,7 @@
-import { VideoAccountSettings } from '../components/VideoAccountSettings';
+import {
+  VideoAccountSettings,
+  type VideoAccountSettingsHandle,
+} from '../components/VideoAccountSettings';
 import { RetrievalSettings } from '../components/RetrievalSettings';
 import { ToolEcosystemSettings } from '../components/ToolEcosystemSettings';
 import { McpConnectionSettings } from '../components/McpConnectionSettings';
@@ -7,9 +10,10 @@ import { ApprovalSettings } from '../components/ApprovalSettings';
 import { MediaSettings } from '../components/MediaSettings';
 import { matchModel } from '../../shared/model-metadata';
 import { PlugZap, Plus, ShieldCheck, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { api } from '../api';
 export function SettingsPage({ settings, t, refresh, notify }: any) {
+  const videoAccounts = useRef<VideoAccountSettingsHandle>(null);
   const [value, setValue] = useState(() => structuredClone(settings)),
     [selected, setSelected] = useState(settings.defaultProfileId),
     [busy, setBusy] = useState(false),
@@ -912,7 +916,7 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
             : 'Reuses the selected connection credential only on the same origin. Search is an additional billed model request; missing search evidence is an error. Fetch allows public HTTP(S) only and revalidates redirects.'}
         </p>
       </section>
-      <VideoAccountSettings zh={t('settings') !== 'Settings'} notify={notify} />
+      <VideoAccountSettings ref={videoAccounts} zh={t('settings') !== 'Settings'} notify={notify} />
       <MediaSettings value={value} setValue={setValue} zh={t('settings') !== 'Settings'} />
       <div className="sticky-actions">
         <button
@@ -920,8 +924,11 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
           disabled={busy}
           onClick={() =>
             run(async () => {
-              await api('/settings', value, 'PUT');
-              await refresh();
+              await videoAccounts.current?.save();
+              if (JSON.stringify(value) !== JSON.stringify(settings)) {
+                await api('/settings', value, 'PUT');
+                await refresh();
+              }
               notify('Settings saved');
             })
           }

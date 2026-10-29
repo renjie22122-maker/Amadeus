@@ -292,6 +292,50 @@ export function videoAccountAllowed(
     !c.conversation.remoteMemoryOnly
   );
 }
+export function videoAccessFailure(result: any, configured: boolean, allowed: boolean) {
+  const status = result.httpStatus ? ' HTTP ' + result.httpStatus : '';
+  const stage =
+    typeof result.diagnostics?.stage === 'string' &&
+    /^[a-zA-Z0-9_/-]{1,100}$/.test(result.diagnostics.stage)
+      ? ' Stage: ' + result.diagnostics.stage + '.'
+      : '';
+  const denied =
+    ['VIDEO_ACCESS', 'PLATFORM_ACCESS'].includes(result.code) ||
+    [401, 403, 412, 429, 567].includes(result.httpStatus);
+  if (denied && configured && !allowed)
+    return {
+      code: 'VIDEO_ACCOUNT_SCOPE',
+      message:
+        'Anonymous access was denied. A local account exists but is NOT authorized for this conversation. The owner must save this conversation in Settings > Video reading > account access. Do not retry the same anonymous request or claim the video must be downloaded.' +
+        status +
+        stage,
+    };
+  if (allowed && ['empty_or_expired', 'unreadable'].includes(result.diagnostics?.cookieState))
+    return {
+      code: 'VIDEO_CREDENTIALS',
+      message:
+        'This conversation is authorized, but the cookie file is unreadable or contains no unexpired platform cookies. Refresh the local account export; do not ask for passwords or cookie contents in chat.' +
+        status +
+        stage,
+    };
+  const credentials =
+    result.diagnostics?.credentialsProvided === true
+      ? 'Login cookies were supplied; this does not prove they are still valid. '
+      : 'No login cookies were supplied. ';
+  return {
+    code: result.code || 'VIDEO_EXTRACT',
+    message:
+      (result.error || 'Video extraction failed.') +
+      status +
+      (result.platformCode != null ? ' Platform code ' + result.platformCode : '') +
+      stage +
+      (denied
+        ? ' ' +
+          credentials +
+          'Avoid repeated identical access-denied requests; check account validity or platform restrictions.'
+        : ''),
+  };
+}
 export async function videoSite(
   c: ToolContext,
   args: Record<string, unknown> & { url: string },
@@ -300,6 +344,8 @@ export async function videoSite(
   requireVideoNetwork(c);
   const source = videoUrl(args.url),
     conf = await configuration(c);
+  const account = conf.accounts?.[source.platform];
+  const accountAllowed = videoAccountAllowed(c, account);
   const work = folder || join(roots(c), 'requests', randomUUID());
   await mkdir(work, { recursive: true });
   try {
@@ -312,21 +358,16 @@ export async function videoSite(
         url: source.url,
         folder: work,
         ffmpeg: conf.ffmpeg,
-        cookiesFile: videoAccountAllowed(c, conf.accounts?.[source.platform])
-          ? conf.accounts?.[source.platform]?.cookiesFile
-          : undefined,
+        cookiesFile: accountAllowed ? account?.cookiesFile : undefined,
       }),
       12 * 1024 * 1024,
       180000,
     );
     const result = JSON.parse(bytes.toString('utf8'));
-    assert(
-      result.ok,
-      result.code || 'VIDEO_EXTRACT',
-      (result.error || 'Video extraction failed.') +
-        (result.httpStatus ? ' HTTP ' + result.httpStatus : '') +
-        (result.platformCode != null ? ' Platform code ' + result.platformCode : ''),
-    );
+    if (!result.ok) {
+      const failure = videoAccessFailure(result, Boolean(account), accountAllowed);
+      assert(false, failure.code, failure.message);
+    }
     checkSourceText(JSON.stringify(result.data), c.sourcePolicy);
     return result.data;
   } finally {

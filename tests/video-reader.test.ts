@@ -16,6 +16,7 @@ import {
   videoAudio,
   videoTranscript,
   videoConfigSchema,
+  videoAccessFailure,
 } from '../server/services/video-reader.js';
 import { installVideoTools } from '../server/tools/video-tools.js';
 import { socialChatTools } from '../server/services/chat-access.js';
@@ -260,4 +261,38 @@ test('account grants separate local conversations, selected private transports a
   }
   assert.equal(videoAccountAllowed(context('selected-group', [], true), account), true);
   assert.equal(videoAccountAllowed(context('local'), undefined), false);
+});
+
+test('video denial distinguishes unauthorized scope, empty credentials and logged-in denial', () => {
+  const denied = {
+    ok: false,
+    code: 'VIDEO_ACCESS',
+    httpStatus: 412,
+    diagnostics: {
+      stage: '/x/web-interface/view',
+      credentialsProvided: false,
+      cookieState: 'not_provided',
+    },
+  };
+  const scope = videoAccessFailure(denied, true, false);
+  assert.equal(scope.code, 'VIDEO_ACCOUNT_SCOPE');
+  assert.match(scope.message, /NOT authorized/);
+  assert.match(scope.message, /Do not retry/);
+  const empty = videoAccessFailure(
+    { ...denied, diagnostics: { ...denied.diagnostics, cookieState: 'empty_or_expired' } },
+    true,
+    true,
+  );
+  assert.equal(empty.code, 'VIDEO_CREDENTIALS');
+  const logged = videoAccessFailure(
+    {
+      ...denied,
+      diagnostics: { ...denied.diagnostics, credentialsProvided: true, cookieState: 'loaded' },
+    },
+    true,
+    true,
+  );
+  assert.equal(logged.code, 'VIDEO_ACCESS');
+  assert.match(logged.message, /supplied/);
+  assert.doesNotMatch(logged.message, /NOT authorized/);
 });

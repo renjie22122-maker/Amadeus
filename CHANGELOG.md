@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-29 — Reliable account saves and continuous desktop input
+
+Unified account-panel and global settings saves, added scoped video-access diagnostics, native UIA actions and screenshot-bound clicks. Mouse input now follows a continuous eased path with interruption and stale-window checks.
+
 ## 2026-10-29 — WGC and video account settings
 
 Added WGC window capture with explicit compatibility fallback selection, crop/zoom coordinate mapping, richer UIA state and non-replaying post-action checks. Added a scope-only video-account settings panel with per-conversation grants and stale-save protection. Real occluded WPF tier-2 frame updates were verified; see the video/desktop guide for limits.

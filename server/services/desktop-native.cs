@@ -15,6 +15,13 @@ public class DesktopBridge {
  [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowProc callback,IntPtr parameter);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h,StringBuilder text,int size);
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h,out uint processId);
+ [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h,int attribute,out RECT r,int size);
+ [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h,uint command);
+ static AutomationElement FindControl(IntPtr handle,object runtimeId){
+  var queue=new Queue<AutomationElement>();queue.Enqueue(AutomationElement.FromHandle(handle));var timer=Stopwatch.StartNew();int seen=0;
+  while(queue.Count>0&&seen++<2000&&timer.ElapsedMilliseconds<3000){var el=queue.Dequeue();try{if(json.Serialize(el.GetRuntimeId())==json.Serialize(runtimeId))return el;var child=TreeWalker.ControlViewWalker.GetFirstChild(el);for(int n=0;child!=null&&n<200&&queue.Count<2000;n++){queue.Enqueue(child);child=TreeWalker.ControlViewWalker.GetNextSibling(child);}}catch(ElementNotAvailableException){}}
+  throw new Exception("DESKTOP_STALE: observed control is no longer available");
+ }
  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h,int command);
  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point p);
@@ -28,7 +35,32 @@ public class DesktopBridge {
  static void Emit(INPUT value){if(SendInput(1,new[]{value},Marshal.SizeOf(typeof(INPUT)))!=1)throw new Exception("Windows rejected input; possible privilege boundary");}
  static void mouse_event(uint f,uint x,uint y,uint d,UIntPtr e){Emit(new INPUT{type=0,data=new INPUTUNION{mouse=new MOUSEINPUT{flags=f,mouseData=d}}});}
  static void Key(ushort vk,ushort scan,uint flags){Emit(new INPUT{type=1,data=new INPUTUNION{key=new KEYINPUT{vk=vk,scan=scan,flags=flags}}});}
- static void CheckTarget(Dictionary<string,object>a){if(GetForegroundWindow()!=new IntPtr(Int64.Parse(Text(a,"windowId"))))throw new Exception("Target lost foreground; stopped input");}
+ static void MovePointer(Dictionary<string,object>a,int x,int y,bool dragging){
+  var start=Cursor.Position;double distance=Math.Sqrt((double)(x-start.X)*(x-start.X)+(double)(y-start.Y)*(y-start.Y));
+  int duration=a.ContainsKey("pointerDurationMs")&&a["pointerDurationMs"]!=null?Number(a,"pointerDurationMs"):(int)Math.Min(650,Math.Max(120,120+distance/3));
+  if(duration<80||duration>1500)throw new Exception("DESKTOP_POINTER_DURATION: unsupported duration");
+  var timer=Stopwatch.StartNew();var last=start;int steps=0;
+  do {
+   CheckTarget(a);
+   var observed=Cursor.Position;
+   if(Math.Abs(observed.X-last.X)>4||Math.Abs(observed.Y-last.Y)>4)throw new Exception("DESKTOP_POINTER_CHANGED: pointer moved externally; stopped without clicking");
+   double t=Math.Min(1,(double)timer.ElapsedMilliseconds/duration);double eased=t*t*(3-2*t);
+   var next=new Point((int)Math.Round(start.X+(x-start.X)*eased),(int)Math.Round(start.Y+(y-start.Y)*eased));
+   if(dragging&&GetAncestor(WindowFromPoint(next),2)!=new IntPtr(Int64.Parse(Text(a,"windowId"))))throw new Exception("DESKTOP_POINTER_COVERED: drag path crosses another window");
+   if(!SetCursorPos(next.X,next.Y))throw new Exception("DESKTOP_POINTER_FAILED: cursor movement rejected");
+   last=next;steps++;if(t>=1)break;Thread.Sleep(16);
+  }while(true);
+  pointerSteps+=steps;pointerElapsed+=timer.ElapsedMilliseconds;
+ }
+ static int pointerSteps=0;static long pointerElapsed=0;
+ static RECT? inputBounds=null;
+ static void CheckTarget(Dictionary<string,object>a){
+  var h=new IntPtr(Int64.Parse(Text(a,"windowId")));
+  if(GetForegroundWindow()!=h)throw new Exception("Target lost foreground; stopped input");
+  if(inputBounds.HasValue){RECT r;var expected=inputBounds.Value;
+   if(!GetWindowRect(h,out r)||r.L!=expected.L||r.T!=expected.T||r.R!=expected.R||r.B!=expected.B)throw new Exception("DESKTOP_STALE: target moved or resized during input; stopped");
+  }
+ }
 
  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
@@ -53,7 +85,7 @@ public class DesktopBridge {
  static int Run(string[] args) {
   try {SetProcessDPIAware(); var a=json.Deserialize<Dictionary<string,object>>(System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(args[0])));
    string action=Text(a,"action"); var bounds=SystemInformation.VirtualScreen;
-   if(action=="windows"){var windows=new List<object>();EnumWindows((h,p)=>{if(IsWindowVisible(h)){var title=new StringBuilder(1024);GetWindowText(h,title,title.Capacity);uint pid;GetWindowThreadProcessId(h,out pid);RECT r;if(GetWindowRect(h,out r)&&r.R>r.L&&r.B>r.T)windows.Add(new {windowId=h.ToInt64().ToString(),title=title.ToString(),processId=pid,foreground=h==GetForegroundWindow(),minimized=IsIconic(h),x=r.L,y=r.T,width=r.R-r.L,height=r.B-r.T});}return true;},IntPtr.Zero);Console.WriteLine(json.Serialize(new {windows=windows}));return 0;}
+   if(action=="windows"){var windows=new List<object>();EnumWindows((h,p)=>{if(IsWindowVisible(h)){var title=new StringBuilder(1024);GetWindowText(h,title,title.Capacity);uint pid;GetWindowThreadProcessId(h,out pid);RECT r;if(GetWindowRect(h,out r)&&r.R>r.L&&r.B>r.T)windows.Add(new {windowId=h.ToInt64().ToString(),title=title.ToString(),processId=pid,foreground=h==GetForegroundWindow(),ownerWindowId=GetWindow(h,4).ToInt64().ToString(),minimized=IsIconic(h),x=r.L,y=r.T,width=r.R-r.L,height=r.B-r.T});}return true;},IntPtr.Zero);Console.WriteLine(json.Serialize(new {windows=windows}));return 0;}
    if(action=="activate"){var h=new IntPtr(Int64.Parse(Text(a,"windowId")));if(!IsWindow(h))throw new Exception("Window unavailable");if(IsIconic(h))ShowWindow(h,9);SetForegroundWindow(h);Thread.Sleep(100);if(GetForegroundWindow()!=h)throw new Exception("ACTIVATION_DENIED: Windows did not grant foreground; no input sent");Console.WriteLine(json.Serialize(new {activated=true,windowId=Text(a,"windowId")}));return 0;}
    if(action=="inspect"){
     var handle=new IntPtr(Int64.Parse(Text(a,"windowId")));if(!IsWindow(handle))throw new Exception("Window unavailable");
@@ -107,13 +139,30 @@ public class DesktopBridge {
    {
     var h=new IntPtr(Int64.Parse(Text(a,"windowId")));RECT r;
     if(!IsWindow(h)||GetForegroundWindow()!=h||!GetWindowRect(h,out r))throw new Exception("Target must be the existing foreground window; no input sent");
+    if(a.ContainsKey("expectedCapture")){
+     var expected=(Dictionary<string,object>)a["expectedCapture"];var actual=r;
+     if(Text(expected,"backend")=="windows-graphics-capture"&&DwmGetWindowAttribute(h,9,out actual,Marshal.SizeOf(typeof(RECT)))<0)throw new Exception("DESKTOP_STALE: capture bounds unavailable");
+     uint pid;GetWindowThreadProcessId(h,out pid);
+     if(actual.L!=Number(expected,"x")||actual.T!=Number(expected,"y")||actual.R-actual.L!=Number(expected,"width")||actual.B-actual.T!=Number(expected,"height")||(expected.ContainsKey("processId")&&expected["processId"]!=null&&Convert.ToUInt32(expected["processId"])!=pid))throw new Exception("DESKTOP_STALE: captured window moved, resized or changed process");
+    }
+    inputBounds=r;
     bounds=Rectangle.Intersect(bounds,Rectangle.FromLTRB(r.L,r.T,r.R,r.B));
    }
-   if(action=="move"||action=="click"||action=="double_click"||action=="drag"){
+   if(action=="focus_element"||action=="set_value"||action=="invoke_element"||action=="select_element"||action=="expand_element"||action=="collapse_element"){
+    var element=FindControl(new IntPtr(Int64.Parse(Text(a,"windowId"))),a["runtimeId"]);var cur=element.Current;
+    if(cur.IsPassword||!cur.IsEnabled||cur.Name!=Text(a,"expectedName")||cur.ControlType.ProgrammaticName!=Text(a,"expectedRole"))throw new Exception("DESKTOP_STALE: control changed or is protected");
+    CheckTarget(a);object pattern;
+    if(action=="focus_element")element.SetFocus();
+    else if(action=="set_value"&&element.TryGetCurrentPattern(ValuePattern.Pattern,out pattern)){var v=(ValuePattern)pattern;if(v.Current.IsReadOnly)throw new Exception("DESKTOP_READ_ONLY: control cannot be edited");v.SetValue(Text(a,"text"));}
+    else if(action=="invoke_element"&&element.TryGetCurrentPattern(InvokePattern.Pattern,out pattern))((InvokePattern)pattern).Invoke();
+    else if(action=="select_element"&&element.TryGetCurrentPattern(SelectionItemPattern.Pattern,out pattern))((SelectionItemPattern)pattern).Select();
+    else if((action=="expand_element"||action=="collapse_element")&&element.TryGetCurrentPattern(ExpandCollapsePattern.Pattern,out pattern)){var p=(ExpandCollapsePattern)pattern;if(action=="expand_element")p.Expand();else p.Collapse();}
+    else throw new Exception("DESKTOP_PATTERN: control does not support the requested action");
+   }else if(action=="move"||action=="click"||action=="double_click"||action=="drag"){
     int x=Number(a,"x"),y=Number(a,"y");if(!bounds.Contains(x,y))throw new Exception("Point outside target");if(GetAncestor(WindowFromPoint(new Point(x,y)),2)!=new IntPtr(Int64.Parse(Text(a,"windowId"))))throw new Exception("Point covered by another window; inspect again");
-    if(action=="drag"){int endX=Number(a,"toX"),endY=Number(a,"toY");if(!bounds.Contains(endX,endY))throw new Exception("Drag outside target");SetCursorPos(x,y);mouse_event(2,0,0,0,UIntPtr.Zero);
-     try{for(int i=1;i<=10;i++){CheckTarget(a);SetCursorPos(x+(endX-x)*i/10,y+(endY-y)*i/10);Thread.Sleep(20);}}finally{mouse_event(4,0,0,0,UIntPtr.Zero);}
-    }else{if(!SetCursorPos(x,y))throw new Exception("Cursor move failed");if(action!="move"){int count=action=="double_click"?2:1;for(int i=0;i<count;i++){CheckTarget(a);uint down=Text(a,"button")=="right"?8u:Text(a,"button")=="middle"?32u:2u;mouse_event(down,0,0,0,UIntPtr.Zero);mouse_event(down*2,0,0,0,UIntPtr.Zero);}}}
+    if(action=="drag"){int endX=Number(a,"toX"),endY=Number(a,"toY");if(!bounds.Contains(endX,endY))throw new Exception("Drag outside target");MovePointer(a,x,y,false);CheckTarget(a);mouse_event(2,0,0,0,UIntPtr.Zero);
+     try{MovePointer(a,endX,endY,true);}finally{mouse_event(4,0,0,0,UIntPtr.Zero);}
+    }else{MovePointer(a,x,y,false);if(GetAncestor(WindowFromPoint(new Point(x,y)),2)!=new IntPtr(Int64.Parse(Text(a,"windowId"))))throw new Exception("DESKTOP_POINTER_COVERED: target covered during movement; no click sent");if(action!="move"){int count=action=="double_click"?2:1;for(int i=0;i<count;i++){CheckTarget(a);uint down=Text(a,"button")=="right"?8u:Text(a,"button")=="middle"?32u:2u;mouse_event(down,0,0,0,UIntPtr.Zero);mouse_event(down*2,0,0,0,UIntPtr.Zero);}}}
    }else if(action=="type"){var focused=AutomationElement.FocusedElement;if(focused==null||focused.Current.IsPassword)throw new Exception("Protected or unavailable focused input; user interaction required");string s=Text(a,"text");if(s.Length>2000)throw new Exception("Text too long");foreach(char c in s){CheckTarget(a);Key(0,(ushort)c,4);Key(0,(ushort)c,6);}}
    else if(action=="key"){
     string[] parts=Text(a,"key").Split('+');var held=new List<ushort>();
@@ -124,7 +173,7 @@ public class DesktopBridge {
    }
    else if(action=="scroll"){int delta=Number(a,"delta");if(Math.Abs(delta)>1200)throw new Exception("Scroll too large");CheckTarget(a);var point=Cursor.Position;if(!bounds.Contains(point)||GetAncestor(WindowFromPoint(point),2)!=new IntPtr(Int64.Parse(Text(a,"windowId"))))throw new Exception("Scroll cursor is outside or covered; move inside target first");mouse_event(a.ContainsKey("horizontal")&&Convert.ToBoolean(a["horizontal"])?4096u:2048u,0,0,unchecked((uint)delta),UIntPtr.Zero);}
    else throw new Exception("Unsupported action");
-   Console.WriteLine(json.Serialize(new {completed=true,inputDispatched=true,applicationEffectVerified=false,action=action}));return 0;
+   Console.WriteLine(json.Serialize(new {completed=true,inputDispatched=true,applicationEffectVerified=false,action=action,pointerSteps=pointerSteps,pointerElapsedMs=pointerElapsed}));return 0;
   }catch(Exception e){Console.Error.WriteLine(e.Message);return 1;}
  }
 }

@@ -1,20 +1,31 @@
 import './VideoAccountSettings.css';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useImperativeHandle, forwardRef } from 'react';
 import { api } from '../api';
-export function VideoAccountSettings({
-  zh,
-  notify,
-}: {
-  zh: boolean;
-  notify: (message: string) => void;
-}) {
+export interface VideoAccountSettingsHandle {
+  save: () => Promise<void>;
+}
+export const VideoAccountSettings = forwardRef<
+  VideoAccountSettingsHandle,
+  { zh: boolean; notify: (message: string) => void }
+>(function VideoAccountSettings({ zh, notify }, ref) {
   const [data, setData] = useState<any>(null),
     [busy, setBusy] = useState(false),
-    [query, setQuery] = useState('');
+    [query, setQuery] = useState(''),
+    [savedAccounts, setSavedAccounts] = useState<any[]>([]),
+    [error, setError] = useState('');
+  const current = useRef<any>(null),
+    saving = useRef<Promise<void> | null>(null);
+  current.current = data;
+  const dirty = (a: any) =>
+    JSON.stringify(a) !== JSON.stringify(savedAccounts.find((v) => v.platform === a.platform));
   async function load() {
     try {
-      setData(await api('/settings/video-accounts'));
+      const loaded = await api('/settings/video-accounts');
+      setData(loaded);
+      setSavedAccounts(loaded.accounts);
+      setError('');
     } catch (e: any) {
+      setError(e.message);
       notify(e.message);
     }
   }
@@ -27,6 +38,61 @@ export function VideoAccountSettings({
       accounts: d.accounts.map((a: any) => (a.platform === platform ? { ...a, ...patch } : a)),
     }));
   }
+  async function save(platform?: string): Promise<void> {
+    if (saving.current) return saving.current;
+    const draft = current.current;
+    if (!draft) throw Error(zh ? '账号范围尚未加载完成' : 'Account scopes have not loaded');
+    const pending = draft.accounts.filter(
+      (a: any) => (!platform || a.platform === platform) && dirty(a),
+    );
+    if (!pending.length) return;
+    const work = (async () => {
+      setBusy(true);
+      setError('');
+      let revision = draft.revision;
+      try {
+        for (const a of pending) {
+          const result = await api(
+            '/settings/video-accounts',
+            {
+              revision,
+              platform: a.platform,
+              scope: {
+                allowLocalConversations: a.allowLocalConversations,
+                privateChatTransports: a.privateChatTransports,
+                conversationIds: a.conversationIds,
+              },
+            },
+            'PUT',
+          );
+          revision = result.revision;
+          setSavedAccounts(result.accounts);
+          setData((d: any) => ({
+            ...d,
+            revision,
+            accounts: d.accounts.map((v: any) =>
+              v.platform === a.platform
+                ? result.accounts.find((r: any) => r.platform === a.platform)
+                : v,
+            ),
+          }));
+        }
+        notify(zh ? '账号范围已生效' : 'Account access is now effective');
+      } catch (e: any) {
+        setError(e.message);
+        throw e;
+      } finally {
+        setBusy(false);
+      }
+    })();
+    saving.current = work;
+    try {
+      await work;
+    } finally {
+      saving.current = null;
+    }
+  }
+  useImperativeHandle(ref, () => ({ save: () => save() }));
   return (
     <section className="panel video-account-settings">
       <h2>{zh ? '视频读取 · 登录账号使用范围' : 'Video reading · account access'}</h2>
@@ -35,6 +101,22 @@ export function VideoAccountSettings({
           ? '仅控制哪些会话可以借用本机已配置的登录账号读取视频、字幕和评论。群聊默认不授权；不显示 Cookie 内容。保存此处立即生效，无需重启。'
           : 'Controls which conversations may use configured local accounts for videos, subtitles and comments. Groups are denied by default. Cookie contents are never displayed. Saves apply without restart.'}
       </p>
+      <p role="status">
+        {busy
+          ? zh
+            ? '正在保存账号范围…'
+            : 'Saving account access…'
+          : data?.accounts.some(dirty)
+            ? zh
+              ? '有未保存修改：可点此处保存，也可使用页面右下角“保存修改”。'
+              : 'Unsaved changes: save here or use the page Save button.'
+            : data
+              ? zh
+                ? '当前显示的账号范围已生效'
+                : 'Displayed account access is effective'
+              : ''}
+      </p>
+      {error && <p role="alert">{error}</p>}
       <button disabled={busy} onClick={load}>
         {zh ? '刷新账号范围' : 'Refresh account access'}
       </button>
@@ -53,6 +135,7 @@ export function VideoAccountSettings({
             <label>
               <input
                 type="checkbox"
+                disabled={busy}
                 checked={a.allowLocalConversations}
                 onChange={(e) => change(a.platform, { allowLocalConversations: e.target.checked })}
               />
@@ -61,6 +144,7 @@ export function VideoAccountSettings({
             <label>
               <input
                 type="checkbox"
+                disabled={busy}
                 checked={['qq', 'onebot11'].every((t) => a.privateChatTransports.includes(t))}
                 onChange={(e) =>
                   change(a.platform, {
@@ -99,6 +183,7 @@ export function VideoAccountSettings({
                     <label key={c.id} style={{ display: 'flex', gap: 8, padding: 6 }}>
                       <input
                         type="checkbox"
+                        disabled={busy}
                         checked={a.conversationIds.includes(c.id)}
                         onChange={(e) =>
                           change(a.platform, {
@@ -128,6 +213,7 @@ export function VideoAccountSettings({
                 <label key={id}>
                   <input
                     type="checkbox"
+                    disabled={busy}
                     checked
                     onChange={() =>
                       change(a.platform, {
@@ -141,36 +227,13 @@ export function VideoAccountSettings({
               ))}
             <button
               disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  const saved = await api(
-                    '/settings/video-accounts',
-                    {
-                      revision: data.revision,
-                      platform: a.platform,
-                      scope: {
-                        allowLocalConversations: a.allowLocalConversations,
-                        privateChatTransports: a.privateChatTransports,
-                        conversationIds: a.conversationIds,
-                      },
-                    },
-                    'PUT',
-                  );
-                  setData({ ...data, ...saved });
-                  notify(zh ? '账号范围已保存' : 'Account access saved');
-                } catch (e: any) {
-                  notify(e.message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
+              onClick={() => void save(a.platform).catch((e: any) => notify(e.message))}
             >
-              {zh ? '保存此账号范围' : 'Save account access'}
+              {busy ? (zh ? '保存中…' : 'Saving…') : zh ? '保存此账号范围' : 'Save account access'}
             </button>
           </details>
         ))
       )}
     </section>
   );
-}
+});

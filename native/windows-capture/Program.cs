@@ -10,6 +10,7 @@ using WinRT;
 internal static class Program {
  [StructLayout(LayoutKind.Sequential)] struct Rect { public int L,T,R,B; }
  [DllImport("user32.dll")] static extern bool IsWindow(nint h);
+ [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint h,out uint pid);
  [DllImport("user32.dll")] static extern bool IsWindowVisible(nint h);
  [DllImport("user32.dll")] static extern bool IsIconic(nint h);
  [DllImport("user32.dll")] static extern bool GetWindowRect(nint h,out Rect r);
@@ -75,7 +76,8 @@ internal static class Program {
   encoder.SetSoftwareBitmap(bitmap);await encoder.FlushAsync();
   stream.Seek(0);using var reader=new DataReader(stream.GetInputStreamAt(0));
   await reader.LoadAsync((uint)stream.Size);byte[] bytes=new byte[(int)stream.Size];reader.ReadBytes(bytes);
-  return new { image=Convert.ToBase64String(bytes),x=after.L,y=after.T,width=bitmap.PixelWidth,height=bitmap.PixelHeight,windowId=h.ToInt64().ToString(),capture="windows-graphics-capture",contentVerified=false,frameTimestampTicks=frame.SystemRelativeTime.Ticks,limitations="Fresh compositor frame; protected content, secure desktops and application rendering defects may still produce unavailable or blank content. No screen or PrintWindow fallback." };
+  GetWindowThreadProcessId(h,out var pid);
+  return new { processId=pid,image=Convert.ToBase64String(bytes),x=after.L,y=after.T,width=bitmap.PixelWidth,height=bitmap.PixelHeight,windowId=h.ToInt64().ToString(),capture="windows-graphics-capture",contentVerified=false,frameTimestampTicks=frame.SystemRelativeTime.Ticks,limitations="Fresh compositor frame; protected content, secure desktops and application rendering defects may still produce unavailable or blank content. No screen or PrintWindow fallback." };
  }
  [MTAThread] static int Main(string[] args) {
   try {var result=Capture(new nint(long.Parse(args[0]))).WaitAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult();Console.WriteLine(JsonSerializer.Serialize(result));return 0;}
