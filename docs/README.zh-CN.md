@@ -8,6 +8,8 @@
 
 ## 当前指南
 
+- [视频读取与桌面交互](VIDEO-READING.zh-CN.md)
+
 - [接入聊天](CHAT-CONNECTIONS.zh-CN.md)
 - [Bot 启动与独立状态提示](BOT-STARTUP.zh-CN.md)
 - [本地语音与回复朗读](LOCAL-VOICE.zh-CN.md)

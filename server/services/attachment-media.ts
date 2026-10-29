@@ -25,6 +25,6 @@ export function mediaAttachmentText(id: string, mime: string) {
     mime +
     '. Reference: attachment:' +
     id +
-    '. Use inspect_media to inspect metadata, export_media to copy bytes into the authorized workspace, or this reference in generate_media. Images can be read with read_image. Audio/video content has not been transcribed or visually analyzed; export for authorized transcription or frame extraction. No transcript is implied.]'
+    '. Use inspect_media to inspect metadata, export_media to copy bytes into the authorized workspace, or this reference in generate_media. Images can be read with read_image. Audio/video content has not been transcribed or visually analyzed; use video_probe with this reference, video_storyboard for frames, read_video_transcript for subtitle tracks, or extract_video_audio followed by transcribe_media. No transcript is implied.]'
   );
 }

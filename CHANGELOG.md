@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-29 — Video reading and desktop observations
+
+Added conversation-scoped Bilibili/YouTube metadata, timed subtitles, comments/dynamics and bounded video/audio reading. Online frame/audio windows use HTTP Range without silent full-video fallback; local files retain FFmpeg caches. Added desktop activation, stale-checked element clicks, key chords and mouse options without changing approval policy. See [video and desktop guide](docs/VIDEO-READING.md) for setup and limitations.
+
 ## Chat connections and remote media
 
 Added opt-in private-chat adapters for Telegram, WhatsApp Business, VK, official QQ and WeCom, plus local OneBot bridges; bound-account approvals, media input/output, isolated attachments and durable delivery review. See [setup and limitations](docs/CHAT-CONNECTIONS.md). Live platform testing requires credentials.

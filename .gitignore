@@ -54,3 +54,6 @@ build/
 !/scripts/run-tests.mjs
 !/scripts/check-mcp-example.ts
 !/scripts/check-mcp-ui.mjs
+
+!/scripts/video-reader-requirements.txt
+!/scripts/test-desktop-live.ts

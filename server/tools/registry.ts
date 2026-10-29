@@ -44,6 +44,7 @@ import type { BackgroundCommands } from '../services/background-commands.js';
 import { installSkills } from './skill-tools.js';
 import { executionSettings } from '../../shared/execution.js';
 import { installMedia } from './media.js';
+import { installVideoTools } from './video-tools.js';
 import type { MediaService } from '../services/media.js';
 import { readScopedImage, normalizeImage } from '../services/images.js';
 import { prepareCoordination, commitCoordination } from '../services/coordination-journal.js';
@@ -1467,6 +1468,7 @@ export function tools() {
   });
   installMcp(registry);
   installMedia(registry);
+  installVideoTools(registry);
   installPlanning(registry);
   return registry;
 }
