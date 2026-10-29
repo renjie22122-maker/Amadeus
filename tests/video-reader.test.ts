@@ -230,3 +230,34 @@ test('platform worker security, cookie scoping and Bilibili fixtures', () => {
   });
   assert.equal(result.status, 0, result.stderr);
 });
+
+test('account grants separate local conversations, selected private transports and explicit groups', async () => {
+  const { videoAccountAllowed } = await import('../server/services/video-reader.js');
+  const account = {
+    conversationIds: ['selected-group'],
+    allowLocalConversations: true,
+    privateChatTransports: ['onebot11', 'qq'],
+  };
+  const context = (id: string, bindings: any[] = [], remote = false): any => ({
+    conversation: { id, remoteMemoryOnly: remote },
+    store: { list: () => bindings },
+  });
+  assert.equal(videoAccountAllowed(context('local'), account), true);
+  assert.equal(videoAccountAllowed(context('orphan', [], true), account), false);
+  for (const [transport, peerType, expected] of [
+    ['onebot11', 'private', true],
+    ['qq', 'private', true],
+    ['onebot11', 'group', false],
+    ['telegram', 'private', false],
+  ] as const) {
+    assert.equal(
+      videoAccountAllowed(
+        context('chat', [{ conversationId: 'chat', enabled: true, transport, peerType }], true),
+        account,
+      ),
+      expected,
+    );
+  }
+  assert.equal(videoAccountAllowed(context('selected-group', [], true), account), true);
+  assert.equal(videoAccountAllowed(context('local'), undefined), false);
+});

@@ -17,10 +17,20 @@ export const videoConfigSchema = z
     accounts: z
       .object({
         bilibili: z
-          .object({ cookiesFile: z.string(), conversationIds: z.array(z.string()).default([]) })
+          .object({
+            cookiesFile: z.string(),
+            conversationIds: z.array(z.string()).default([]),
+            allowLocalConversations: z.boolean().default(false),
+            privateChatTransports: z.array(z.string().min(1).max(40)).default([]),
+          })
           .optional(),
         youtube: z
-          .object({ cookiesFile: z.string(), conversationIds: z.array(z.string()).default([]) })
+          .object({
+            cookiesFile: z.string(),
+            conversationIds: z.array(z.string()).default([]),
+            allowLocalConversations: z.boolean().default(false),
+            privateChatTransports: z.array(z.string().min(1).max(40)).default([]),
+          })
           .optional(),
       })
       .optional(),
@@ -253,6 +263,35 @@ export function requireVideoNetwork(c: ToolContext) {
     'Platform extractors are unavailable under a constrained evidence policy; use the policy-aware web tools.',
   );
 }
+export function videoAccountAllowed(
+  c: ToolContext,
+  account:
+    | {
+        conversationIds: string[];
+        allowLocalConversations?: boolean;
+        privateChatTransports?: string[];
+      }
+    | undefined,
+) {
+  if (!account) return false;
+  if (account.conversationIds.includes(c.conversation.id)) return true;
+  const bindings =
+    typeof c.store.list === 'function'
+      ? c.store.list<any>('chat-connection').filter((v) => v.conversationId === c.conversation.id)
+      : [];
+  if (bindings.length)
+    return bindings.every(
+      (v) =>
+        v.enabled &&
+        (v.peerType || 'private') === 'private' &&
+        account.privateChatTransports?.includes(v.transport),
+    );
+  return (
+    account.allowLocalConversations === true &&
+    !c.conversation.remoteChatOnly &&
+    !c.conversation.remoteMemoryOnly
+  );
+}
 export async function videoSite(
   c: ToolContext,
   args: Record<string, unknown> & { url: string },
@@ -273,8 +312,8 @@ export async function videoSite(
         url: source.url,
         folder: work,
         ffmpeg: conf.ffmpeg,
-        cookiesFile: conf.accounts?.[source.platform]?.conversationIds.includes(c.conversation.id)
-          ? conf.accounts[source.platform]!.cookiesFile
+        cookiesFile: videoAccountAllowed(c, conf.accounts?.[source.platform])
+          ? conf.accounts?.[source.platform]?.cookiesFile
           : undefined,
       }),
       12 * 1024 * 1024,
