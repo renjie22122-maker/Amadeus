@@ -26,7 +26,14 @@ python -m venv .data/video-reader-env
 Unix使用 `.data/video-reader-env/bin/python`。另行安装FFmpeg/ffprobe至PATH。`.data/video-reader.json` 支持python、ffmpeg、ffprobe路径，以及账号授权：
 
 ```json
-{"accounts":{"bilibili":{"cookiesFile":"D:/private/bilibili-cookies.txt","conversationIds":["明确授权的会话ID"]}}}
+{
+  "accounts": {
+    "bilibili": {
+      "cookiesFile": "D:/private/bilibili-cookies.txt",
+      "conversationIds": ["明确授权的会话ID"]
+    }
+  }
+}
 ```
 
 YouTube配置同形。会话列表为空表示不向任何会话提供账号。模型不能自行指定凭据文件路径。仅载入对应平台域名的Cookies，临时文件用后清除；不得提交配置或凭据到Git。不会自动扫描浏览器资料。使用审核过的扩展，仅导出当前网站的Netscape格式Cookies，安装权限可能需要用户确认。`credentialsProvided` 仅表示提供了Cookies，不代表已通过站点认证。412／403／429／567及视频不可用均明确报告，登录不能保证站点放行。
@@ -35,7 +42,7 @@ YouTube配置同形。会话列表为空表示不向任何会话提供账号。�
 
 已启用的computer MCP新增窗口激活、可调有界无障碍树、焦点信息、60秒观测ID、元素点击、右键／中键、组合键和横向滚动。先观察并选择返回的窗口，再激活、检查焦点、执行一个动作，随后重新观察。元素点击要求同会话同窗口，运行时ID、位置、名称和角色未变；输入后旧观测失效。坐标检查遮挡窗口，密码控件不接受自动输入。
 
-保留现有审批与宿主权限边界，不是隔离桌面。截图仍为应用依赖的PrintWindow，尚非Windows.Graphics.Capture，可能黑屏或过期。因此不能宣称已经全面达到Codex Computer Use；应用启动发现、更丰富的无障碍动作及WGC仍需后续实现。原生编译和模拟测试不代表全部真实应用兼容性验证。
+保留现有审批与宿主权限边界，不是隔离桌面。窗口截图已升级为 WGC，PrintWindow 仅作为显式兼容选择，具体设置和测试见下方。应用启动发现、更丰富的无障碍动作和跨应用完成率仍需进一步验证，不能宣称已全面达到 Codex Computer Use。
 
 ## 项目语言
 
@@ -56,3 +63,17 @@ YouTube 公开样本读取到 6 条字幕、20 条评论、4 帧实际画面（�
 合成样本通过 Range 响应验证了实际画面时间戳和音频时长。临时 Windows 编辑器通过激活、控件定位、文字、Ctrl+A、按钮回调与截图测试。部署主服务无需重启检索、语音或 NapCat。验证凭据不提交，也不会自动开放给其他会话。
 
 账号授权还支持 `allowLocalConversations`（默认关闭）和 `privateChatTransports`（默认空）。可授权现有及未来本地／项目对话，或指定平台已启用的私聊入口。群聊必须逐一加入 `conversationIds` 白名单；已移除入口的外部会话不会被误当成本地对话。每个账号在本地配置中独立选择，模型不能扩大授权。
+
+## WGC 截图与操作后检查（2026-10-29）
+
+窗口截图默认改为 Windows Graphics Capture（WGC），要求 Windows 10 2004+ 与首次构建所需的 .NET 8 SDK。可先执行 `pnpm exec tsx scripts/setup-desktop-capture.ts`：首次恢复微软 Windows SDK 引用，之后按源码哈希复用本地编译产物；截图结束释放 D3D 设备。编译后的服务也包含源码与工程文件，不依赖开发机目录。
+
+不自动降级到 PrintWindow 或屏幕截图；显式设置 `captureBackend: "print-window"` 才使用兼容后端。最小化、隐藏、捕获中移动或缩放会报错。受保护内容、安全桌面及应用渲染问题仍可能不可读；`contentVerified: false` 不代表已理解画面。未指定窗口时仍为可见桌面截图。
+
+支持局部裁剪 `region` 和 1–4 倍放大 `scale`，返回坐标换算比例。控件观察补充可用的值、选中文字、选择／切换／展开状态。`observeAfter` 在操作后观察；`condition` 等待指定控件状态，`wait_for` 只观察，不重复输入。控件树被截断时不会据此认定目标不存在；观察失败会保留已发送输入的记录，防止盲目重放。条件匹配不等于整个业务任务完成。
+
+本机通过遮挡目标像素、最小化／无效窗口拒绝，以及 WPF 渲染等级 2 窗口被遮挡后的颜色变化和递增帧时间戳测试。临时编辑器已通过兼容后端的输入、快捷键、控件点击、操作后观察、等待和缩放测试；后续一次前景激活被 Windows 拒绝，未强制突破焦点策略。这不是所有软件兼容性或与 Codex／Claude 完成率相等的证明。
+
+## 页面配置账号范围
+
+入口：**设置 → 视频读取 · 登录账号使用范围**。按账号选择本地／项目、QQ 私聊或具体会话；群聊可按名称逐一勾选，无需手填会话 ID。点面板内“保存此账号范围”立即生效，无需重启。取消单独授权不会覆盖已开启的本地／私聊类别授权。首次 Cookies 文件路径仍保存在本机配置中；页面不读取或显示 Cookie 内容。范围编辑保留凭据路径和运行环境路径，并阻止旧页面覆盖新配置。

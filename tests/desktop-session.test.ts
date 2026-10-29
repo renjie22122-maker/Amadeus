@@ -81,3 +81,97 @@ test('desktop refuses protected elements and invalidates references after input'
     /STALE/,
   );
 });
+
+test('verification polls without replay; truncated absence is never success', async () => {
+  let time = 0,
+    inputs = 0,
+    inspections = 0;
+  const run = createDesktopSession(
+    async (a) => {
+      if (a.action !== 'inspect') {
+        inputs++;
+        return { inputDispatched: true };
+      }
+      inspections++;
+      return {
+        controls: [{ name: 'Result', value: inspections > 1 ? 'done' : 'pending' }],
+        truncated: false,
+      };
+    },
+    () => time,
+    async (ms) => {
+      time += ms;
+    },
+  );
+  const result = await run({
+    action: 'type',
+    windowId: '1',
+    text: 'go',
+    condition: { name: 'Result', value: 'done' },
+  });
+  assert.equal(inputs, 1);
+  assert.equal(result.verification.status, 'matched');
+  assert.ok(result.observation.observationId);
+  const truncated = createDesktopSession(
+    async () => ({ controls: [], truncated: true }),
+    () => time,
+    async (ms) => {
+      time += ms;
+    },
+  );
+  assert.equal(
+    (
+      await truncated({
+        action: 'wait_for',
+        windowId: '1',
+        condition: { name: 'Gone', state: 'absent' },
+        timeoutMs: 500,
+      })
+    ).verification.status,
+    'timeout',
+  );
+  const broken = createDesktopSession(async (a) => {
+    if (a.action === 'inspect') throw Error('closed');
+    return { inputDispatched: true };
+  });
+  const uncertain = await broken({
+    action: 'click',
+    windowId: '1',
+    x: 1,
+    y: 1,
+    observeAfter: true,
+  });
+  assert.equal(uncertain.inputDispatched, true);
+  assert.equal(uncertain.verification.status, 'observation_failed');
+});
+
+test('screenshot crops and zooms with an explicit screen coordinate transform', async () => {
+  const sharp = (await import('sharp')).default;
+  const png = await sharp({
+    create: { width: 100, height: 80, channels: 3, background: '#ff0000' },
+  })
+    .png()
+    .toBuffer();
+  const run = createDesktopSession(async () => ({
+    image: png.toString('base64'),
+    width: 100,
+    height: 80,
+    x: -100,
+    y: 20,
+  }));
+  const result = await run({
+    action: 'screenshot',
+    windowId: '1',
+    region: { x: 10, y: 5, width: 30, height: 20 },
+    scale: 2,
+  });
+  assert.equal(result.x, -90);
+  assert.equal(result.y, 25);
+  assert.equal(result.width, 60);
+  assert.equal(result.scaleX, 2);
+  assert.equal((await sharp(Buffer.from(result.image, 'base64')).metadata()).height, 40);
+  await assert.rejects(
+    run({ action: 'screenshot', region: { x: 90, y: 0, width: 20, height: 20 } }),
+    /REGION/,
+  );
+});

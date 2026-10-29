@@ -1,0 +1,23 @@
+.video-account-settings label {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0;
+}
+.video-account-settings input[type='checkbox'] {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  margin: 3px 0;
+  flex: 0 0 16px;
+}
+.video-account-settings details {
+  margin-top: 16px;
+}
+.video-account-settings summary {
+  cursor: pointer;
+}
+.video-account-settings small {
+  overflow-wrap: anywhere;
+}

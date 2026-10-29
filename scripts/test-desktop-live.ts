@@ -55,7 +55,9 @@ try {
   await expectFile('text.txt', 'Amadeus test 123');
   await run({ action: 'key', windowId, key: 'CTRL+A' });
   await new Promise((r) => setTimeout(r, 150));
-  await run({ action: 'type', windowId, text: 'replacement' });
+  const typed = await run({ action: 'type', windowId, text: 'replacement', observeAfter: true });
+  assert.ok(typed.observation.observationId);
+  assert.equal(typed.inputDispatched, true);
   await expectFile('text.txt', 'replacement');
   state = await run({ action: 'inspect', windowId });
   const button = state.controls.find((c: any) => c.name === 'Test button');
@@ -67,6 +69,20 @@ try {
     elementIndex: button.elementIndex,
   });
   await expectFile('clicked.txt', 'clicked');
+  const waited = await run({
+    action: 'wait_for',
+    windowId,
+    condition: { name: 'Test button', enabled: true },
+  });
+  assert.equal(waited.verification.status, 'matched');
+  const zoom = await run({
+    action: 'screenshot',
+    windowId,
+    region: { x: 0, y: 0, width: 100, height: 100 },
+    scale: 2,
+  });
+  assert.equal(zoom.width, 200);
+  assert.equal(zoom.scaleX, 2);
   const shot = await run({ action: 'screenshot', windowId });
   assert.ok(shot.width > 0 && Buffer.from(shot.image, 'base64').length > 1000);
   console.log(
@@ -79,6 +95,9 @@ try {
         'CTRL+A replacement',
         'button callback',
         'window screenshot',
+        'post-input observation',
+        'condition wait',
+        'crop/zoom coordinate mapping',
       ],
       capture: shot.capture,
     }),

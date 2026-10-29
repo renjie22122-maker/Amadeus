@@ -15,7 +15,7 @@ async function assets(directory) {
   for (const e of await readdir(join(root, directory), { withFileTypes: true })) {
     const relative = join(directory, e.name);
     if (e.isDirectory()) await assets(relative);
-    else if (['.cjs', '.cs', '.ps1', '.py'].includes(extname(e.name))) {
+    else if (['.cjs', '.cs', '.csproj', '.ps1', '.py'].includes(extname(e.name))) {
       await mkdir(resolve(output, relative, '..'), { recursive: true });
       await copyFile(join(root, relative), join(output, relative));
     }

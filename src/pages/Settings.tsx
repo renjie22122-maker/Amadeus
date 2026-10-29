@@ -1,3 +1,4 @@
+import { VideoAccountSettings } from '../components/VideoAccountSettings';
 import { RetrievalSettings } from '../components/RetrievalSettings';
 import { ToolEcosystemSettings } from '../components/ToolEcosystemSettings';
 import { McpConnectionSettings } from '../components/McpConnectionSettings';
@@ -911,6 +912,7 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
             : 'Reuses the selected connection credential only on the same origin. Search is an additional billed model request; missing search evidence is an error. Fetch allows public HTTP(S) only and revalidates redirects.'}
         </p>
       </section>
+      <VideoAccountSettings zh={t('settings') !== 'Settings'} notify={notify} />
       <MediaSettings value={value} setValue={setValue} zh={t('settings') !== 'Settings'} />
       <div className="sticky-actions">
         <button

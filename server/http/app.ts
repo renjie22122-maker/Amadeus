@@ -1,3 +1,4 @@
+import { createVideoAccountSettings } from '../services/video-account-settings.js';
 import { memoryReviewViews } from '../services/memory-conflict-review.js';
 import { ChatConnections } from '../services/chat-connections.js';
 import { mcpRoutes } from './mcp.js';
@@ -1039,6 +1040,20 @@ export async function createApp(options: { directory: string; dist?: string; run
       await rm(folder, { recursive: true, force: true });
     }
   });
+  const videoAccounts = createVideoAccountSettings(directory);
+  app.get('/api/settings/video-accounts', async () => ({
+    ...(await videoAccounts.read()),
+    conversations: store.conversations().map((c) => ({ id: c.id, title: c.title })),
+    connections: store
+      .list<any>('chat-connection')
+      .map((c) => ({
+        conversationId: c.conversationId,
+        transport: c.transport,
+        peerType: c.peerType || 'private',
+        peerId: c.peerId,
+      })),
+  }));
+  app.put('/api/settings/video-accounts', async (req) => videoAccounts.save(req.body));
   app.get('/api/settings', async () => config.public());
   app.put('/api/settings', async (req) => {
     assert(

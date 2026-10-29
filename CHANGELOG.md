@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-29 — WGC and video account settings
+
+Added WGC window capture with explicit compatibility fallback selection, crop/zoom coordinate mapping, richer UIA state and non-replaying post-action checks. Added a scope-only video-account settings panel with per-conversation grants and stale-save protection. Real occluded WPF tier-2 frame updates were verified; see the video/desktop guide for limits.
+
 ## 2026-10-29 — Video reading and desktop observations
 
 Added conversation-scoped Bilibili/YouTube metadata, timed subtitles, comments/dynamics and bounded video/audio reading. Online frame/audio windows use HTTP Range without silent full-video fallback; local files retain FFmpeg caches. Added desktop activation, stale-checked element clicks, key chords and mouse options without changing approval policy. See [video and desktop guide](docs/VIDEO-READING.md) for setup and limitations.

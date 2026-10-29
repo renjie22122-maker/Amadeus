@@ -7,9 +7,14 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Text;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 public class DesktopBridge {
+ delegate bool EnumWindowProc(IntPtr h,IntPtr parameter);
+ [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowProc callback,IntPtr parameter);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h,StringBuilder text,int size);
+ [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h,out uint processId);
  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h,int command);
  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point p);
@@ -48,19 +53,28 @@ public class DesktopBridge {
  static int Run(string[] args) {
   try {SetProcessDPIAware(); var a=json.Deserialize<Dictionary<string,object>>(System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(args[0])));
    string action=Text(a,"action"); var bounds=SystemInformation.VirtualScreen;
-   if(action=="windows"){var windows=new List<object>();foreach(var p in Process.GetProcesses()){try{if(p.MainWindowHandle!=IntPtr.Zero)windows.Add(new {windowId=p.MainWindowHandle.ToInt64().ToString(),title=p.MainWindowTitle,processId=p.Id});}catch{}} Console.WriteLine(json.Serialize(new {windows=windows}));return 0;}
+   if(action=="windows"){var windows=new List<object>();EnumWindows((h,p)=>{if(IsWindowVisible(h)){var title=new StringBuilder(1024);GetWindowText(h,title,title.Capacity);uint pid;GetWindowThreadProcessId(h,out pid);RECT r;if(GetWindowRect(h,out r)&&r.R>r.L&&r.B>r.T)windows.Add(new {windowId=h.ToInt64().ToString(),title=title.ToString(),processId=pid,foreground=h==GetForegroundWindow(),minimized=IsIconic(h),x=r.L,y=r.T,width=r.R-r.L,height=r.B-r.T});}return true;},IntPtr.Zero);Console.WriteLine(json.Serialize(new {windows=windows}));return 0;}
    if(action=="activate"){var h=new IntPtr(Int64.Parse(Text(a,"windowId")));if(!IsWindow(h))throw new Exception("Window unavailable");if(IsIconic(h))ShowWindow(h,9);SetForegroundWindow(h);Thread.Sleep(100);if(GetForegroundWindow()!=h)throw new Exception("ACTIVATION_DENIED: Windows did not grant foreground; no input sent");Console.WriteLine(json.Serialize(new {activated=true,windowId=Text(a,"windowId")}));return 0;}
    if(action=="inspect"){
     var handle=new IntPtr(Int64.Parse(Text(a,"windowId")));if(!IsWindow(handle))throw new Exception("Window unavailable");
-    var root=AutomationElement.FromHandle(handle);var queue=new Queue<AutomationElement>();queue.Enqueue(root);var controls=new List<object>();var timer=Stopwatch.StartNew();
+    var root=AutomationElement.FromHandle(handle);var queue=new Queue<AutomationElement>();queue.Enqueue(root);var controls=new List<object>();var timer=Stopwatch.StartNew();bool incomplete=false;
     while(queue.Count>0 && controls.Count<(a.ContainsKey("maxControls")?Math.Min(1000,Number(a,"maxControls")):300) && timer.ElapsedMilliseconds<3000){
      var element=queue.Dequeue();try{var cur=element.Current;var rect=cur.BoundingRectangle;
-      controls.Add(new {name=cur.IsPassword?"[protected]":cur.Name,runtimeId=element.GetRuntimeId(),focused=cur.HasKeyboardFocus,role=cur.ControlType.ProgrammaticName,automationId=cur.AutomationId,enabled=cur.IsEnabled,password=cur.IsPassword,x=rect.X,y=rect.Y,width=rect.Width,height=rect.Height});
+      object pattern; string value=null, selectedText=null, toggle=null, expanded=null; bool? selected=null; bool readOnly=true;
+      if(!cur.IsPassword){
+       if(element.TryGetCurrentPattern(ValuePattern.Pattern,out pattern)){var v=((ValuePattern)pattern).Current;value=v.Value;if(value!=null&&value.Length>2000)value=value.Substring(0,2000);readOnly=v.IsReadOnly;}
+       if(element.TryGetCurrentPattern(TextPattern.Pattern,out pattern)){var ranges=((TextPattern)pattern).GetSelection();if(ranges.Length>0)selectedText=ranges[0].GetText(2000);}
+       if(element.TryGetCurrentPattern(TogglePattern.Pattern,out pattern))toggle=((TogglePattern)pattern).Current.ToggleState.ToString();
+       if(element.TryGetCurrentPattern(ExpandCollapsePattern.Pattern,out pattern))expanded=((ExpandCollapsePattern)pattern).Current.ExpandCollapseState.ToString();
+       if(element.TryGetCurrentPattern(SelectionItemPattern.Pattern,out pattern))selected=((SelectionItemPattern)pattern).Current.IsSelected;
+      }
+      controls.Add(new {value=value,selectedText=selectedText,readOnly=readOnly,toggle=toggle,expanded=expanded,selected=selected,offscreen=cur.IsOffscreen,name=cur.IsPassword?"[protected]":cur.Name,runtimeId=element.GetRuntimeId(),focused=cur.HasKeyboardFocus,role=cur.ControlType.ProgrammaticName,automationId=cur.AutomationId,enabled=cur.IsEnabled,password=cur.IsPassword,x=rect.X,y=rect.Y,width=rect.Width,height=rect.Height});
       var child=TreeWalker.ControlViewWalker.GetFirstChild(element);
       for(int n=0;child!=null && n<100 && queue.Count<2000;n++){queue.Enqueue(child);child=TreeWalker.ControlViewWalker.GetNextSibling(child);}
-     }catch(ElementNotAvailableException){}
+      if(child!=null)incomplete=true;
+     }catch(ElementNotAvailableException){incomplete=true;}catch(InvalidOperationException){incomplete=true;}
     }
-    Console.WriteLine(json.Serialize(new {windowId=Text(a,"windowId"),controls=controls,truncated=queue.Count>0,source="UI Automation"}));return 0;
+    Console.WriteLine(json.Serialize(new {windowId=Text(a,"windowId"),controls=controls,truncated=incomplete||queue.Count>0,source="UI Automation"}));return 0;
    }
    if(action=="cursor"){Console.WriteLine(json.Serialize(new {x=Cursor.Position.X,y=Cursor.Position.Y}));return 0;}
    if(action=="screenshot"){
@@ -110,7 +124,7 @@ public class DesktopBridge {
    }
    else if(action=="scroll"){int delta=Number(a,"delta");if(Math.Abs(delta)>1200)throw new Exception("Scroll too large");CheckTarget(a);var point=Cursor.Position;if(!bounds.Contains(point)||GetAncestor(WindowFromPoint(point),2)!=new IntPtr(Int64.Parse(Text(a,"windowId"))))throw new Exception("Scroll cursor is outside or covered; move inside target first");mouse_event(a.ContainsKey("horizontal")&&Convert.ToBoolean(a["horizontal"])?4096u:2048u,0,0,unchecked((uint)delta),UIntPtr.Zero);}
    else throw new Exception("Unsupported action");
-   Console.WriteLine(json.Serialize(new {completed=true,action=action}));return 0;
+   Console.WriteLine(json.Serialize(new {completed=true,inputDispatched=true,applicationEffectVerified=false,action=action}));return 0;
   }catch(Exception e){Console.Error.WriteLine(e.Message);return 1;}
  }
 }

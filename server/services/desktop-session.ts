@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 export const computerActionSchema = {
@@ -15,7 +16,38 @@ export const computerActionSchema = {
     'scroll',
     'drag',
     'click_element',
+    'wait_for',
   ]),
+  captureBackend: z.enum(['wgc', 'print-window']).default('wgc'),
+  region: z
+    .object({
+      x: z.number().int().min(0),
+      y: z.number().int().min(0),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+    })
+    .strict()
+    .optional(),
+  scale: z.number().min(1).max(4).default(1),
+  observeAfter: z.boolean().default(false),
+  condition: z
+    .object({
+      name: z.string().max(500).optional(),
+      automationId: z.string().max(500).optional(),
+      role: z.string().max(100).optional(),
+      value: z.string().max(2000).optional(),
+      enabled: z.boolean().optional(),
+      focused: z.boolean().optional(),
+      selected: z.boolean().optional(),
+      state: z.enum(['present', 'absent']).default('present'),
+    })
+    .strict()
+    .refine(
+      (c) => Boolean(c.name || c.automationId || c.role),
+      'Identify a control by name, automationId or role',
+    )
+    .optional(),
+  timeoutMs: z.number().int().min(0).max(10000).default(3000),
   windowId: z
     .string()
     .regex(/^[0-9]+$/)
@@ -42,13 +74,74 @@ export const computerActionSchema = {
 export function createDesktopSession(
   native: (args: Record<string, unknown>) => Promise<any>,
   now = Date.now,
+  sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
 ) {
   const observations = new Map<string, { at: number; windowId: string; controls: any[] }>();
+  function remember(result: any, windowId: string) {
+    const id = randomUUID();
+    if (observations.size >= 8) observations.delete(observations.keys().next().value!);
+    observations.set(id, { at: now(), windowId, controls: result.controls });
+    return {
+      ...result,
+      observationId: id,
+      expiresInSeconds: 60,
+      controls: result.controls.map((e: any, elementIndex: number) => ({ ...e, elementIndex })),
+    };
+  }
+  async function observe(windowId: string, maxControls: number) {
+    return remember(await native({ action: 'inspect', windowId, maxControls }), windowId);
+  }
   return async (raw: unknown) => {
     const a = z.object(computerActionSchema).strict().parse(raw);
     if (!['windows', 'cursor', 'screenshot'].includes(a.action) && !a.windowId)
       throw Error('DESKTOP_TARGET: select a window from windows first.');
     for (const [id, v] of observations) if (now() - v.at > 60_000) observations.delete(id);
+    if (a.region && a.action !== 'screenshot')
+      throw Error('DESKTOP_REGION: region only applies to screenshots.');
+    if (a.action === 'wait_for' && !a.condition)
+      throw Error('DESKTOP_CONDITION: wait_for requires an explicit condition.');
+    async function finish(result: any) {
+      const started = now();
+      if (!a.condition && !a.observeAfter) return result;
+      try {
+        do {
+          const observation = await observe(a.windowId!, a.maxControls);
+          if (!a.condition) return { ...result, observation, applicationEffectVerified: false };
+          const { state, ...match } = a.condition;
+          const found = observation.controls.some(
+            (e: any) => !e.password && Object.entries(match).every(([k, v]) => e[k] === v),
+          );
+          const satisfied = state === 'absent' ? !found && !observation.truncated : found;
+          if (satisfied)
+            return {
+              ...result,
+              verification: {
+                status: 'matched',
+                elapsedMs: now() - started,
+                condition: a.condition,
+              },
+              observation,
+            };
+          if (now() - started >= a.timeoutMs)
+            return {
+              ...result,
+              verification: { status: 'timeout', elapsedMs: now() - started },
+              observation,
+              guidance:
+                'Condition not confirmed. Inspect before deciding what to do; no input was replayed.',
+            };
+          await sleep(Math.min(250, Math.max(0, a.timeoutMs - (now() - started))));
+        } while (true);
+      } catch {
+        return {
+          ...result,
+          verification: { status: 'observation_failed' },
+          guidance:
+            'Observation failed after dispatch. Effect may have occurred; do not replay automatically.',
+        };
+      }
+    }
+    if (a.action === 'wait_for') return finish({ action: a.action, inputDispatched: false });
     if (a.action === 'click_element') {
       const saved = a.observationId && observations.get(a.observationId);
       if (!saved || saved.windowId !== a.windowId || a.elementIndex === undefined)
@@ -70,13 +163,15 @@ export function createDesktopSession(
       if (current.width <= 0 || current.height <= 0)
         throw Error('DESKTOP_ELEMENT: control has no visible bounds.');
       observations.clear();
-      return native({
-        action: 'click',
-        windowId: a.windowId,
-        button: a.button,
-        x: Math.round(current.x + current.width / 2),
-        y: Math.round(current.y + current.height / 2),
-      });
+      return finish(
+        await native({
+          action: 'click',
+          windowId: a.windowId,
+          button: a.button,
+          x: Math.round(current.x + current.width / 2),
+          y: Math.round(current.y + current.height / 2),
+        }),
+      );
     }
     if (
       ['click', 'double_click', 'move', 'drag'].includes(a.action) &&
@@ -92,17 +187,37 @@ export function createDesktopSession(
       throw Error('DESKTOP_SCROLL: delta required.');
     if (!['windows', 'cursor', 'screenshot', 'inspect'].includes(a.action)) observations.clear();
     const result = await native(a);
-    if (a.action === 'inspect') {
-      const id = randomUUID();
-      if (observations.size >= 8) observations.delete(observations.keys().next().value!);
-      observations.set(id, { at: now(), windowId: a.windowId!, controls: result.controls });
+    if (a.action === 'inspect') return remember(result, a.windowId!);
+    if (a.action === 'screenshot' && (a.region || a.scale !== 1)) {
+      const region = a.region || { x: 0, y: 0, width: result.width, height: result.height };
+      if (
+        region.x + region.width > result.width ||
+        region.y + region.height > result.height ||
+        region.width * region.height * a.scale * a.scale > 16000000
+      )
+        throw Error('DESKTOP_REGION: crop exceeds capture or output exceeds 16 million pixels.');
+      const width = Math.round(region.width * a.scale),
+        height = Math.round(region.height * a.scale);
+      const image = await sharp(Buffer.from(result.image, 'base64'))
+        .extract({ left: region.x, top: region.y, width: region.width, height: region.height })
+        .resize(width, height)
+        .png()
+        .toBuffer();
       return {
         ...result,
-        observationId: id,
-        expiresInSeconds: 60,
-        controls: result.controls.map((e: any, index: number) => ({ ...e, elementIndex: index })),
+        image: image.toString('base64'),
+        x: result.x + region.x,
+        y: result.y + region.y,
+        width,
+        height,
+        screenWidth: region.width,
+        screenHeight: region.height,
+        scaleX: width / region.width,
+        scaleY: height / region.height,
+        coordinates: 'screenX = x + imageX / scaleX; screenY = y + imageY / scaleY',
       };
     }
-    return result;
+    if (['windows', 'cursor', 'screenshot'].includes(a.action)) return result;
+    return finish(result);
   };
 }

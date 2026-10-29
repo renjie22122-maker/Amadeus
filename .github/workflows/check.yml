@@ -30,6 +30,12 @@ jobs:
       - run: python evals/full-suite/test_attempt_state.py
       - run: pnpm check:docs
       - run: pnpm check
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Windows'
+        with:
+          dotnet-version: '8.0.x'
+      - run: pnpm exec tsx scripts/setup-desktop-capture.ts
+        if: runner.os == 'Windows'
       - run: pnpm test
       - run: pnpm build
       - run: node scripts/smoke-server.mjs

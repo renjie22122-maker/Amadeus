@@ -1,3 +1,4 @@
+import { captureWindow } from './desktop-capture.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -82,6 +83,8 @@ async function compile() {
   return target;
 }
 export async function desktopAction(action: Record<string, unknown>) {
+  if (action.action === 'screenshot' && action.windowId && action.captureBackend !== 'print-window')
+    return captureWindow(String(action.windowId));
   building ||= compile().catch((e) => {
     building = undefined;
     throw e;

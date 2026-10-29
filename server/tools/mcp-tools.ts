@@ -34,7 +34,7 @@ export function installMcp(registry: ToolRegistry) {
         browser:
           'Prefer owned browser tabs for web interactions. They do not depend on desktop focus. No browser adapter listed means unconfigured, not unsupported.',
         desktop:
-          'Desktop input requires the target already foreground after approval; do not click other windows to force focus. PrintWindow may omit GPU content. Browser screenshots use page rendering.',
+          'Desktop input requires the target already foreground after approval; do not click other windows to force focus. Window screenshots default to WGC; explicit PrintWindow compatibility capture may omit GPU content. Screenshot success does not prove task success. Browser screenshots use page rendering.',
         permissionsGranted: false,
       }),
   });

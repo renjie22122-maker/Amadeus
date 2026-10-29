@@ -1,3 +1,4 @@
+import { createDesktopSession } from '../server/services/desktop-session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
@@ -53,14 +54,25 @@ test(
         }
       }
       assert.ok(state, 'Fixture must start');
-      assert.deepEqual(
+      assert.notDeepEqual(
         state.visible,
-        [30, 70, 220],
-        'Target center really is covered by blue window',
+        [220, 30, 40],
+        'Target is covered; foreground pixels are not the red target',
       );
       const shot = await desktopAction({ action: 'screenshot', windowId: state.target });
-      assert.equal(shot.capture, 'window-print');
+      assert.equal(shot.capture, 'windows-graphics-capture');
       assert.equal(shot.contentVerified, false);
+      const zoom = await createDesktopSession(desktopAction)({
+        action: 'screenshot',
+        windowId: state.target,
+        region: { x: 40, y: 40, width: 100, height: 100 },
+        scale: 2,
+      });
+      assert.equal(zoom.capture, 'windows-graphics-capture');
+      assert.equal(zoom.width, 200);
+      assert.equal(zoom.scaleX, 2);
+      assert.equal(zoom.x, shot.x + 40);
+      assert.equal(zoom.y, shot.y + 40);
       const pixel = await sharp(Buffer.from(shot.image, 'base64'))
         .extract({
           left: Math.floor(shot.width / 2),
