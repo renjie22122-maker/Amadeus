@@ -97,7 +97,7 @@ export class MemoryLifecycle {
       !!m.evidence?.length &&
       !!m.conditions?.trim() &&
       m.evidence.every((e) => {
-        const event = this.store.events(e.conversationId).find((x) => x.id === e.eventId);
+        const event = this.store.eventById(e.conversationId, e.eventId);
         const conversation = this.store.maybe<any>('conversation', e.conversationId);
         const scope = conversation ? conversationMemoryScope(conversation) : 'user';
         return (
@@ -582,7 +582,7 @@ export class MemoryLifecycle {
         expired: !!m.expiresAt && m.expiresAt <= Date.now(),
         missingSource:
           !!m.sourceConversationId &&
-          !this.store.events(m.sourceConversationId).some((e) => e.id === m.sourceEventId),
+          !this.store.eventById(m.sourceConversationId, m.sourceEventId!),
         conflicts: this.conflicts(m).map((x) => x.id),
         duplicates: entries
           .filter(

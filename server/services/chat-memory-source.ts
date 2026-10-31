@@ -63,6 +63,42 @@ export function chatMemorySources(store: Store, conversationId: string): MemoryS
     })),
   ].sort((a, b) => a.id - b.id);
 }
+/** Resolve only the requested receipt, with the same legacy attribution rules as the full reader. */
+export function chatMemorySource(
+  store: Store,
+  conversationId: string,
+  eventId: number,
+): MemorySource | undefined {
+  const e = store.eventById(conversationId, eventId);
+  if (!e) return;
+  if (e.type === 'chat.memory-source' && e.data.senderId && typeof e.data.text === 'string')
+    return {
+      id: e.id,
+      at: e.data.receivedAt || e.createdAt,
+      text: e.data.text,
+      sender: String(e.data.senderId),
+      peerType: e.data.peerType,
+    };
+  if (e.type !== 'user.message' || e.data.scheduledTrigger || !e.runId) return;
+  const origin = store
+    .eventsForRun(e.runId, ['chat.origin'])
+    .filter(
+      (o) =>
+        o.conversationId === conversationId &&
+        o.data.senderId &&
+        !o.data.sourceEventIds?.length &&
+        Array.isArray(o.data.memoryMessages),
+    )
+    .at(-1)?.data;
+  if (!origin) return;
+  return {
+    id: e.id,
+    at: e.createdAt,
+    text: origin.memoryMessages.filter((x: unknown) => typeof x === 'string').join('\n'),
+    sender: String(origin.senderId),
+    peerType: origin.peerType,
+  };
+}
 export function recordChatMemorySource(store: Store, c: ChatConnection, m: ChatIncoming) {
   const conversation = store.maybe<Conversation>('conversation', c.conversationId);
   if (

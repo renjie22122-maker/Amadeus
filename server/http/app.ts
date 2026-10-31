@@ -134,13 +134,10 @@ export async function createApp(options: { directory: string; dist?: string; run
     return { csrf, version: '0.1.0', settings: config.public() };
   });
   const state = (shell = false) => ({
-    pendingInputs: store
-      .list<any>('input')
-      .filter((q) => q.status === 'pending')
-      .map((q) => ({
-        ...q,
-        title: store.get<Conversation>('conversation', q.conversationId)?.title,
-      })),
+    pendingInputs: store.pendingInputs().map((q) => ({
+      ...q,
+      title: store.get<Conversation>('conversation', q.conversationId)?.title,
+    })),
     conversations: store.conversations(),
     projects: store.list('project'),
     runs: store.runMetadata().map((run) => stateRun(run, shell)),

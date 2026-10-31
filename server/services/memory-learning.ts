@@ -312,6 +312,8 @@ export class MemoryLearning {
       .list<Conversation>('conversation')
       .sort((a, b) => (lastAttempts.get(a.id) || 0) - (lastAttempts.get(b.id) || 0));
     for (const c of conversations) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (this.controller.signal.aborted) return;
       if (!this.ready(c, now)) continue;
       const scope = conversationMemoryScope(c),
         isolated = scope.startsWith('chat:');

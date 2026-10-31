@@ -84,6 +84,32 @@ export class Store {
       { data: string } | undefined;
     return row ? { ...parseStored(row.data, 'run', key), checkpoints: [] } : undefined;
   }
+  /** Exact scoped provenance lookup; never deserialize unrelated conversation history. */
+  eventById(conversationId: string, eventId: number): AgentEvent | undefined {
+    if (!Number.isSafeInteger(eventId) || eventId <= 0) return undefined;
+    const row = this.db
+      .prepare('SELECT * FROM events WHERE conversation_id=? AND id=?')
+      .get(conversationId, eventId) as any;
+    return row
+      ? {
+          id: row.id,
+          conversationId: row.conversation_id,
+          runId: row.run_id,
+          type: row.type,
+          data: parseStored(row.data, 'event', String(row.id)),
+          createdAt: row.created_at,
+        }
+      : undefined;
+  }
+  pendingInputs(): PendingInput[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT id,data FROM records WHERE kind='input' AND json_extract(data,'$.status')='pending'",
+        )
+        .all() as { id: string; data: string }[]
+    ).map((row) => parseStored(row.data, 'input', row.id));
+  }
   /** Filter before decoding payloads; optional tail stays chronological. */
   selectedEvents(conversationId: string, types: string[], limit?: number): AgentEvent[] {
     if (!types.length) return [];

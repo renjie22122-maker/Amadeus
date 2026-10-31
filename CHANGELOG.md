@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-31 — Responsive memory provenance checks
+
+Memory evidence and source-presence checks use conversation-scoped event lookups instead of decoding entire histories. Bot setting evidence retains legacy attribution rules with targeted receipt reads. Background memory sweeps yield between conversations, and UI state queries decode only pending inputs. Real read-only corpus measurement (417 memories) reduced evidence validation from 11,866 ms to 14 ms; this is a component measurement, not an end-to-end UI latency guarantee.
+
 ## 2026-10-31 — Reuse selected knowledge in projects
 
 Projects can explicitly import current document snapshots from existing libraries, preserving source provenance and valid compatible vectors without repeated parsing or embedding calls. Repeated transfers are idempotent; incompatible vectors remain pending. Retrieval stays isolated and copies can be removed independently.
