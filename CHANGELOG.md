@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-31 — Automatic scoped sticker curation
+
+Added incremental background reaction-image review and native collection, durable deduplication and deletion exclusions, bounded retries and visible maintenance states. Connected-chat replies receive optional contextual sticker candidates with successful-use history; conversation isolation is preserved.
+
 ## 2026-10-29 — Reliable account saves and continuous desktop input
 
 Unified account-panel and global settings saves, added scoped video-access diagnostics, native UIA actions and screenshot-bound clicks. Mouse input now follows a continuous eased path with interruption and stale-window checks.

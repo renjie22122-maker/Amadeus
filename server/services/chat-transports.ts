@@ -1,5 +1,6 @@
+import { ChatStickerMaintenance } from './chat-sticker-maintenance.js';
 import { saveNativeFavorite, favoriteBytes, favoriteDetails } from './chat-native-favorites.js';
-import { saveChatSticker, stickerReferences } from './chat-stickers.js';
+import { saveChatSticker, stickerReferences, recordStickerUse } from './chat-stickers.js';
 import { ChatSendRejected, onebotSendError, chatSendRetry } from './chat-send-error.js';
 import { forwardPage } from './chat-rich.js';
 import {
@@ -90,8 +91,14 @@ export class ChatTransports {
     );
   }
   private friends: ChatFriendReview;
+  private stickerMaintenance: ChatStickerMaintenance;
   constructor(readonly channels: ChatConnections) {
     this.friends = new ChatFriendReview(channels);
+    this.stickerMaintenance = new ChatStickerMaintenance(channels, {
+      query: (c, k) => this.queryChat(c, k),
+      importMedia: (c, m) => this.importChatMedia(c, m),
+      saveSticker: (c, a) => this.saveFavoriteSticker(c, a),
+    });
     installDeliveryReceipts(channels.store);
     registerChatInteraction(channels, {
       query: (c, k) => this.queryChat(c, k),
@@ -623,6 +630,7 @@ export class ChatTransports {
     }
   }
   start() {
+    this.stickerMaintenance.start();
     this.timer = setInterval(() => {
       try {
         this.tick();
@@ -659,6 +667,7 @@ export class ChatTransports {
   }
   async close() {
     this.closed = true;
+    await this.stickerMaintenance.close();
     clearInterval(this.timer);
     for (const s of this.sessions.values()) this.stop(s);
     for (const server of this.webhooks.values()) {
@@ -1674,8 +1683,10 @@ export class ChatTransports {
 
     this.channels.store.db.prepare("UPDATE chat_outbox SET state='sending' WHERE id=?").run(row.id);
     try {
-      if (row.reference) await this.sendMedia(c, s, row);
-      else {
+      if (row.reference) {
+        await this.sendMedia(c, s, row);
+        recordStickerUse(this.channels.store, c, row.reference, row.id);
+      } else {
         const result = await this.send(c, s, row);
         deliveryReceipt(this.channels.store, c, row, result?.message_id);
       }

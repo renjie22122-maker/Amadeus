@@ -8,7 +8,12 @@ type Entry = {
   available: boolean;
   native?: { state: string };
 };
-type Library = { items: Entry[]; total: number; capabilities: { favoritesImport: boolean } };
+type Library = {
+  maintenance?: { state: string; at: number };
+  items: Entry[];
+  total: number;
+  capabilities: { favoritesImport: boolean };
+};
 export function ChatStickerLibrary({
   id,
   zh,
@@ -63,6 +68,23 @@ export function ChatStickerLibrary({
             ? 'QQ 中保存到「表情 → 我的收藏」，本地库保留缓存。发送优先读取 QQ 收藏，失败用缓存。名称和标签便于检索，不代表模型已经看过图片。'
             : 'Save to QQ favorite stickers, retaining a local cache. Delivery prefers QQ favorites with local fallback. Labels do not replace inspecting images.'}
       </p>
+      {data?.maintenance && (
+        <p role="status">
+          {zh ? '后台整理' : 'Background curation'}:{' '}
+          {(
+            {
+              idle: zh ? '已检查，等待新图片' : 'Waiting for new images',
+              processing: zh ? '正在识别整理' : 'Reviewing',
+              retry: zh ? '暂时失败，将有限重试' : 'Retry pending',
+              needs_attention: zh ? '重试已用尽，请检查' : 'Retries exhausted',
+              waiting_vision_model: zh
+                ? '当前模型未声明识图能力'
+                : 'Current model has no vision support',
+            } as Record<string, string>
+          )[data.maintenance.state] || data.maintenance.state}{' '}
+          · {new Date(data.maintenance.at).toLocaleString()}
+        </p>
+      )}
       <div className="row">
         <input
           aria-label={zh ? '搜索表情' : 'Search stickers'}
