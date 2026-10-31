@@ -7,7 +7,50 @@
     <title>Amadeus</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div
+        role="status"
+        style="
+          min-height: 90vh;
+          display: grid;
+          place-content: center;
+          text-align: center;
+          background: #111216;
+          color: #eee;
+          font: 16px system-ui;
+        "
+      >
+        <span class="boot-spinner" aria-hidden="true"></span>
+        <p>正在打开 Amadeus · Opening Amadeus</p>
+        <p style="color: #aaa; font-size: 13px">正在加载界面，请稍候 · Loading the interface</p>
+      </div>
+    </div>
+    <style>
+      body {
+        margin: 0;
+        background: #111216;
+      }
+      .boot-spinner {
+        display: block;
+        width: 30px;
+        height: 30px;
+        margin: 0 auto;
+        border: 3px solid #353642;
+        border-top-color: #b49aff;
+        border-radius: 50%;
+        animation: boot-spin 1s linear infinite;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-spinner {
+          animation: none;
+        }
+      }
+    </style>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

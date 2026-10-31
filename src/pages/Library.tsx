@@ -1,3 +1,4 @@
+import { KnowledgeReuse } from '../components/KnowledgeReuse';
 import { conversationMemoryScope } from '../../shared/memory-scope';
 import { DocumentBrowser } from '../components/DocumentBrowser';
 import { MemoryCreate } from '../components/MemoryCreate';
@@ -125,6 +126,18 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
                 }}
               />
             </div>
+            {scope.startsWith('project:') && (
+              <KnowledgeReuse
+                key={scope}
+                scope={scope}
+                documents={state.documents || []}
+                projects={state.projects}
+                conversations={selectable}
+                zh={t('settings') !== 'Settings'}
+                refresh={refresh}
+                notify={notify}
+              />
+            )}
             <KnowledgeAutomation
               key={scope}
               onStatus={setIndexStatuses}

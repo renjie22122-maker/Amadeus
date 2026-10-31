@@ -3,6 +3,9 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
 $taskUrl = 'http://127.0.0.1:8810'
 . (Join-Path $taskRoot 'Launcher.Common.ps1')
+$taskData = if ($env:AGENTDEMO_DATA_DIR) { $env:AGENTDEMO_DATA_DIR } else { Join-Path $taskRoot '.data' }
+Write-Host 'Opening Amadeus: checking local services...'
+Write-Progress -Id 81 -Activity 'Opening Amadeus' -Status 'Checking local RAG and voice services' -PercentComplete -1
 if (Test-Path (Join-Path $(if ($env:AGENTDEMO_DATA_DIR) { $env:AGENTDEMO_DATA_DIR } else { Join-Path $taskRoot '.data' }) 'retrieval-service/config.json')) {
     try { & (Join-Path $taskRoot 'Start-Local-RAG.ps1') -NoWait }
     catch { Write-Warning ("Optional local RAG did not start: " + $_.Exception.Message) }
@@ -11,9 +14,15 @@ if (Test-Path (Join-Path $(if ($env:AGENTDEMO_DATA_DIR) { $env:AGENTDEMO_DATA_DI
     try { & (Join-Path $taskRoot 'Start-Local-Voice.ps1') -NoWait }
     catch { Write-Warning ("Optional local voice did not start: " + $_.Exception.Message) }
 }
-$taskHealth = $null
-try { $taskHealth = Invoke-RestMethod "$taskUrl/api/health" -TimeoutSec 2 } catch {}
-if ($taskHealth.application -in @('Amadeus', 'AgentDemo')) {
+Write-Progress -Id 81 -Activity 'Opening Amadeus' -Status 'Checking main service' -PercentComplete -1
+$taskReady = Test-AmadeusHealth $taskUrl
+if (-not $taskReady -and (Test-AmadeusSupervisor $taskData)) {
+    Write-Host 'An existing supervisor is running. Waiting for the service; no duplicate will be started.'
+    $taskReady = Wait-AmadeusHealth $taskUrl
+    if (-not $taskReady) { throw "An existing process owns $taskData/supervisor.lock, but Amadeus is not responding. No duplicate was started and no process was stopped. Check $taskData/logs." }
+}
+if ($taskReady) {
+        Write-Progress -Id 81 -Activity 'Opening Amadeus' -Completed
         if (-not (Test-AgentDemoStamp (Join-Path $taskRoot 'dist/.agentdemo-build') (Get-AgentDemoFingerprint $taskRoot))) {
             Write-Warning 'Local files have changed since the last build. Stop the running service when your tasks are finished, then run this launcher again to apply updates. Opening the existing service does not reload it.'
         }
@@ -31,6 +40,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $taskRoot 'node_modules/tsx')) -or
 if (-not (Test-Path -LiteralPath (Join-Path $taskRoot 'build/server/main.js')) -or
     -not (Test-Path -LiteralPath (Join-Path $taskRoot 'dist/index.html')) -or
     -not (Test-AgentDemoStamp (Join-Path $taskRoot 'dist/.agentdemo-build') (Get-AgentDemoFingerprint $taskRoot))) {
+    Write-Host 'Preparing updated application files; this may take a few minutes...'
+    Write-Progress -Id 81 -Activity 'Opening Amadeus' -Status 'Building application' -PercentComplete -1
     Push-Location $taskRoot
     try {
         & $taskNode node_modules/typescript/bin/tsc --noEmit
@@ -46,20 +57,29 @@ $taskData = if ($env:AGENTDEMO_DATA_DIR) { $env:AGENTDEMO_DATA_DIR } else { Join
 $taskLogs = Join-Path $taskData 'logs'
 New-Item -ItemType Directory -Force -Path $taskLogs | Out-Null
 $taskLogStamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+Write-Host 'Starting main service and waiting for readiness...'
 $taskSupervisor = Start-Process -PassThru -FilePath $taskNode -ArgumentList @('scripts/supervisor.mjs') -WorkingDirectory $taskRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $taskLogs "supervisor-$taskLogStamp.stdout.log") -RedirectStandardError (Join-Path $taskLogs "supervisor-$taskLogStamp.stderr.log")
 $taskReady = $false
 $taskWait = [Diagnostics.Stopwatch]::StartNew()
 while ($taskWait.Elapsed.TotalSeconds -lt 90) {
+    Write-Progress -Id 81 -Activity 'Opening Amadeus' -Status ("Waiting for readiness... {0}s" -f [int]$taskWait.Elapsed.TotalSeconds) -PercentComplete -1
     Start-Sleep -Milliseconds 250
     try {
         $taskHealth = Invoke-RestMethod "$taskUrl/api/health" -TimeoutSec 1
         if ($taskHealth.application -in @('Amadeus', 'AgentDemo')) { $taskReady = $true; break }
     } catch {}
     if ($taskSupervisor.HasExited) {
+        if (Test-AmadeusSupervisor $taskData) {
+            Write-Host 'Another launcher already started the supervisor. Waiting for that service...'
+            $taskReady = Wait-AmadeusHealth $taskUrl
+            if ($taskReady) { break }
+        }
+        Write-Progress -Id 81 -Activity 'Opening Amadeus' -Completed
         $taskFailure = Get-Content -LiteralPath (Join-Path $taskLogs "supervisor-$taskLogStamp.stderr.log") -Tail 8 -ErrorAction SilentlyContinue
         throw ("Amadeus supervisor exited. " + ($taskFailure -join "`n") + "`nCheck $taskLogs")
     }
 }
+Write-Progress -Id 81 -Activity 'Opening Amadeus' -Completed
 if (-not $taskReady) { throw "Amadeus did not become ready. Check $taskLogs" }
 if (-not $NoBrowser) { Start-Process $taskUrl }
 Write-Host "Amadeus is ready at $taskUrl"

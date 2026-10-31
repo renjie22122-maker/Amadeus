@@ -4,6 +4,14 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-31 — Reuse selected knowledge in projects
+
+Projects can explicitly import current document snapshots from existing libraries, preserving source provenance and valid compatible vectors without repeated parsing or embedding calls. Repeated transfers are idempotent; incompatible vectors remain pending. Retrieval stays isolated and copies can be removed independently.
+
+## 2026-10-31 — Startup feedback / 启动反馈
+
+Startup now shows launch phases and elapsed readiness waiting, reuses live supervisors during slow responses, and displays an animated browser loading screen with a reconnect action. Existing services are never stopped by readiness checks.
+
 ## 2026-10-31 — Deterministic memory retry scheduling tests
 
 Memory maintenance now uses an injectable clock consistently. Regression coverage simulates a slow failed extraction, verifies the full delay after failure, then verifies batch reduction and completion of every unfinished source without replaying completed sources. This fixes a Windows CI timing race without shortening production backoff or weakening completion assertions.

@@ -79,3 +79,31 @@ function Get-AmadeusPackageManager([string]$Node) {
     }
     throw "Node found at $Node, but npm or pnpm 11.19.0 was not found in PATH or beside this runtime. Install the official Node.js 24+ distribution including npm, then reopen First Start."
 }
+
+# Readiness is separate from process existence: a busy server is not a cold start.
+function Test-AmadeusHealth([string]$Url) {
+    try {
+        $taskHealth = Invoke-RestMethod "$Url/api/health" -TimeoutSec 2
+        return ($taskHealth.application -in @('Amadeus', 'AgentDemo') -and $taskHealth.ready -eq $true)
+    } catch { return $false }
+}
+function Wait-AmadeusHealth([string]$Url, [int]$TimeoutSeconds = 120) {
+    $taskWatch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        while ($taskWatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+            Write-Progress -Id 81 -Activity 'Opening Amadeus' -Status ("Waiting for the service to respond... {0}s. Do not launch again." -f [int]$taskWatch.Elapsed.TotalSeconds) -PercentComplete -1
+            if (Test-AmadeusHealth $Url) { return $true }
+            Start-Sleep -Milliseconds 250
+        }
+        return $false
+    } finally { Write-Progress -Id 81 -Activity 'Opening Amadeus' -Completed }
+}
+function Test-AmadeusSupervisor([string]$Data) {
+    $taskLockPath = Join-Path $Data 'supervisor.lock'
+    if (-not (Test-Path -LiteralPath $taskLockPath)) { return $false }
+    try {
+        $taskLock = Get-Content -LiteralPath $taskLockPath -Raw | ConvertFrom-Json
+        $taskOwner = Get-Process -Id ([int]$taskLock.pid) -ErrorAction Stop
+        return ($null -ne $taskOwner)
+    } catch { return $false }
+}

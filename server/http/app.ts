@@ -807,6 +807,26 @@ export async function createApp(options: { directory: string; dist?: string; run
       store.maybe('retrieval-evaluation', req.query.scope) || { status: 'needs_labels', cases: 0 }
     );
   });
+  app.post('/api/knowledge/reuse', async (req) => {
+    const data = z
+      .object({
+        sourceId: z.string().min(1),
+        sourceScope: z.string().min(1),
+        targetScope: z.string().min(1),
+      })
+      .parse(req.body);
+    checkScope(data.sourceScope);
+    checkScope(data.targetScope);
+    const project =
+      data.targetScope.startsWith('project:') &&
+      store.maybe<any>('project', data.targetScope.slice(8));
+    assert(
+      project && !project.removedAt,
+      'DOCUMENT_SCOPE',
+      'Select an active destination project.',
+    );
+    return runtime.knowledge.reuse(data.sourceId, data.sourceScope, data.targetScope);
+  });
   app.post('/api/knowledge/text', async (req) => {
     const data = z
       .object({
@@ -1044,14 +1064,12 @@ export async function createApp(options: { directory: string; dist?: string; run
   app.get('/api/settings/video-accounts', async () => ({
     ...(await videoAccounts.read()),
     conversations: store.conversations().map((c) => ({ id: c.id, title: c.title })),
-    connections: store
-      .list<any>('chat-connection')
-      .map((c) => ({
-        conversationId: c.conversationId,
-        transport: c.transport,
-        peerType: c.peerType || 'private',
-        peerId: c.peerId,
-      })),
+    connections: store.list<any>('chat-connection').map((c) => ({
+      conversationId: c.conversationId,
+      transport: c.transport,
+      peerType: c.peerType || 'private',
+      peerId: c.peerId,
+    })),
   }));
   app.put('/api/settings/video-accounts', async (req) => videoAccounts.save(req.body));
   app.get('/api/settings', async () => config.public());

@@ -265,6 +265,92 @@ export class Knowledge {
     });
     return this.store.get('document', key);
   }
+  /** Explicit local transfer of a version snapshot; never broadens retrieval scopes. */
+  reuse(sourceId: string, sourceScope: string, targetScope: string) {
+    assert(sourceScope !== targetScope, 'DOCUMENT_SCOPE', 'Select a different destination scope.');
+    const source = this.store.get<any>('document', sourceId);
+    assert(
+      source.scope === sourceScope && documentAt(source, Date.now()),
+      'DOCUMENT_SCOPE',
+      'Source must be a current document in the selected library.',
+    );
+    const existing = this.store
+      .list<any>('document')
+      .find(
+        (d) =>
+          d.scope === targetScope &&
+          documentAt(d, Date.now()) &&
+          d.reusedFrom?.documentId === source.id &&
+          d.reusedFrom?.hash === source.hash,
+      );
+    if (existing)
+      return { document: existing, alreadyPresent: true, ...this.indexStatus(existing.id) };
+    const rows = this.store.db
+      .prepare('SELECT * FROM chunks WHERE document_id=? AND scope=? ORDER BY ordinal')
+      .all(source.id, sourceScope) as any[];
+    assert(rows.length, 'EMPTY_DOCUMENT', 'Source has no readable chunks.');
+    const key = id(),
+      now = Date.now(),
+      fingerprint = this.embeddings?.fingerprint();
+    let reusedVectors = 0;
+    this.store.transaction(() => {
+      this.store.put('document', {
+        id: key,
+        scope: targetScope,
+        name: source.name,
+        characters: source.characters,
+        hash: source.hash,
+        source: source.source || source.name,
+        createdAt: now,
+        validFrom: now,
+        validUntil: null,
+        familyId: key,
+        version: 1,
+        publishedAt: source.publishedAt,
+        reusedFrom: {
+          documentId: source.id,
+          scope: sourceScope,
+          hash: source.hash,
+          version: source.version || 1,
+          at: now,
+        },
+      });
+      for (const row of rows) {
+        const chunk = id();
+        const vector =
+          fingerprint && row.source_hash === source.hash
+            ? vectorRecord(row.vector, fingerprint)
+            : undefined;
+        if (vector) reusedVectors++;
+        this.store.db
+          .prepare(
+            'INSERT INTO chunks(id,scope,document_id,name,ordinal,text,source_hash,vector) VALUES(?,?,?,?,?,?,?,?)',
+          )
+          .run(
+            chunk,
+            targetScope,
+            key,
+            source.name,
+            row.ordinal,
+            row.text,
+            source.hash,
+            vector ? JSON.stringify(vector) : null,
+          );
+        this.store.db
+          .prepare('INSERT INTO chunk_fts(id,terms) VALUES(?,?)')
+          .run(chunk, terms(row.text).join(' '));
+        const metadata = this.store.maybe<any>('chunk-metadata', row.id);
+        if (metadata) this.store.put('chunk-metadata', { ...metadata, id: chunk, documentId: key });
+      }
+    });
+    return {
+      document: this.store.get<any>('document', key),
+      alreadyPresent: false,
+      reusedVectors,
+      total: rows.length,
+      pendingVectors: rows.length - reusedVectors,
+    };
+  }
   search(
     scopes: string[],
     query: string,

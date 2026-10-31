@@ -938,10 +938,18 @@ export function App() {
   }
   if (!state)
     return (
-      <div className="loading">
-        <Sparkles size={30} />
-        <p>Opening Amadeus…</p>
-        {toast && <p>{toast}</p>}
+      <div className="loading" role="status">
+        <span className="boot-spinner" aria-hidden="true" />
+        <p>{language === 'zh' ? '正在打开 Amadeus…' : 'Opening Amadeus…'}</p>
+        <p>
+          {language === 'zh'
+            ? '正在连接并加载工作空间，请稍候，无需重复启动'
+            : 'Connecting and loading your workspace. No need to launch again.'}
+        </p>
+        {toast && <p role="alert">{toast}</p>}
+        <button onClick={() => reconnect.current()}>
+          {language === 'zh' ? '重试连接' : 'Retry connection'}
+        </button>
       </div>
     );
   return (

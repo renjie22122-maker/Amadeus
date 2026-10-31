@@ -127,6 +127,12 @@ export function DocumentBrowser({ documents, statuses, zh, go, query, scope }: a
               </span>
               <div className="document-card-title">
                 <h4 title={d.name}>{d.name}</h4>
+                {d.reusedFrom && (
+                  <small>
+                    {label('复用版本 · 来源：', 'Reused snapshot · Source: ')}
+                    {d.reusedFrom.scope} · v{d.reusedFrom.version}
+                  </small>
+                )}
                 <div className="document-card-meta">
                   <span>
                     {d.characters.toLocaleString()} {label('字符', 'characters')}
@@ -168,6 +174,12 @@ export function DocumentBrowser({ documents, statuses, zh, go, query, scope }: a
                   <dd>{d.source || d.name}</dd>
                   <dt>{label('文档 ID', 'Document ID')}</dt>
                   <dd>{d.id}</dd>
+                  {d.reusedFrom && (
+                    <>
+                      <dt>{label('原文档 ID（版本快照）', 'Original document ID (snapshot)')}</dt>
+                      <dd>{d.reusedFrom.documentId}</dd>
+                    </>
+                  )}
                   <dt>{label('向量覆盖', 'Vector coverage')}</dt>
                   <dd>
                     {statuses[d.id]

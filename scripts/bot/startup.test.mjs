@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runPowerShellTest } from './test-process.mjs';
 test(
   'Windows launcher parses and reuses existing processes without duplicates',
@@ -104,6 +105,45 @@ if(-not(Test-Path -LiteralPath '${quote(join(dir, 'called.txt'))}')){throw 'Opti
       runPowerShellTest(
         ['-ExecutionPolicy', 'Bypass', '-Command', script],
         'optional service startup',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'main readiness waits through transient failures and preserves live supervisor locks',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), 'amadeus readiness '));
+    try {
+      const common = new URL('../../Launcher.Common.ps1', import.meta.url);
+      writeFileSync(join(dir, 'common.ps1'), readFileSync(common, 'utf8'));
+      const script = `$ErrorActionPreference='Stop'
+. '${join(dir, 'common.ps1').replaceAll("'", "''")}'
+$global:checks=0
+function Invoke-RestMethod { $global:checks++; if($global:checks -lt 3){throw 'temporarily busy'}; [pscustomobject]@{application='Amadeus';ready=$true} }
+if(-not (Wait-AmadeusHealth 'http://fixture' 10)){throw 'Did not wait for recovery'}
+if($global:checks -ne 3){throw 'Unexpected health retries'}
+if(Wait-AmadeusHealth 'http://fixture' 0){throw 'Timeout reported as ready'}
+function Invoke-RestMethod { [pscustomobject]@{application='Amadeus';ready=$false} }
+if(Test-AmadeusHealth 'http://fixture'){throw 'Unready response accepted'}
+$dir='${dir.replaceAll("'", "''")}'
+if(Test-AmadeusSupervisor $dir){throw 'Missing lock accepted'}
+@{pid=$PID}|ConvertTo-Json|Set-Content (Join-Path $dir 'supervisor.lock')
+if(-not (Test-AmadeusSupervisor $dir)){throw 'Live owner ignored'}
+if(-not(Test-Path (Join-Path $dir 'supervisor.lock'))){throw 'Live lock was deleted'}
+@{pid=2147483647}|ConvertTo-Json|Set-Content (Join-Path $dir 'supervisor.lock')
+if(Test-AmadeusSupervisor $dir){throw 'Dead owner accepted'}
+$errors=$null;$tokens=$null
+[System.Management.Automation.Language.Parser]::ParseFile('${fileURLToPath(new URL('../../Start-Amadeus.ps1', import.meta.url)).replaceAll("'", "''")}',[ref]$tokens,[ref]$errors)|Out-Null
+if($errors.Count){throw ($errors|Out-String)}
+`;
+      writeFileSync(join(dir, 'test.ps1'), script);
+      runPowerShellTest(
+        ['-ExecutionPolicy', 'Bypass', '-File', join(dir, 'test.ps1')],
+        'main readiness',
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
