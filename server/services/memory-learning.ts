@@ -111,6 +111,7 @@ export class MemoryLearning {
     private store: Store,
     private config: Configuration,
     private provider: (p: Profile) => ModelProvider = providerFor,
+    private clock: () => number = Date.now,
   ) {}
   start() {
     if (this.timer) return;
@@ -122,14 +123,14 @@ export class MemoryLearning {
     this.controller.abort();
     await this.task;
   }
-  tick(now = Date.now()) {
+  tick(now = this.clock()) {
     if (this.task) return this.task;
     this.task = this.scan(now)
       .catch((error) => {
         this.store.put('memory-maintenance-status', {
           id: 'latest',
           status: 'failed',
-          at: Date.now(),
+          at: this.clock(),
           category: error instanceof Error ? error.name : 'UnknownError',
         });
       })
@@ -267,7 +268,8 @@ export class MemoryLearning {
       )
       .digest('hex');
     const prior = this.store.maybe<any>('memory-index-maintenance', scope);
-    if (prior?.stamp === stamp && (prior.nextAttemptAt > Date.now() || prior.failures >= 5)) return;
+    if (prior?.stamp === stamp && (prior.nextAttemptAt > this.clock() || prior.failures >= 5))
+      return;
     const failures = prior?.stamp === stamp ? prior.failures || 0 : 0;
     try {
       const result = await new MemoryIndex(this.store, embeddings).index(
@@ -282,8 +284,8 @@ export class MemoryLearning {
         failures: 0,
         status: 'completed',
         indexed: result.indexed,
-        at: Date.now(),
-        nextAttemptAt: Date.now() + 30000,
+        at: this.clock(),
+        nextAttemptAt: this.clock() + 30000,
       });
     } catch {
       this.store.put('memory-index-maintenance', {
@@ -291,8 +293,8 @@ export class MemoryLearning {
         stamp,
         failures: failures + 1,
         status: failures >= 4 ? 'needs_review' : 'retry_wait',
-        at: Date.now(),
-        nextAttemptAt: Date.now() + Math.min(3600000, 60000 * 2 ** failures),
+        at: this.clock(),
+        nextAttemptAt: this.clock() + Math.min(3600000, 60000 * 2 ** failures),
       });
     }
   }
@@ -425,7 +427,7 @@ export class MemoryLearning {
             AbortSignal.any([this.controller.signal, AbortSignal.timeout(65000)]),
             (origin) =>
               origin.automaticMemory === true &&
-              this.ready(origin, Date.now()) &&
+              this.ready(origin, this.clock()) &&
               memoryTarget(this.config.profile(origin.profileId)) === target,
             sensitive,
             new MemoryLifecycle(this.store, (stage, m) =>
@@ -444,7 +446,7 @@ export class MemoryLearning {
               return (
                 !!latest &&
                 latest.automaticMemory === true &&
-                this.ready(latest, Date.now()) &&
+                this.ready(latest, this.clock()) &&
                 memoryTarget(this.config.profile(latest.profileId)) === target &&
                 this.config.profile(latest.profileId).model === profile.model
               );
@@ -467,7 +469,7 @@ export class MemoryLearning {
                 return (
                   !!latest &&
                   latest.automaticMemory === true &&
-                  this.ready(latest, Date.now()) &&
+                  this.ready(latest, this.clock()) &&
                   memoryTarget(this.config.profile(latest.profileId)) === target &&
                   this.config.profile(latest.profileId).model === profile.model &&
                   conversationMemoryScope(latest) === conversationMemoryScope(c)
@@ -681,7 +683,7 @@ export class MemoryLearning {
         const batch = pending.map((source) => refreshed.find((e) => e.id === source.id));
         if (
           !current ||
-          !this.ready(current, Date.now()) ||
+          !this.ready(current, this.clock()) ||
           this.stamp(current, JSON.stringify(batch), scope) !== snapshot
         )
           throw Error('MEMORY_SOURCE_CHANGED');
@@ -793,7 +795,7 @@ export class MemoryLearning {
                 !live ||
                 live.revision !== revisionTarget.revision ||
                 (!live.active && live.status !== 'candidate') ||
-                (live.expiresAt != null && live.expiresAt <= Date.now()) ||
+                (live.expiresAt != null && live.expiresAt <= this.clock()) ||
                 live.validUntil != null ||
                 live.candidateReview?.status === 'blocked' ||
                 !live.automatic ||
@@ -979,7 +981,7 @@ export class MemoryLearning {
               active,
               expiresAt: null,
               revision: 1,
-              createdAt: Date.now(),
+              createdAt: this.clock(),
             });
             if (c.automaticMemory) manageAutomaticMemory(this.store, saved);
             added++;
@@ -1000,7 +1002,7 @@ export class MemoryLearning {
             reinforced,
             usage: result.usage,
             model: profile.model,
-            finishedAt: Date.now(),
+            finishedAt: this.clock(),
           });
         });
       } catch (error) {
@@ -1014,7 +1016,7 @@ export class MemoryLearning {
             conversationId: c.id,
             batchSize: Math.max(1, Math.floor(pending.length / 2)),
             reason: 'output_limit',
-            at: Date.now(),
+            at: this.clock(),
           });
         const category = truncated
           ? 'output_limit'
@@ -1028,7 +1030,7 @@ export class MemoryLearning {
                   ? 'timeout_or_cancelled'
                   : 'provider_or_processing';
         const nextAttemptAt =
-          Math.max(now, Date.now()) + Math.min(1800000, 30000 * 2 ** (attempts - 1));
+          Math.max(now, this.clock()) + Math.min(1800000, 30000 * 2 ** (attempts - 1));
         mark(attempts >= 5 ? 'exhausted' : 'retry_wait', nextAttemptAt);
         this.store.put('memory-learning', {
           ...job,
@@ -1057,7 +1059,7 @@ export class MemoryLearning {
             error instanceof z.ZodError
               ? error.issues.map((i) => ({ path: i.path, code: i.code })).slice(0, 8)
               : undefined,
-          finishedAt: Date.now(),
+          finishedAt: this.clock(),
         });
       }
       if (c.automaticMemory) await this.indexLocally(c);

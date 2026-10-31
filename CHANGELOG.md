@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-10-31 — Deterministic memory retry scheduling tests
+
+Memory maintenance now uses an injectable clock consistently. Regression coverage simulates a slow failed extraction, verifies the full delay after failure, then verifies batch reduction and completion of every unfinished source without replaying completed sources. This fixes a Windows CI timing race without shortening production backoff or weakening completion assertions.
+
 ## 2026-10-31 — Automatic scoped sticker curation
 
 Added incremental background reaction-image review and native collection, durable deduplication and deletion exclusions, bounded retries and visible maintenance states. Connected-chat replies receive optional contextual sticker candidates with successful-use history; conversation isolation is preserved.

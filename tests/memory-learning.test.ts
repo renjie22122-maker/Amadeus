@@ -382,19 +382,20 @@ test('retry state survives worker replacement, backs off and stops after five at
       throw new Error('do not persist secret provider body');
     },
   });
-  let learning = new MemoryLearning(f.store, f.config, provider);
+  let now = Date.now();
+  let learning = new MemoryLearning(f.store, f.config, provider, () => now);
   try {
-    let now = Date.now();
-    await learning.tick(now);
-    await learning.tick(now);
+    await learning.tick();
+    await learning.tick();
     assert.equal(calls, 1);
     await learning.close();
-    learning = new MemoryLearning(f.store, f.config, provider);
+    learning = new MemoryLearning(f.store, f.config, provider, () => now);
     for (let i = 1; i < 5; i++) {
       now += 1800000;
-      await learning.tick(now);
+      await learning.tick();
     }
-    await learning.tick(now + 1800000);
+    now += 1800000;
+    await learning.tick();
     assert.equal(calls, 5);
     const job = f.store.list<any>('memory-learning')[0];
     assert.equal(job.retryExhausted, true);
@@ -455,28 +456,55 @@ test('decimal source IDs normalize without weakening exact evidence checks', asy
 test('output truncation reduces the next batch without advancing unfinished sources', async () => {
   const f = await fixture();
   const sizes: number[] = [];
-  const learning = new MemoryLearning(f.store, f.config, () => ({
-    complete: async (request) => {
-      sizes.push(JSON.parse(request.messages[1].content).messages.length);
-      if (sizes.length === 1)
-        throw Object.assign(new Error('truncated'), {
-          code: 'MODEL_INCOMPLETE',
-          finishReason: 'length',
-        });
-      return response([]);
-    },
-  }));
+  let now = Date.now();
+  const startedAt = now;
+  const learning = new MemoryLearning(
+    f.store,
+    f.config,
+    () => ({
+      complete: async (request) => {
+        sizes.push(JSON.parse(request.messages[1].content).messages.length);
+        if (sizes.length === 1) {
+          now += 40000; // Slow provider: retry delay starts at failure, not scan start.
+          throw Object.assign(new Error('truncated'), {
+            code: 'MODEL_INCOMPLETE',
+            finishReason: 'length',
+          });
+        }
+        return response([]);
+      },
+    }),
+    () => now,
+  );
   try {
-    const now = Date.now();
-    await learning.tick(now);
+    await learning.tick();
     assert.equal(f.store.list<any>('memory-learning')[0].reason, 'output_limit');
-    await learning.tick(now + 31000);
-    await learning.tick(now + 62000);
+    const retryAt = startedAt + 70000;
+    const pending = f.store.list<any>('memory-source-progress');
+    assert.equal(pending.length, 2);
+    assert.ok(
+      pending.every(
+        (p) => p.status === 'retry_wait' && p.nextAttemptAt === retryAt && p.offset === 0,
+      ),
+    );
+    now = retryAt - 1;
+    await learning.tick();
+    assert.deepEqual(sizes, [2], 'no retry before the completion-based deadline');
+    now = retryAt;
+    await learning.tick();
+    assert.deepEqual(sizes, [2, 1]);
+    assert.equal(
+      f.store.list<any>('memory-source-progress').filter((p) => p.status === 'completed').length,
+      1,
+    );
+    await learning.tick();
     assert.deepEqual(sizes, [2, 1, 1]);
     assert.equal(
       f.store.list<any>('memory-source-progress').filter((p) => p.status === 'completed').length,
       2,
     );
+    await learning.tick();
+    assert.deepEqual(sizes, [2, 1, 1], 'completed sources are not extracted again');
   } finally {
     await learning.close();
     f.store.close();
