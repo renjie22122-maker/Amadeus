@@ -1,3 +1,4 @@
+import { tokenActivityRoutes } from './token-activity.js';
 import { createVideoAccountSettings } from '../services/video-account-settings.js';
 import { memoryReviewViews } from '../services/memory-conflict-review.js';
 import { ChatConnections } from '../services/chat-connections.js';
@@ -120,6 +121,7 @@ export async function createApp(options: { directory: string; dist?: string; run
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
   mediaRoutes(app, runtime);
   mcpRoutes(app, runtime);
+  tokenActivityRoutes(app, store.path);
   runtime.media.start();
   app.get('/api/health', async () => ({ application: 'Amadeus', version: '0.1.0', ready: true }));
   app.get('/api/bootstrap', async (req, reply) => {

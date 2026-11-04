@@ -1,3 +1,4 @@
+import { TokenActivity } from '../components/TokenActivity';
 import {
   VideoAccountSettings,
   type VideoAccountSettingsHandle,
@@ -91,6 +92,7 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
         <h1>{t('settings')}</h1>
         <p>{t('Configure your models and choose how tools may run.')}</p>
       </div>
+      <TokenActivity zh={t('settings') !== 'Settings'} />
       <section className="panel">
         <label>
           {t('settings') !== 'Settings' ? '\u52a9\u624b\u540d\u79f0' : 'Assistant name'}
