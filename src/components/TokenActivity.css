@@ -41,18 +41,6 @@
   border-radius: 2px;
   background: #8b98a51a;
 }
-.token-day.level-1 {
-  background: #c9eee4;
-}
-.token-day.level-2 {
-  background: #7bcbb7;
-}
-.token-day.level-3 {
-  background: #368b77;
-}
-.token-day.level-4 {
-  background: #145043;
-}
 .token-day:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 2px;
@@ -91,6 +79,8 @@
 
 .token-activity {
   --activity-accent: #68b7a3;
+  --token-heat-low: #c9eee4;
+  --token-heat-high: #145043;
 }
 .token-activity summary {
   list-style: none;
@@ -307,4 +297,12 @@
   .token-active-days {
     white-space: nowrap;
   }
+}
+
+.token-gradient-legend {
+  width: 100px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid #7f9f9655;
+  background: linear-gradient(to right, var(--token-heat-low), var(--token-heat-high));
 }

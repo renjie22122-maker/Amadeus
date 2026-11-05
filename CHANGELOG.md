@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-11-05 — Continuous token heatmap and agenda discovery
+
+Daily usage now interpolates continuously from light to dark green by the selected year’s active-day distribution. Tied values share a color; empty days are excluded, uniform histories use the midpoint, and extreme peaks do not compress ordinary-day contrast. The legend states that colors show relative rank, not absolute token ratios. Local CareerFlow integration documentation includes its new read-only progress_agenda tool; machine-specific configuration remains local.
+
 ## 2026-11-04 — Token activity and usage insights
 
 Settings now offers an on-demand yearly token calendar in the browser time zone, measured input/output and cache hits, historical estimated costs with missing-usage coverage, reasoning settings, skill-read records and MCP call attempts. Aggregation reads the per-request ledger in a bounded read-only worker and does not sum parent/child run totals. Background maintenance, reviewer and media costs are not included in this ledger. Fast Mode is not inferred. Existing stdio MCP configuration supports local CareerFlow with a read-only tool allowlist; host-specific paths remain local settings.

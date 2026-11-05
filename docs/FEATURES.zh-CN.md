@@ -58,4 +58,4 @@ Skill 按需加载，支持批量选择、来源／类别筛选及在告知目�
 
 统计在只读工作线程执行，15 秒超时、缓存 30 秒。面板默认折叠，不增加首页初始化工作；接口不返回对话正文或凭据。
 
-本机 CareerFlow 等 stdio MCP 可在设置的 MCP 区域配置 Node 命令、已构建入口的绝对路径和工作目录。先限制为只读工具白名单（`progress_graph`、`progress_sources`、`progress_history`），验证发现工具与查询后再按需开放修改。CareerFlow 的写入开关与 Amadeus 权限分别控制；连接 MCP 不赋予群成员新的权限。本机路径与凭据引用只放本地配置，不提交仓库。
+本机 CareerFlow 等 stdio MCP 可在设置的 MCP 区域配置 Node 命令、已构建入口的绝对路径和工作目录。先限制为只读工具白名单（`progress_agenda`、`progress_graph`、`progress_sources`、`progress_history`），验证发现工具与查询后再按需开放修改。CareerFlow 的写入开关与 Amadeus 权限分别控制；连接 MCP 不赋予群成员新的权限。本机路径与凭据引用只放本地配置，不提交仓库。

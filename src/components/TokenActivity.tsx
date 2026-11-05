@@ -1,3 +1,4 @@
+import { tokenHeatScale } from '../../shared/token-heat';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import './TokenActivity.css';
@@ -33,7 +34,7 @@ export function TokenActivity({ zh }: { zh: boolean }) {
     end = Date.UTC(year + 1, 0, 1),
     cells = [];
   const byDate = new Map<string, any>((data?.days || []).map((d: any) => [d.date, d]));
-  const max = Math.max(1, ...(data?.days || []).map((d: any) => d.input + d.output));
+  const heat = tokenHeatScale((data?.days || []).map((d: any) => d.input + d.output));
   for (let n = 0; n < start.getUTCDay(); n++) cells.push(<span key={'pad' + n} />);
   for (let t = start.getTime(); t < end; t += 86400000) {
     const date = new Date(t).toISOString().slice(0, 10),
@@ -47,12 +48,19 @@ export function TokenActivity({ zh }: { zh: boolean }) {
       number(d?.calls || 0) +
       (zh ? ' 次模型调用' : ' model calls') +
       (d?.unreported ? ' · ' + d.unreported + (zh ? ' 次用量未报告' : ' unreported') : '');
-    const level = tokens ? Math.min(4, Math.max(1, Math.ceil((tokens / max) * 4))) : 0;
+    const intensity = heat(tokens);
     cells.push(
       <button
         key={date}
         type="button"
-        className={'token-day level-' + level + (selected === label ? ' is-selected' : '')}
+        className={'token-day' + (selected === label ? ' is-selected' : '')}
+        style={
+          tokens > 0
+            ? {
+                background: `color-mix(in srgb, var(--token-heat-high) ${intensity * 100}%, var(--token-heat-low))`,
+              }
+            : undefined
+        }
         title={label}
         aria-label={label}
         onClick={() => setSelected(label)}
@@ -139,12 +147,12 @@ export function TokenActivity({ zh }: { zh: boolean }) {
             </div>
             <div className="token-legend">
               <span>{zh ? '少' : 'Less'}</span>
-              {[0, 1, 2, 3, 4].map((level) => (
-                <i key={level} className={'token-day level-' + level} aria-hidden="true" />
-              ))}
+              <span className="token-gradient-legend" aria-hidden="true" />
               <span>{zh ? '多' : 'More'}</span>
               <span className="token-scale-note">
-                {zh ? '按所选年份峰值分为 4 档' : '4 bands relative to the year’s peak'}
+                {zh
+                  ? '按当年活跃日用量分布连续着色；颜色表示相对高低，不代表倍数'
+                  : 'Continuous active-day distribution; color shows relative rank, not token ratios'}
               </span>
             </div>
             <p className="token-day-detail" aria-live="polite">
