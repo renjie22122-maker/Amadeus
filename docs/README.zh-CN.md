@@ -8,6 +8,8 @@
 
 ## 当前指南
 
+- [办公文件与结构化分析](OFFICE.zh-CN.md)
+
 - [视频读取与桌面交互](VIDEO-READING.zh-CN.md)
 
 - [接入聊天](CHAT-CONNECTIONS.zh-CN.md)

@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-11-06 — Conversation-scoped Office processing
+
+Shared Office tools inspect and cache attachments, query complete spreadsheets locally, export auditable results, and create or verify edited document copies. Parsing runs in a bounded cancellable subprocess queue. Ordinary chat retains attachment-only access. See [Office guide](docs/OFFICE.md) for supported formats and fidelity limits.
+
 ## 2026-11-05 — Continuous token heatmap and agenda discovery
 
 Daily usage now interpolates continuously from light to dark green by the selected year’s active-day distribution. Tied values share a color; empty days are excluded, uniform histories use the midpoint, and extreme peaks do not compress ordinary-day contrast. The legend states that colors show relative rank, not absolute token ratios. Local CareerFlow integration documentation includes its new read-only progress_agenda tool; machine-specific configuration remains local.

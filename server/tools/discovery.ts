@@ -32,6 +32,9 @@ export const coreTools = new Set([
   'list_files',
   'read_file',
   'read_attachment',
+  'office_open',
+  'office_query',
+  'office_read',
   'read_json',
   'write_file',
   'register_artifact',
@@ -87,10 +90,10 @@ export function findTools(specs: ToolSpec[], query: string, offset: number, limi
     搜索: 'search grep',
     文件: 'file glob',
     下载: 'register_artifact download',
-    文档: 'create_document document artifact',
+    文档: 'office_open office_read office_edit office_create document artifact',
     幻灯片: 'create_document pptx',
-    PPT: 'create_document pptx',
-    Excel: 'create_document xlsx',
+    PPT: 'office_open office_read office_edit office_create pptx',
+    Excel: 'office_open office_query office_edit office_create xlsx',
     技能: 'skill',
     记忆: 'memory',
     知识库: 'knowledge',
@@ -140,6 +143,7 @@ export function findTools(specs: ToolSpec[], query: string, offset: number, limi
 
 // Discover a workflow's adjacent tools together; availability is still filtered by specs().
 const toolFamilies = [
+  ['office_open', 'office_query', 'office_read', 'office_export', 'office_edit', 'office_create'],
   ['mcp_tools', 'mcp_call', 'mcp_content', 'mcp_job', 'mcp_cancel_job'],
   ['inspect_problem_frame', 'update_problem_frame'],
   [

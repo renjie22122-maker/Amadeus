@@ -8,6 +8,8 @@ This is the maintained English/Chinese documentation set, reviewed on 2026-10-05
 
 ## Current guides
 
+- [Office files and structured analysis](OFFICE.md)
+
 - [Video reading and desktop interaction](VIDEO-READING.md)
 
 - [Chat connections](CHAT-CONNECTIONS.md)
