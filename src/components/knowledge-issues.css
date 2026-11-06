@@ -1,0 +1,30 @@
+.knowledge-issues {
+  min-width: 0;
+  margin-block: 12px;
+}
+.knowledge-issues > summary {
+  cursor: pointer;
+  padding-block: 8px;
+  font-weight: 600;
+}
+.knowledge-issues-scroll {
+  max-height: min(22rem, 45vh);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border, #6666);
+  border-radius: 8px;
+  padding: 0 12px;
+  margin-block: 8px;
+}
+.knowledge-issues-scroll:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.knowledge-issues-scroll > ul {
+  padding-inline-start: 20px;
+}
+.knowledge-issues-scroll li {
+  margin-block: 12px;
+}

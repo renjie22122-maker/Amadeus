@@ -1,3 +1,4 @@
+import './knowledge-issues.css';
 import { useEffect, useState, useRef } from 'react';
 import { api } from '../api';
 import { LightRagProgress } from './LightRagProgress';
@@ -368,40 +369,54 @@ export function KnowledgeAutomation({
       )}
       {value.error && <p role="alert">{value.error}</p>}
       {value.status === 'processing' && (
-        <details open>
+        <details className="knowledge-issues">
           <summary>
             {zh ? '本次扫描问题（实时）' : 'Current scan issues (live)'} ·{' '}
             {value.progress?.failed || 0}
           </summary>
-          {(value.currentIssues || []).map((x: any, i: number) => (
-            <p key={i}>
-              <strong>{x.path}</strong> · {x.stage} · {x.error}
-            </p>
-          ))}
-          {(value.progress?.failed || 0) > (value.currentIssues?.length || 0) && (
-            <p>
-              {zh
-                ? '此运行尚未记录完整错误详情；后续扫描将逐项实时记录。'
-                : 'Details are incomplete for this run; subsequent scans persist each issue live.'}
-            </p>
-          )}
+          <div
+            className="knowledge-issues-scroll"
+            role="region"
+            tabIndex={0}
+            aria-label={zh ? '本次扫描问题详情，可滚动' : 'Current scan issue details, scrollable'}
+          >
+            {(value.currentIssues || []).map((x: any, i: number) => (
+              <p key={i}>
+                <strong>{x.path}</strong> · {x.stage} · {x.error}
+              </p>
+            ))}
+            {(value.progress?.failed || 0) > (value.currentIssues?.length || 0) && (
+              <p>
+                {zh
+                  ? '此运行尚未记录完整错误详情；后续扫描将逐项实时记录。'
+                  : 'Details are incomplete for this run; subsequent scans persist each issue live.'}
+              </p>
+            )}
+          </div>
         </details>
       )}
       {!!value.issues?.length && (
-        <details open>
+        <details className="knowledge-issues">
           <summary>
             {zh
               ? '已记录的问题（含历史待重试项）'
               : 'Recorded issues (including prior unresolved items)'}{' '}
             · {value.issues.length}
           </summary>
-          <ul>
-            {value.issues.map((x: any, i: number) => (
-              <li key={i}>
-                <strong>{x.path}</strong> · {x.stage} · {x.error}
-              </li>
-            ))}
-          </ul>
+          <div
+            className="knowledge-issues-scroll"
+            role="region"
+            tabIndex={0}
+            aria-label={zh ? '已记录的问题详情，可滚动' : 'Recorded issue details, scrollable'}
+          >
+            <ul>
+              {value.issues.map((x: any, i: number) => (
+                <li key={i}>
+                  <strong>{x.path}</strong> · {x.stage} · {x.error}
+                </li>
+              ))}
+            </ul>
+          </div>
           <p>
             {zh
               ? '点击“重试失败项”重新处理失败项；保存范围不会重置失败次数。未变化的成功文件不会重复导入或写回向量。'
