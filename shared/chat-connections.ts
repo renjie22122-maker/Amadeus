@@ -75,6 +75,9 @@ export interface ChatConnection {
   sharedKnowledge?: boolean;
   groupContext?: boolean;
   groupReplyMode?: 'mentions' | 'participate';
+  groupDecisionHourlyLimit?: number; // 0 means unlimited decisions, not mandatory replies
+  groupDecisionCooldownSeconds?: number;
+  groupParticipationStyle?: 'sparse' | 'balanced' | 'lively';
   autoInviteGroups?: boolean;
   reviewFriendRequests?: boolean;
   authorizedTarget: string;

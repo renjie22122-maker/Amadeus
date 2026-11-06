@@ -66,6 +66,21 @@ export class ChatGroupContext {
       })
     );
   }
+  participationPrompt(c: ChatConnection) {
+    const styles = {
+      sparse:
+        'Prefer listening. Join occasionally when a short contribution naturally fits or adds something useful; an ongoing exchange between members usually needs no interruption.',
+      balanced:
+        'Join when a relevant reaction, useful addition or natural opening fits the discussion, without answering every message or taking over.',
+      lively:
+        'You may join relevant banter more readily, but avoid repeated acknowledgements, dominating the discussion or forcing a response.',
+    };
+    return (
+      'Unsolicited participation check: decide whether a brief reply is useful; otherwise output exactly [NO_REPLY]. ' +
+      styles[c.groupParticipationStyle || 'sparse'] +
+      ' A decision opportunity or unlimited decision budget is never an instruction to speak. Read the latest same-group context, who is talking to whom, topic changes and your recent contributions. Silence is a valid outcome at every participation level. Do not reply merely to demonstrate activity or narrate choosing silence. Do not start tasks, generate media or execute actions.'
+    );
+  }
   candidate(c: ChatConnection, now = Date.now()) {
     if (
       c.accessMode !== 'chat' ||
@@ -98,12 +113,17 @@ export class ChatGroupContext {
       window: now,
       count: 0,
     };
-    if (last.message_id === b.lastId || now - b.lastAt < 120000) return;
+    if (
+      last.message_id === b.lastId ||
+      now - b.lastAt < (c.groupDecisionCooldownSeconds ?? 120) * 1000
+    )
+      return;
     if (now - b.window >= 3600000) {
       b.window = now;
       b.count = 0;
     }
-    if (b.count >= 3) return;
+    const limit = c.groupDecisionHourlyLimit ?? 3;
+    if (limit > 0 && b.count >= limit) return;
     return { last, b };
   }
   consume(c: ChatConnection, now = Date.now()) {

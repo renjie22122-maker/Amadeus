@@ -4,6 +4,10 @@
 
 Entries below describe repository changes, not a semantic-version release series. Historical test counts belong to their recorded runs.
 
+## 2026-11-06 — Configurable group participation
+
+Group connections can independently configure decision budgets (including unlimited), cooldowns and participation style. Silence remains valid at every level; existing debounce, deduplication and authority boundaries remain.
+
 ## 2026-11-06 — Conversation-scoped Office processing
 
 Shared Office tools inspect and cache attachments, query complete spreadsheets locally, export auditable results, and create or verify edited document copies. Parsing runs in a bounded cancellable subprocess queue. Ordinary chat retains attachment-only access. See [Office guide](docs/OFFICE.md) for supported formats and fidelity limits.

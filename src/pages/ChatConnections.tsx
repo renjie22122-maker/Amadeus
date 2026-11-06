@@ -528,13 +528,82 @@ export function ChatConnectionsPage({
                     >
                       <option value="mentions">{tr('@或前缀触发', 'Mentions or prefix')}</option>
                       <option value="participate" disabled={!form.groupContext}>
-                        {tr(
-                          '适度参与：可保持沉默，每小时最多3次主动判断',
-                          'Selective participation: may stay silent, at most 3 unsolicited decisions/hour',
-                        )}
+                        {tr('按语境参与：可保持沉默', 'Contextual participation: may stay silent')}
                       </option>
                     </select>
                   </label>
+                  {form.groupReplyMode === 'participate' && (
+                    <fieldset>
+                      <legend>{tr('主动参与节奏', 'Participation pacing')}</legend>
+                      <label>
+                        {tr('参与倾向', 'Participation style')}
+                        <select
+                          value={form.groupParticipationStyle ?? 'sparse'}
+                          onChange={(e) => field('groupParticipationStyle', e.target.value)}
+                        >
+                          <option value="sparse">
+                            {tr('少量参与 · 以倾听为主', 'Occasional · mostly listen')}
+                          </option>
+                          <option value="balanced">
+                            {tr('自然参与 · 有话再接', 'Balanced · join when relevant')}
+                          </option>
+                          <option value="lively">
+                            {tr('活跃参与 · 仍可沉默', 'Lively · silence remains valid')}
+                          </option>
+                        </select>
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={form.groupDecisionHourlyLimit === 0}
+                          onChange={(e) =>
+                            field('groupDecisionHourlyLimit', e.target.checked ? 0 : 3)
+                          }
+                        />
+                        {tr('不设每小时主动判断上限', 'Unlimited decisions per hour')}
+                      </label>
+                      {form.groupDecisionHourlyLimit !== 0 && (
+                        <label>
+                          {tr('每小时最多主动判断次数', 'Maximum decisions per hour')}
+                          <input
+                            type="number"
+                            min={1}
+                            max={10000}
+                            step={1}
+                            value={form.groupDecisionHourlyLimit ?? 3}
+                            onChange={(e) =>
+                              field(
+                                'groupDecisionHourlyLimit',
+                                e.target.value === '' ? 3 : Math.max(1, Number(e.target.value)),
+                              )
+                            }
+                          />
+                        </label>
+                      )}
+                      <label>
+                        {tr(
+                          '主动判断最短间隔（秒，0 表示不额外冷却）',
+                          'Minimum decision interval (seconds; 0 disables extra cooldown)',
+                        )}
+                        <input
+                          type="number"
+                          min={0}
+                          max={86400}
+                          step={1}
+                          value={form.groupDecisionCooldownSeconds ?? 120}
+                          onChange={(e) =>
+                            field('groupDecisionCooldownSeconds', Number(e.target.value))
+                          }
+                        />
+                      </label>
+                      <p className="muted">
+                        {tr(
+                          '次数限制的是模型判断，不是必须发言次数；选择不设上限也可少量参与或保持沉默。仍会合并连续消息、等短暂停顿，并避免对同一消息重复判断；每次判断可能产生模型费用。仅影响本群未被 @ 时的参与，不改变权限或私聊定时任务。',
+                          'Limits apply to model decisions, not required replies. Unlimited decisions can still mean occasional participation or silence. Consecutive messages are coalesced, a brief pause is awaited, and each message is considered once. Each decision may incur model usage. Only affects unsolicited participation in this group, not permissions or private-chat schedules.',
+                        )}
+                      </p>
+                    </fieldset>
+                  )}
                 </>
               )}
               <label>

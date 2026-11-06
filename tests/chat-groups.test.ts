@@ -1462,3 +1462,86 @@ test('mention refresh rejects a route change while awaiting platform members', a
   await assert.rejects(() => resolveReplyMentions(store, c, bridge, ['Known']), /Chat changed/);
   assert.equal(store.maybe('chat-member-cache', c.id), undefined);
 });
+
+test('participation settings persist independently of permissions and survive reload', (t) => {
+  const { channels, store } = setup(t);
+  const { id: unused, revision, authorizedTarget, activatedAt, ...input } = group('telegram');
+  const saved = channels.save({
+    ...input,
+    peerId: '-789',
+    accessMode: 'chat',
+    remoteApprovals: false,
+    groupContext: true,
+    groupReplyMode: 'participate',
+    groupDecisionHourlyLimit: 0,
+    groupDecisionCooldownSeconds: 15,
+    groupParticipationStyle: 'sparse',
+    token: '456:test',
+    endpoint: '',
+    accountId: '',
+  });
+  const restored = channels.get(saved.id);
+  assert.equal(restored.groupDecisionHourlyLimit, 0);
+  assert.equal(restored.groupDecisionCooldownSeconds, 15);
+  assert.equal(restored.groupParticipationStyle, 'sparse');
+  assert.equal(store.get<any>('conversation', restored.conversationId).remoteChatOnly, true);
+  assert.equal(restored.remoteApprovals, false);
+  assert.throws(() => channels.save({ ...input, groupDecisionHourlyLimit: -1, token: '456:test' }));
+});
+test('custom participation limits and unlimited decisions retain debounce, dedup and group isolation', (t) => {
+  const { channels, c } = ordinaryGroup(t);
+  const now = Date.now();
+  Object.assign(c, { groupDecisionHourlyLimit: 2, groupDecisionCooldownSeconds: 0 });
+  const observe = (i: number, at: number) =>
+    channels.groups.observe(
+      c,
+      {
+        id: 'custom-' + i,
+        senderId: '124',
+        peerId: c.peerId,
+        text: 'a group discussion',
+        timestamp: at,
+      },
+      at,
+    );
+  for (let i = 0; i < 2; i++) {
+    observe(i, now + i * 10000);
+    assert.equal(channels.groups.consume(c, now + i * 10000 + 6000), true);
+  }
+  observe(2, now + 20000);
+  assert.equal(channels.groups.consume(c, now + 26000), false);
+  c.groupDecisionHourlyLimit = 0;
+  assert.equal(channels.groups.consume(c, now + 26000), true);
+  assert.equal(channels.groups.consume(c, now + 27000), false);
+  for (let i = 3; i < 8; i++) {
+    observe(i, now + i * 10000);
+    assert.equal(channels.groups.consume(c, now + i * 10000 + 1000), false);
+    assert.equal(channels.groups.consume(c, now + i * 10000 + 6000), true);
+  }
+  assert.equal(channels.groups.consume({ ...c, id: 'different-group' }, now + 90000), false);
+  c.groupDecisionCooldownSeconds = 30;
+  observe(8, now + 80000);
+  assert.equal(channels.groups.consume(c, now + 86000), false);
+  assert.equal(channels.groups.consume(c, now + 106000), true);
+  c.groupReplyMode = 'mentions';
+  observe(9, now + 140000);
+  assert.equal(channels.groups.consume(c, now + 146000), false);
+});
+test('all participation styles explicitly allow silence without granting task authority', (t) => {
+  const { channels, c } = ordinaryGroup(t);
+  for (const style of ['sparse', 'balanced', 'lively'] as const) {
+    const prompt = channels.groups.participationPrompt({
+      ...c,
+      groupParticipationStyle: style,
+      groupDecisionHourlyLimit: 0,
+    });
+    assert.match(prompt, /\[NO_REPLY\]/);
+    assert.match(prompt, /Silence is a valid outcome/);
+    assert.match(prompt, /Do not start tasks/);
+    assert.match(prompt, /never an instruction to speak/);
+  }
+  assert.match(
+    channels.groups.participationPrompt({ ...c, groupParticipationStyle: 'sparse' }),
+    /Prefer listening/,
+  );
+});
