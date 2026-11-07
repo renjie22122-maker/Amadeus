@@ -1,4 +1,5 @@
 import { runDescendants } from './run-descendants';
+import brandMark from '../desktop/brand.svg';
 import { mergeState } from './state-refresh';
 const ChatConnectionsPage = lazy(() =>
   import('./pages/ChatConnections').then((m) => ({ default: m.ChatConnectionsPage })),
@@ -1191,7 +1192,7 @@ export function App() {
                     {!detail?.events.length ? (
                       <section className="welcome">
                         <div className="welcome-icon">
-                          <Sparkles size={32} />
+                          <img src={brandMark} width="48" height="48" alt="" />
                         </div>
                         <div className="eyebrow">{t('A LITTLE SPACE FOR BIG IDEAS')}</div>
                         <h1>{t('welcome')}</h1>

@@ -16,11 +16,8 @@ await writeFile(
   join(runtime, 'version.json'),
   JSON.stringify({ node: process.version, arch: process.arch }),
 );
-const png = await sharp(
-  Buffer.from(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" rx="56" fill="#7860b5"/><path d="M63 191 112 61h32l49 130h-34l-10-31h-48l-10 31zm47-59h30l-15-46z" fill="white"/></svg>',
-  ),
-)
+const png = await sharp(join(import.meta.dirname, 'brand.svg'))
+  .resize(256, 256)
   .png()
   .toBuffer();
 const ico = Buffer.alloc(22);

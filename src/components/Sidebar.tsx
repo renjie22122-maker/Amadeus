@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import brandMark from '../../desktop/brand.svg';
 import { SidebarList } from './SidebarList';
 import { recentChats, recentProjects } from '../sidebar-lists';
 import {
@@ -16,7 +17,6 @@ import {
   Plus,
   Search,
   Settings,
-  Sparkles,
   Sun,
 } from 'lucide-react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
@@ -98,7 +98,7 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="brand">
         <div className="brand-icon">
-          <Sparkles size={20} />
+          <img src={brandMark} width="34" height="34" alt="" />
         </div>
         <strong>
           {t('Amadeus')}

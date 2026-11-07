@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="tile" x1="24" y1="12" x2="226" y2="256" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#302B50" />
+      <stop offset="1" stop-color="#111322" />
+    </linearGradient>
+    <linearGradient id="ribbon" x1="73" y1="193" x2="164" y2="57" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8C74FF" />
+      <stop offset=".55" stop-color="#C9B8FF" />
+      <stop offset="1" stop-color="#F0E9FF" />
+    </linearGradient>
+    <linearGradient id="fold" x1="109" y1="142" x2="199" y2="190" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A18BFF" />
+      <stop offset="1" stop-color="#75D9EA" />
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="62" fill="url(#tile)" />
+  <rect
+    x="8.75"
+    y="8.75"
+    width="238.5"
+    height="238.5"
+    rx="61.25"
+    stroke="#C7BCFF"
+    stroke-opacity=".2"
+    stroke-width="1.5"
+  />
+  <path d="M55 191 110 70c7-16 28-16 35 0l53 121h-35l-36-87-36 87H55Z" fill="url(#ribbon)" />
+  <path d="m103 138 76 24 19 29-108-35 13-18Z" fill="#17182B" fill-opacity=".7" />
+  <path d="m104 130 74 24 20 37-107-36 13-25Z" fill="url(#fold)" />
+  <path d="m104 130 74 24" stroke="#F2EEFF" stroke-opacity=".65" stroke-width="1.5" />
+  <circle cx="188" cy="69" r="6" fill="#9DDFEA" />
+</svg>
