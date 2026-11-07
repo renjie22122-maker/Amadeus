@@ -1,4 +1,6 @@
 node_modules/
+release/
+.desktop-runtime/
 dist/
 .data/
 .diagnostics/

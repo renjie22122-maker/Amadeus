@@ -178,7 +178,15 @@ else {
           );
         }
       });
+      await window.loadFile(join(import.meta.dirname, 'boot.html'));
+      show();
+      await window.webContents.executeJavaScript(
+        "window.setBootStage(2, 'Starting your local service…', '正在启动本地后台服务…')",
+      );
       const url = await backend.start();
+      await window.webContents.executeJavaScript(
+        "window.setBootStage(3, 'Loading conversations and tools…', '正在加载会话与工具…')",
+      );
       await window.loadURL(url);
       show();
     } catch (error) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -105,8 +105,9 @@ try {
     },
   });
   store.close();
-  const executablePath = createRequire(import.meta.url)('electron');
-  const args = [resolve('desktop/main.mjs')];
+  const packaged = process.argv[2];
+  const executablePath = packaged ? resolve(packaged) : createRequire(import.meta.url)('electron');
+  const args = packaged ? [] : [resolve('desktop/main.mjs')];
   const env = {
     ...process.env,
     AMADEUS_NODE_BINARY: process.execPath,
@@ -114,6 +115,7 @@ try {
     AGENTDEMO_DATA_DIR: data,
   };
   delete env.ELECTRON_RUN_AS_NODE;
+  if (packaged) delete env.AMADEUS_NODE_BINARY;
   desktop = await electron.launch({ executablePath, args, env, timeout: 90000 });
   const page = await desktop.firstWindow();
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//, { timeout: 90000 });
@@ -140,6 +142,21 @@ try {
   await page.keyboard.press('Control+Shift+o');
   await page.locator('.chat-link.active').waitFor();
   const url = new URL(page.url()).origin;
+  const bootFile = packaged
+    ? join(dirname(executablePath), 'resources/app/desktop/boot.html')
+    : resolve('desktop/boot.html');
+  await desktop.evaluate(
+    ({ BrowserWindow }, file) => BrowserWindow.getAllWindows()[0].loadFile(file),
+    bootFile,
+  );
+  await page.locator('#stage').waitFor();
+  await page.waitForFunction(() => document.getElementById('elapsed').textContent.length > 0);
+  await page.screenshot({ path: '.diagnostics/desktop-startup.png' });
+  await desktop.evaluate(
+    ({ BrowserWindow }, address) => BrowserWindow.getAllWindows()[0].loadURL(address),
+    url,
+  );
+  await page.locator('.desktop-titlebar').waitFor();
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.equal(await page.evaluate(() => typeof window.process), 'undefined');
   const preferences = await desktop.evaluate(({ BrowserWindow }) =>

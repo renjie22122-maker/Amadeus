@@ -185,9 +185,13 @@ The shell state omits per-run model-input diagnostic samples and provider finger
 
 ## Standalone desktop window (phase one)
 
+Windows x64 installers are built with `pnpm package:desktop` and written to `release/Amadeus-Setup-<version>-x64.exe`. The installer bundles Electron, the build machine's standalone Node runtime/license and production dependencies, creates desktop/Start menu shortcuts, and preserves user data on uninstall. Build with the same Node installation used for native dependencies. `pnpm test:desktop:packaged` tests the bundled executable without a system Node override. The manual Windows desktop installer workflow produces a downloadable artifact. These development installers are unsigned; optional Python, model weights and external tool installations are not bundled. Automatic updates are not configured.
+
+The startup screen appears before backend initialization and shows animated orbits, actual elapsed time and service/interface loading stages. After 20 seconds it explains that it is still waiting; startup failures show an error. Reduced-motion preferences disable the animation. No simulated completion percentage is shown.
+
 The desktop window uses a draggable title bar with native window controls, neutral light/dark surfaces, a compact sidebar, and a narrower reading/composer column. Ctrl+K opens and focuses chat search even when the sidebar is collapsed; Ctrl+Shift+O starts a new chat. Font scaling, permissions, attention requests and background work remain accessible. Desktop styles are scoped to the isolated shell; browser clients keep their existing layout.
 
-From the development checkout run `pnpm install`, `pnpm build`, then `pnpm desktop`, or use the root `Start-Amadeus-Desktop.cmd` on Windows. Electron owns the window; a standalone Node 24+ runtime selected by the launcher owns the Agent backend. This phase provides a runnable desktop entry, not an installer, automatic updater or automatic data migration.
+From the development checkout run `pnpm install`, `pnpm build`, then `pnpm desktop`, or use the root `Start-Amadeus-Desktop.cmd` on Windows. Electron owns the window; a standalone Node 24+ runtime selected by the launcher owns the Agent backend. Automatic updating and automatic data migration are not enabled.
 
 Closing the window hides it to the tray and preserves local tasks, MCP following and the service. Double-click the tray or launch again to reveal the same window. Only the menu/tray Quit action requests graceful backend shutdown. Existing interruption and MCP recovery semantics apply; local commands do not necessarily survive quitting, and OS termination is not a graceful exit. The window connects only to the owned child's dynamically assigned loopback address, never an unidentified service on port 8810. Single-instance handling plus the existing data-directory lock prevents duplicate backends; crashes do not silently replay tasks.
 

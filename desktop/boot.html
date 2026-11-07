@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Amadeus</title>
+    <link rel="stylesheet" href="boot.css" />
+    <script src="boot.js" defer></script>
+  </head>
+  <body>
+    <header>Amadeus <span>YOUR LOCAL WORKSPACE</span></header>
+    <main>
+      <div class="aurora" aria-hidden="true"></div>
+      <div class="constellation" aria-hidden="true">
+        <div class="orbit one"></div>
+        <div class="orbit two"></div>
+        <div class="orbit three"></div>
+        <div class="core">A</div>
+      </div>
+      <div class="intro">
+        <p class="eyebrow">A LITTLE SPACE FOR BIG IDEAS</p>
+        <h1>Amadeus</h1>
+        <p id="stage" role="status" aria-live="polite">Opening your workspace…</p>
+        <div class="pulse-track" aria-hidden="true"><i></i></div>
+        <p id="elapsed"></p>
+        <p id="hint">Your workspace is getting ready.</p>
+      </div>
+    </main>
+    <footer><span id="local">LOCAL · PRIVATE · YOURS</span><span id="phase">01 / 03</span></footer>
+  </body>
+</html>
