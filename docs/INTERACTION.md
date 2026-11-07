@@ -182,3 +182,15 @@ The bound controller may send `/continue` privately, or `/amadeus /continue` usi
 ### Workspace refresh performance
 
 The shell state omits per-run model-input diagnostic samples and provider fingerprints; detailed inspection and stored history remain intact. State requests revalidate using ETags with no-store and a page-memory-only cache, separated by shell/full view and reset on session changes. Unchanged refreshes return no body; unchanged UI sections retain their references. This applies equally to local chats, projects and connected chats without altering permissions, memory scope or model input.
+
+## Standalone desktop window (phase one)
+
+The desktop window uses a draggable title bar with native window controls, neutral light/dark surfaces, a compact sidebar, and a narrower reading/composer column. Ctrl+K opens and focuses chat search even when the sidebar is collapsed; Ctrl+Shift+O starts a new chat. Font scaling, permissions, attention requests and background work remain accessible. Desktop styles are scoped to the isolated shell; browser clients keep their existing layout.
+
+From the development checkout run `pnpm install`, `pnpm build`, then `pnpm desktop`, or use the root `Start-Amadeus-Desktop.cmd` on Windows. Electron owns the window; a standalone Node 24+ runtime selected by the launcher owns the Agent backend. This phase provides a runnable desktop entry, not an installer, automatic updater or automatic data migration.
+
+Closing the window hides it to the tray and preserves local tasks, MCP following and the service. Double-click the tray or launch again to reveal the same window. Only the menu/tray Quit action requests graceful backend shutdown. Existing interruption and MCP recovery semantics apply; local commands do not necessarily survive quitting, and OS termination is not a graceful exit. The window connects only to the owned child's dynamically assigned loopback address, never an unidentified service on port 8810. Single-instance handling plus the existing data-directory lock prevents duplicate backends; crashes do not silently replay tasks.
+
+The default database lives in `agent` under Electron's user-data directory; use Open data directory in the menu to locate it. `AMADEUS_DESKTOP_USER_DATA` isolates shell state for development/testing. `AGENTDEMO_DATA_DIR` explicitly selects existing data, after stopping any web service owning it. No original `.data` is copied or deleted. Optional Python RAG/voice services are not automatically started in this phase; configured, running services remain usable. Standalone Node preserves existing native-module and subprocess execution.
+
+After building, `pnpm test:desktop` launches isolated Electron, Node and a local MCP fixture to verify task completion while hidden, reopening, duplicate launches, renderer isolation and service exit. Windows CI runs this check; process lifecycle tests run on both platforms. External page links require confirmation before opening in the default browser. The renderer has no Node integration or generic OS command bridge.

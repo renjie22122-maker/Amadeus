@@ -12,6 +12,7 @@ const files = (directory, suffix) =>
 const runtime = 'tests/runtime.test.ts';
 const credentials = 'tests/credential-storage.test.ts';
 const suites = [
+  ['desktop lifecycle', ['--test', ...files('desktop', '.test.mjs')]],
   ['OS credential protection', ['--import', 'tsx', '--test', credentials]],
   ['runtime', ['--import', 'tsx', '--test', '--test-concurrency=1', runtime]],
   [

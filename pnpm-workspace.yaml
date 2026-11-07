@@ -1,4 +1,5 @@
 allowBuilds:
+  electron: true
   esbuild: true
   hnswlib-node: true
   onnxruntime-node: false

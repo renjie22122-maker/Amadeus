@@ -39,6 +39,8 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: node scripts/smoke-server.mjs
+      - run: pnpm test:desktop
+        if: runner.os == 'Windows'
       - uses: actions/upload-artifact@v4
         with:
           name: compiled-app-${{ matrix.os }}

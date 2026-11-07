@@ -111,12 +111,13 @@ export function Sidebar({
       <button className="new-chat" onClick={() => void action(() => newChat())}>
         <Plus size={18} />
         {t('newChat')}
-        <kbd>＋</kbd>
+        <kbd>{'amadeusDesktop' in window ? 'Ctrl ⇧ O' : '＋'}</kbd>
       </button>
       <div className="search">
         <Search size={15} />
         <input
           aria-label={t('search')}
+          title={'amadeusDesktop' in window ? 'Ctrl + K' : t('search')}
           placeholder={t('search')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}

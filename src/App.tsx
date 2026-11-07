@@ -936,6 +936,24 @@ export function App() {
     }
     return nodes;
   }
+  useEffect(() => {
+    if (!('amadeusDesktop' in window)) return;
+    const shortcut = (event: KeyboardEvent) => {
+      if (event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
+      if (event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSidebar(true);
+        requestAnimationFrame(() =>
+          document.querySelector<HTMLInputElement>('.sidebar .search input')?.focus(),
+        );
+      } else if (event.shiftKey && event.key.toLowerCase() === 'o' && state) {
+        event.preventDefault();
+        void action(() => newChat());
+      }
+    };
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  });
   if (!state)
     return (
       <div className="loading" role="status">
@@ -954,6 +972,16 @@ export function App() {
     );
   return (
     <div className={'app ' + (!sidebar ? 'no-sidebar' : '')}>
+      {'amadeusDesktop' in window && (
+        <div className="desktop-titlebar">
+          <span>Amadeus</span>
+          <span className="desktop-titlebar-hint">
+            {language === 'zh'
+              ? '关闭窗口后，任务继续运行'
+              : 'Tasks keep running when you close the window'}
+          </span>
+        </div>
+      )}
       <div className="live-toolbar">
         <DisplaySettings zh={language === 'zh'} />
         <span role="status">
