@@ -5,6 +5,31 @@ import { existsSync } from 'node:fs';
 import { chromium } from '@playwright/test';
 const require = createRequire(import.meta.url);
 test('knowledge panel renders immediately and polls while vector stats are delayed', async (t) => {
+  // Bundle before browser detection so CSS regressions are checked even without a browser.
+  const { build } = createRequire(require.resolve('vite/package.json'))('esbuild');
+  const bundle = await build({
+    stdin: {
+      contents: `
+ import React from 'react';
+ import {createRoot} from 'react-dom/client';
+ import {KnowledgeAutomation} from './src/components/KnowledgeAutomation';
+ createRoot(document.getElementById('root')).render(<KnowledgeAutomation scope="general" zh={false} embedding={{backend:'local'}} notify={()=>{}} />);
+ `,
+      resolveDir: process.cwd(),
+      loader: 'tsx',
+    },
+    bundle: true,
+    write: false,
+    outfile: 'knowledge-ui-fixture.js',
+    format: 'iife',
+    define: { 'process.env.NODE_ENV': '"production"' },
+  });
+  const javascript = bundle.outputFiles.find((file: { path: string }) => file.path.endsWith('.js'));
+  const stylesheet = bundle.outputFiles.find((file: { path: string }) =>
+    file.path.endsWith('.css'),
+  );
+  assert.ok(javascript, 'Fixture must emit JavaScript');
+  assert.ok(stylesheet, 'Fixture must retain component CSS');
   const edge = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
   let browser;
   try {
@@ -27,23 +52,6 @@ test('knowledge panel renders immediately and polls while vector stats are delay
     releaseIndex = resolve;
   });
   try {
-    const { build } = createRequire(require.resolve('vite/package.json'))('esbuild');
-    const bundle = await build({
-      stdin: {
-        contents: `
- import React from 'react';
- import {createRoot} from 'react-dom/client';
- import {KnowledgeAutomation} from './src/components/KnowledgeAutomation';
- createRoot(document.getElementById('root')).render(<KnowledgeAutomation scope="general" zh={false} embedding={{backend:'local'}} notify={()=>{}} />);
- `,
-        resolveDir: process.cwd(),
-        loader: 'tsx',
-      },
-      bundle: true,
-      write: false,
-      format: 'iife',
-      define: { 'process.env.NODE_ENV': '"production"' },
-    });
     const page = await browser.newPage();
     let polls = 0;
     await page.route('http://fixture.test/**', async (route) => {
@@ -82,7 +90,8 @@ test('knowledge panel renders immediately and polls while vector stats are delay
       await route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' });
     });
     await page.goto('http://fixture.test/');
-    await page.addScriptTag({ content: bundle.outputFiles[0].text });
+    await page.addStyleTag({ content: stylesheet.text });
+    await page.addScriptTag({ content: javascript.text });
     await page.getByText('Loading maintenance status…').waitFor();
     releaseFirst();
     await page.getByText('file-1', { exact: true }).waitFor();
