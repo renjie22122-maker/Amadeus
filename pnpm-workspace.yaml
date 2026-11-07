@@ -1,5 +1,7 @@
 allowBuilds:
   electron: true
+  # The NSIS target does not use Squirrel's installer preparation script.
+  electron-winstaller: false
   esbuild: true
   hnswlib-node: true
   onnxruntime-node: false
