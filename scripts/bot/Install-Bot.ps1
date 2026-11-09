@@ -21,8 +21,8 @@ if(-not $NoShortcuts){
     foreach($mode in @('all','bridge')){
         $label=if($mode -eq 'all'){'Amadeus + Bot'}else{'Bot only'}
         $link=$shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) ($label+'.lnk')))
-        $link.TargetPath=$c.powershell
-        $link.Arguments='-NoProfile -ExecutionPolicy Bypass -File "{0}" -Config "{1}" -Mode {2}' -f (Join-Path $PSScriptRoot 'Open-Bot.ps1'),$Config,$mode
+        $link.TargetPath=(Join-Path $env:WINDIR 'System32/wscript.exe')
+        $link.Arguments='"{0}" {1} "{2}"' -f (Join-Path (Split-Path $PSScriptRoot -Parent) 'Launch-Hidden.vbs'),$mode,$Config
         $link.WorkingDirectory=$PSScriptRoot;$link.Save()
     }
 }

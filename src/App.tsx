@@ -401,6 +401,11 @@ export function App() {
     ? {
         ...run,
         priceBands: [...new Set(descendants.flatMap((r) => r.priceBands || []))],
+        unreportedUsageReasons: descendants.reduce<Record<string, number>>((all, r) => {
+          for (const [reason, count] of Object.entries(r.unreportedUsageReasons || {}))
+            all[reason] = (all[reason] || 0) + count;
+          return all;
+        }, {}),
         usageComplete: !descendants.some((r) => r.usageComplete === false),
         inputTokens: descendants.reduce((n, r) => n + r.inputTokens, 0),
         outputTokens: descendants.reduce((n, r) => n + r.outputTokens, 0),
@@ -1538,7 +1543,40 @@ export function App() {
                           {totalUsage!.priceBands.map((b) => t('Rate: ' + b)).join(' / ')}
                         </span>
                         {totalUsage!.usageComplete === false && (
-                          <span>{t('Usage incomplete')}</span>
+                          <span
+                            title={
+                              language === 'zh'
+                                ? '未报告不代表零费用；已收到的用量仍保留，不会为补用量重放请求。'
+                                : 'Missing usage does not mean zero cost. Received counters are retained; requests are not replayed for accounting.'
+                            }
+                          >
+                            {t('Usage incomplete')}
+                            {Object.entries(totalUsage!.unreportedUsageReasons || {}).map(
+                              ([reason, count]) => {
+                                const labels: Record<string, string> =
+                                  language === 'zh'
+                                    ? {
+                                        STREAM_INTERRUPTED: '流式中断',
+                                        CONNECTION_FAILED: '连接失败',
+                                        REQUEST_FAILED: '请求失败',
+                                        PROVIDER_OMITTED_USAGE: '服务商未返回完整用量',
+                                      }
+                                    : {
+                                        STREAM_INTERRUPTED: 'Stream interrupted',
+                                        CONNECTION_FAILED: 'Connection failed',
+                                        REQUEST_FAILED: 'Request failed',
+                                        PROVIDER_OMITTED_USAGE: 'Provider omitted complete usage',
+                                      };
+                                return (
+                                  <span key={reason}>
+                                    {' '}
+                                    · {labels[reason] ||
+                                      reason.replace('MODEL_HTTP_', 'HTTP ')} × {count}
+                                  </span>
+                                );
+                              },
+                            )}
+                          </span>
                         )}
                       </div>
                     )}

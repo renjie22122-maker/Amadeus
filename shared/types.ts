@@ -12,6 +12,9 @@ export type RunStatus =
   | 'interrupted';
 export type Transport = 'openai-chat' | 'anthropic' | 'openai-responses' | 'gemini';
 export interface Usage {
+  inputReported?: boolean;
+  outputReported?: boolean;
+  missingReason?: string;
   input: number;
   output: number;
   cached: number;
@@ -249,6 +252,7 @@ export interface Run {
   reasoning: Reasoning;
   providerFingerprint?: string;
   usageComplete?: boolean;
+  unreportedUsageReasons?: Record<string, number>;
 }
 export interface AgentEvent {
   id: number;

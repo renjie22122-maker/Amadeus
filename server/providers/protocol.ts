@@ -287,25 +287,31 @@ export async function* sse(response: Response, idleTimeoutMs = 60000): AsyncGene
   }
 }
 export const emptyUsage = (): Usage => ({ input: 0, output: 0, cached: 0, measured: false });
-export function standardUsage(u: any): Usage {
-  return u
-    ? {
-        input: u.prompt_tokens ?? u.input_tokens ?? 0,
-        ...(Number.isSafeInteger(u.prompt_cache_miss_tokens) && u.prompt_cache_miss_tokens >= 0
-          ? { uncached: u.prompt_cache_miss_tokens }
-          : {}),
-        output: u.completion_tokens ?? u.output_tokens ?? 0,
-        cached:
-          u.prompt_cache_hit_tokens ??
-          u.prompt_tokens_details?.cached_tokens ??
-          u.input_tokens_details?.cached_tokens ??
-          0,
-        reasoning:
-          u.completion_tokens_details?.reasoning_tokens ??
-          u.output_tokens_details?.reasoning_tokens,
-        measured: true,
-      }
-    : emptyUsage();
+export function standardUsage(u: any, previous: Usage = emptyUsage()): Usage {
+  // Streams can report counters in separate events. An empty trailing object must
+  // not erase a receipt, and a partial receipt must not invent the missing half.
+  const count = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
+  const input = u?.prompt_tokens ?? u?.input_tokens;
+  const output = u?.completion_tokens ?? u?.output_tokens;
+  const cached =
+    u?.prompt_cache_hit_tokens ??
+    u?.prompt_tokens_details?.cached_tokens ??
+    u?.input_tokens_details?.cached_tokens;
+  const reasoning =
+    u?.completion_tokens_details?.reasoning_tokens ?? u?.output_tokens_details?.reasoning_tokens;
+  const inputReported = count(input) || previous.inputReported === true || previous.measured;
+  const outputReported = count(output) || previous.outputReported === true || previous.measured;
+  const { inputReported: _input, outputReported: _output, ...receipt } = previous;
+  return {
+    ...receipt,
+    input: count(input) ? input : previous.input,
+    output: count(output) ? output : previous.output,
+    cached: count(cached) ? cached : previous.cached,
+    ...(count(u?.prompt_cache_miss_tokens) ? { uncached: u.prompt_cache_miss_tokens } : {}),
+    reasoning: count(reasoning) ? reasoning : previous.reasoning,
+    ...(!(inputReported && outputReported) ? { inputReported, outputReported } : {}),
+    measured: inputReported && outputReported,
+  };
 }
 
 // Keep every tool result adjacent to its call batch. Pixels follow as a separate

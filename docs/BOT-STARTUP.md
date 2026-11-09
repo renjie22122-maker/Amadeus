@@ -40,3 +40,11 @@ A previously nonempty friend list becoming empty for three consecutive checks is
 Recovery matches the configured bridge executable AND process argument, rejects ambiguous roots, and revalidates process creation time before stopping only its descendant tree. Other QQ sessions, Amadeus, RAG and benchmark processes are not restart targets. It does not send diagnostic messages or replay missed messages. Unsupported adapters can leave this optional OneBot-specific monitor disabled.
 
 The combined bot launcher invokes the idempotent Amadeus launcher even when the main HTTP service is already ready. This also checks configured local voice and RAG services, reusing healthy instances without restarting the main app. Voice startup is lightweight; models remain unloaded until a transcription or speech request arrives.
+
+## Hidden launch and client updates
+
+Windows quick launch now delegates to `scripts/Launch-Hidden.vbs`: main, desktop, all, or bridge. Shortcuts target wscript directly (no console); legacy CMD launchers exit immediately after delegation and may briefly flash while Windows opens cmd. Errors appear in a message box and are recorded in `.data/logs/launcher-*.log`. Direct PowerShell scripts remain available for diagnostics.
+
+A running scheduler wrapper no longer implies its child bridge is alive: an explicit launch checks/reuses services through the shared launch mutex and waits for the bridge port before opening its page. A listening port is not proof of account login. For QQ hot-update compatibility, use a separately extracted, signature-verified client directory instead of modifying the personal QQ installation. Optional `bridge.versionCheck` contains `path`, `field` and `expected` for a local JSON version manifest; mismatches stop a new launch with an actionable error. Never kill every QQ process or silently downgrade a personal installation.
+
+Usage diagnostics: model calls retain split provider counters and never replace a receipt with an empty trailing usage object. Incomplete run totals show counted reasons (HTTP status, connection failure, interrupted stream, or omitted usage). Missing usage is not zero cost; no generation is replayed to recover accounting. Historical receipts remain unchanged.

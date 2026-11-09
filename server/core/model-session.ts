@@ -78,6 +78,16 @@ export async function completeModel(
       cached: 0,
       measured: false,
     };
+    if (!usage.measured) {
+      const diagnostic = providerFailureDiagnostic(error);
+      usage.missingReason = /^MODEL_HTTP_\d{3}$/.test(diagnostic.code || '')
+        ? diagnostic.code
+        : diagnostic.phase === 'stream'
+          ? 'STREAM_INTERRUPTED'
+          : diagnostic.phase === 'connect'
+            ? 'CONNECTION_FAILED'
+            : 'REQUEST_FAILED';
+    }
     accountModelUsage(store, run, usage, input.profile, id(), requestedAt);
     if (error instanceof AppError && error.code === 'MODEL_INCOMPLETE') {
       const info = error as AppError & {
@@ -123,7 +133,12 @@ export function accountModelUsage(
   run.outputTokens += usage.output;
   run.cachedTokens += usage.cached;
   run.modelCalls++;
-  if (!usage.measured) run.usageComplete = false;
+  if (!usage.measured) {
+    run.usageComplete = false;
+    const reason = usage.missingReason || 'PROVIDER_OMITTED_USAGE';
+    run.unreportedUsageReasons ||= {};
+    run.unreportedUsageReasons[reason] = (run.unreportedUsageReasons[reason] || 0) + 1;
+  }
   const p = pricing.prices;
   if (
     usage.measured &&

@@ -1,3 +1,3 @@
 @echo off
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Start-Amadeus.ps1"
-if errorlevel 1 pause
+start "" wscript.exe "%~dp0scripts\Launch-Hidden.vbs" main
+exit /b

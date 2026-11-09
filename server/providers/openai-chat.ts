@@ -71,7 +71,7 @@ export class ChatProvider implements ModelProvider {
       for await (const event of sse(response)) {
         assert(!event.error, 'MODEL_ERROR', 'The model reported a stream error.', 502);
         responseId = event.id || responseId;
-        if (event.usage) usage = standardUsage(event.usage);
+        if (event.usage) usage = standardUsage(event.usage, usage);
         const choice = event.choices?.[0];
         if (!choice) continue;
         const delta = choice.delta || {};
@@ -151,6 +151,7 @@ export class ChatProvider implements ModelProvider {
       if (error instanceof Error)
         Object.assign(error, {
           usage,
+          responseId,
           answerCharacters: content.length,
           reasoningCharacters: reasoning.length,
           pendingToolCalls: calls.size,

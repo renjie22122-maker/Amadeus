@@ -74,10 +74,65 @@ test('run accounting snapshots each request band and never backfills unknown usa
     assert.equal(JSON.parse(ledger.data).pricing.basis, 'peak');
     accountModelUsage(store, run, { ...usage, measured: false }, p, 'three');
     assert.equal(run.estimatedUsd, null);
+    assert.deepEqual(run.unreportedUsageReasons, { PROVIDER_OMITTED_USAGE: 1 });
     accountModelUsage(store, run, usage, p, 'four');
     assert.equal(run.estimatedUsd, null);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('failed requests retain safe usage reasons without inventing measured tokens', async () => {
+  const { Store } = await import('../server/storage/store.js');
+  const { completeModel } = await import('../server/core/model-session.js');
+  const { AppError } = await import('../server/core/errors.js');
+  const store = new Store(':memory:');
+  const run = {
+    id: 'failure',
+    conversationId: 'c',
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    modelCalls: 0,
+    estimatedUsd: 0,
+  } as import('../shared/types.js').Run;
+  try {
+    for (const [code, phase, expected] of [
+      ['MODEL_HTTP_402', 'request', 'MODEL_HTTP_402'],
+      ['MODEL_NETWORK', 'connect', 'CONNECTION_FAILED'],
+      ['MODEL_TIMEOUT', 'stream', 'STREAM_INTERRUPTED'],
+    ]) {
+      const error = Object.assign(new AppError(code, 'private diagnostic'), { phase });
+      await assert.rejects(
+        completeModel(
+          store,
+          () => ({
+            complete: async () => {
+              throw error;
+            },
+          }),
+          run,
+          {
+            profile: p,
+            messages: [{ role: 'user', content: 'hello' }],
+            tools: [],
+            signal: new AbortController().signal,
+            onText: () => {},
+          },
+        ),
+      );
+      assert.equal(run.unreportedUsageReasons?.[expected], 1);
+    }
+    assert.equal(run.usageComplete, false);
+    assert.equal(run.estimatedUsd, null);
+    const ledger = store.db.prepare('SELECT data FROM ledger').all() as { data: string }[];
+    assert.equal(ledger.length, 3);
+    for (const row of ledger) {
+      assert.equal(JSON.parse(row.data).usage.measured, false);
+      assert.equal(row.data.includes('private diagnostic'), false);
+    }
+  } finally {
+    store.close();
   }
 });

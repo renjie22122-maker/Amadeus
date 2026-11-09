@@ -287,3 +287,33 @@ test('HTTP retry is bounded to rejected requests, and errors redact credentials'
     (e: any) => !e.message.includes('fixture-secret') && e.message.includes('[redacted]'),
   );
 });
+
+test('usage receipts merge split counters without accepting empty or invalid receipts', async () => {
+  const { standardUsage } = await import('../server/providers/protocol.js');
+  assert.equal(standardUsage({}).measured, false);
+  assert.equal(standardUsage({ prompt_tokens: -1, completion_tokens: '8' }).measured, false);
+  const partial = standardUsage({ prompt_tokens: 100, prompt_cache_hit_tokens: 80 });
+  assert.equal(partial.measured, false);
+  const complete = standardUsage({ completion_tokens: 12 }, partial);
+  assert.equal(complete.measured, true);
+  assert.equal(complete.input, 100);
+  assert.equal(complete.cached, 80);
+  assert.deepEqual(standardUsage({}, complete), complete);
+  assert.equal(standardUsage({ prompt_tokens: 0, completion_tokens: 0 }).measured, true);
+});
+
+test('chat retains split terminal usage after finish and empty trailing receipts', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () =>
+    response([
+      { id: 'receipt', choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] },
+      { choices: [], usage: { prompt_tokens: 100, prompt_cache_hit_tokens: 80 } },
+      { choices: [], usage: { completion_tokens: 12 } },
+      { choices: [], usage: {} },
+    ]),
+  );
+  const result = await new ChatProvider().complete(input());
+  assert.equal(result.usage.input, 100);
+  assert.equal(result.usage.output, 12);
+  assert.equal(result.usage.cached, 80);
+  assert.equal(result.usage.measured, true);
+});

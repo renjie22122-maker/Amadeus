@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Config, [ValidateSet('all','bridge')][string]$Mode='all', [switch]$RestartBridge)
+param([Parameter(Mandatory=$true)][string]$Config, [ValidateSet('all','bridge')][string]$Mode='all', [switch]$RestartBridge, [switch]$Once)
 $ErrorActionPreference='Stop'
 $c=Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
 if($c.version -ne 1){throw 'Unsupported bot configuration'}
@@ -30,6 +30,11 @@ function Ensure-Service($service){
     if($service.processArgument){$existing=@($existing|Where-Object {$_.CommandLine -and $_.CommandLine.Contains([string]$service.processArgument)})}
     if($existing.Count){Write-Host 'Existing process found; waiting for readiness. No duplicate was started.';return}
     if(-not(Test-Path -LiteralPath $service.executable)){throw 'Configured executable does not exist'}
+    if($service.versionCheck){
+        $version=Get-Content -LiteralPath $service.versionCheck.path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $actual=[string]$version.($service.versionCheck.field)
+        if($actual -ne [string]$service.versionCheck.expected){throw ('Bridge client version changed from the tested version. Expected '+$service.versionCheck.expected+', found '+$actual+'. Verify compatibility before updating the local version check.')}
+    }
     if($service.environment){foreach($p in $service.environment.PSObject.Properties){[Environment]::SetEnvironmentVariable($p.Name,[string]$p.Value,'Process')}}
     $stamp=Get-Date -Format 'yyyyMMdd-HHmmss-fff'
     Start-Process -FilePath $service.executable -ArgumentList $service.arguments -WorkingDirectory $service.workingDirectory -WindowStyle Hidden -RedirectStandardOutput (Join-Path $c.logDirectory "$stamp.stdout.log") -RedirectStandardError (Join-Path $c.logDirectory "$stamp.stderr.log") | Out-Null
@@ -50,7 +55,7 @@ try{
         if($LASTEXITCODE -ne 0){throw 'Amadeus launcher failed'}
     }
 }finally{if($held){$mutex.ReleaseMutex()};$mutex.Dispose()}
-if($RestartBridge){exit 0}
+if($RestartBridge -or $Once){exit 0}
 # Keep the Windows scheduler session alive, independently of the launching terminal.
 # Do not restart or stop services automatically: a paused service may be intentional.
 while($true){Start-Sleep -Seconds 30}
