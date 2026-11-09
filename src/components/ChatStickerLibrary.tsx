@@ -27,7 +27,7 @@ export function ChatStickerLibrary({
     [query, setQuery] = useState(''),
     [offset, setOffset] = useState(0),
     [busy, setBusy] = useState(false);
-  const [count, setCount] = useState(48);
+  const [count, setCount] = useState(0);
   const [reference, setReference] = useState(''),
     [name, setName] = useState(''),
     [tags, setTags] = useState('');
@@ -97,11 +97,10 @@ export function ChatStickerLibrary({
       {data?.capabilities.favoritesImport && (
         <div>
           <label>
-            {zh ? '收藏读取数量' : 'Favorites count'}
+            {zh ? '收藏读取数量（0 为全部可用）' : 'Favorites count (0 = all available)'}
             <input
               type="number"
-              min={1}
-              max={200}
+              min={0}
               value={count}
               onChange={(e) => setCount(Number(e.target.value))}
             />
@@ -143,8 +142,8 @@ export function ChatStickerLibrary({
       </button>
       <small>
         {zh
-          ? '默认读取 48 张，可调整至 200 张，重复图片去重；桥接服务可能仅返回部分收藏。不支持订阅表情商店和 QQ 空间发布。'
-          : 'Reads 48 favorites by default, adjustable up to 200, deduplicated. The bridge may return only part of the collection. Subscription packs and Qzone publishing are unsupported.'}
+          ? '本地库无固定张数上限，默认读取全部可用收藏；列表分页查看，重复图片去重。桥接服务可能仅返回部分收藏。不支持订阅表情商店和 QQ 空间发布。'
+          : 'No fixed library capacity. Reads all available favorites by default; browsing is paginated and deduplicated. The bridge may return only part of the collection. Subscription packs and Qzone publishing are unsupported.'}
       </small>
       <div
         style={{

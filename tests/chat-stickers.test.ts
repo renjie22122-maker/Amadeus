@@ -345,3 +345,55 @@ test('bounded native listing misses do not re-add a previously verified favorite
   );
   assert.deepEqual(z.native, x.native);
 });
+
+test('no 500-entry capacity or lookup cutoff; pagination can reach older entries', (t) => {
+  const { store, c, image } = fixture(t);
+  for (let i = 0; i < 505; i++)
+    saveChatSticker(store, c, { reference: image('chat', 'hash' + i), name: 'entry ' + i });
+  assert.equal(listChatStickers(store, c).total, 505);
+  assert.equal(listChatStickers(store, c, '', 500, 24).items.length, 5);
+  assert.equal(listChatStickers(store, c, 'entry 0').total, 1);
+});
+
+test('pixel identity merges re-encoded files, keeps old references and separates chats', async (t) => {
+  const { store, c, image } = fixture(t);
+  const sharp = (await import('sharp')).default;
+  const { createHash } = await import('node:crypto');
+  const { reconcileChatStickers } = await import('../server/services/chat-stickers.js');
+  const source = sharp({ create: { width: 20, height: 20, channels: 3, background: 'red' } });
+  const refs: string[] = [];
+  for (const compressionLevel of [0, 9]) {
+    const bytes = await source.clone().png({ compressionLevel }).toBuffer();
+    const ref = image('chat', createHash('sha256').update(bytes).digest('hex'));
+    const a = store.get<any>('attachment', ref.slice(11));
+    writeFileSync(a.path, bytes);
+    refs.push(ref);
+    saveChatSticker(store, c, { reference: ref, name: 'red' });
+  }
+  assert.equal(listChatStickers(store, c).total, 2);
+  const old = listChatStickers(store, c).items;
+  assert.equal((await reconcileChatStickers(store, c)).merged, 1);
+  assert.equal(listChatStickers(store, c).total, 1);
+  for (const row of old) assert.deepEqual(stickerReferences(store, c, [row.id]), [row.reference]);
+  removeChatSticker(store, c, listChatStickers(store, c).items[0].id);
+  await reconcileChatStickers(store, c);
+  assert.equal(listChatStickers(store, c).total, 0);
+  for (const ref of refs) assert.ok(store.maybe('attachment', ref.slice(11)));
+});
+
+test('full native catalog grows prefixes and stops when bridge repeats its capped catalog', async () => {
+  const { fetchFavoriteCatalog } = await import('../server/services/chat-native-favorites.js');
+  const calls: number[] = [];
+  const rows = await fetchFavoriteCatalog(async (_action, p: any) => {
+    calls.push(p.count);
+    return Array.from({ length: Math.min(p.count, 600) }, (_, i) => 'url' + i);
+  }, 'fetch_custom_face');
+  assert.equal(rows.length, 600);
+  assert.deepEqual(calls, [256, 512, 1024]);
+  let attempts = 0;
+  await fetchFavoriteCatalog(async () => {
+    attempts++;
+    return Array.from({ length: 512 }, (_, i) => 'url' + i);
+  }, 'fetch_custom_face');
+  assert.equal(attempts, 2);
+});

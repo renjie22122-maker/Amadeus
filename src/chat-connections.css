@@ -104,3 +104,23 @@
   width: auto;
   margin: 0;
 }
+
+/* Keep long chat settings and histories inside their own scroll surface. */
+.chat-notebook[open] {
+  box-sizing: border-box;
+  max-height: min(75vh, 850px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.chat-notebook textarea {
+  max-height: 22rem;
+  overflow-y: auto;
+  field-sizing: fixed;
+}
+.chat-sticker-library[open] {
+  max-height: 75vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}

@@ -4,7 +4,7 @@ import { assert } from '../core/errors.js';
 import type { Store } from '../storage/store.js';
 import type { ChatConnection } from '../../shared/chat-connections.js';
 import { chatRoute } from './chat-recall.js';
-import { saveChatSticker, stickerReferences, type ChatSticker } from './chat-stickers.js';
+import { saveInspectedChatSticker, stickerReferences, type ChatSticker } from './chat-stickers.js';
 type Request = (action: string, params: unknown) => Promise<any>;
 export type NativeFavorite = {
   state: 'confirmed' | 'unconfirmed' | 'failed';
@@ -24,6 +24,28 @@ export function favoriteDetails(value: unknown): { md5: string; resId: string; u
     )
     .map((x: any) => ({ md5: x.md5.toLowerCase(), resId: x.resId, url: x.url }));
 }
+// NapCat exposes a prefix count, not an offset. Grow that prefix until it
+// stops growing; never mistake a bridge-side cap for proof of a full catalog.
+export async function fetchFavoriteCatalog(
+  request: Request,
+  action: string,
+  count = 0,
+): Promise<any[]> {
+  if (count > 0) return request(action, { count });
+  let size = 256,
+    previous = '';
+  while (true) {
+    const rows = await request(action, { count: size });
+    assert(Array.isArray(rows), 'CHAT_FAVORITES_UNSUPPORTED', 'Bridge returned no favorites list.');
+    const fingerprint = JSON.stringify(
+      rows.map((x: any) => (typeof x === 'string' ? x : [x.md5, x.resId])),
+    );
+    if (rows.length < size || fingerprint === previous || size >= Number.MAX_SAFE_INTEGER / 2)
+      return rows;
+    previous = fingerprint;
+    size *= 2;
+  }
+}
 export async function saveNativeFavorite(
   store: Store,
   c: ChatConnection,
@@ -31,7 +53,7 @@ export async function saveNativeFavorite(
   request: Request,
   current: () => boolean,
 ) {
-  const row = saveChatSticker(store, c, input);
+  const row = await saveInspectedChatSticker(store, c, input);
   if (c.transport !== 'onebot11') return row;
   const a = store.get<any>('attachment', row.reference.slice(11));
   const bytes = await readFile(a.path);
@@ -55,9 +77,9 @@ export async function saveNativeFavorite(
   };
   let attempted = false;
   try {
-    let found = favoriteDetails(await request('fetch_custom_face_detail', { count: 200 })).find(
-      (x) => x.md5 === md5,
-    );
+    let found = favoriteDetails(
+      await fetchFavoriteCatalog(request, 'fetch_custom_face_detail'),
+    ).find((x) => x.md5 === md5);
     if (!found) {
       if (row.native?.state === 'unconfirmed' || row.native?.state === 'confirmed')
         return {
@@ -80,7 +102,7 @@ export async function saveNativeFavorite(
           at: Date.now(),
         });
       }
-      found = favoriteDetails(await request('fetch_custom_face_detail', { count: 200 })).find(
+      found = favoriteDetails(await fetchFavoriteCatalog(request, 'fetch_custom_face_detail')).find(
         (x) => x.md5 === md5,
       );
     }
@@ -127,9 +149,9 @@ export async function favoriteBytes(
     );
   if (!row?.native) return undefined;
   try {
-    const found = favoriteDetails(await request('fetch_custom_face_detail', { count: 200 })).find(
-      (x) => x.md5 === row.native!.md5,
-    );
+    const found = favoriteDetails(
+      await fetchFavoriteCatalog(request, 'fetch_custom_face_detail'),
+    ).find((x) => x.md5 === row.native!.md5);
     if (!found) return undefined;
     const bytes = await download(found.url);
     assert(current(), 'CHAT_CHANGED', 'Chat changed while reading favorite.');

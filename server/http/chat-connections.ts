@@ -1,4 +1,9 @@
-import { listChatStickers, saveChatSticker, removeChatSticker } from '../services/chat-stickers.js';
+import {
+  listChatStickers,
+  reconcileChatStickers,
+  saveInspectedChatSticker,
+  removeChatSticker,
+} from '../services/chat-stickers.js';
 import { localChatBridge } from '../services/chat-interaction.js';
 import { assert } from '../core/errors.js';
 import { id } from '../storage/store.js';
@@ -20,14 +25,16 @@ export function chatConnectionRoutes(app: FastifyInstance, channels: ChatConnect
         offset: z.coerce.number().int().min(0).default(0),
       })
       .parse(req.query);
-    return listChatStickers(channels.store, channels.get(req.params.id), q.query, q.offset);
+    const c = channels.get(req.params.id);
+    await reconcileChatStickers(channels.store, c);
+    return listChatStickers(channels.store, c, q.query, q.offset);
   });
   app.post<{ Params: { id: string } }>('/api/chat-connections/:id/stickers', async (req) => {
     const c = channels.get(req.params.id),
       bridge = localChatBridge(channels.store, c);
     return bridge.saveSticker
       ? await bridge.saveSticker(c, req.body)
-      : saveChatSticker(channels.store, c, req.body);
+      : await saveInspectedChatSticker(channels.store, c, req.body);
   });
   app.delete<{ Params: { id: string; stickerId: string } }>(
     '/api/chat-connections/:id/stickers/:stickerId',
@@ -38,7 +45,7 @@ export function chatConnectionRoutes(app: FastifyInstance, channels: ChatConnect
     '/api/chat-connections/:id/stickers/import-favorites',
     async (req) => {
       const { count } = z
-        .object({ count: z.number().int().min(1).max(200).default(48) })
+        .object({ count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0) })
         .parse(req.body || {});
       const c = channels.get(req.params.id),
         bridge = localChatBridge(channels.store, c);

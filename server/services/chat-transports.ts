@@ -1,6 +1,11 @@
 import { ChatStickerMaintenance } from './chat-sticker-maintenance.js';
-import { saveNativeFavorite, favoriteBytes, favoriteDetails } from './chat-native-favorites.js';
-import { saveChatSticker, stickerReferences, recordStickerUse } from './chat-stickers.js';
+import {
+  saveNativeFavorite,
+  favoriteBytes,
+  favoriteDetails,
+  fetchFavoriteCatalog,
+} from './chat-native-favorites.js';
+import { saveInspectedChatSticker, stickerReferences, recordStickerUse } from './chat-stickers.js';
 import { ChatSendRejected, onebotSendError, chatSendRetry } from './chat-send-error.js';
 import { forwardPage } from './chat-rich.js';
 import {
@@ -369,7 +374,7 @@ export class ChatTransports {
   }
   private nativeSaves = new Map<string, Promise<unknown>>();
   private async saveFavoriteSticker(c: ChatConnection, input: unknown) {
-    const row = saveChatSticker(this.channels.store, c, input);
+    const row = await saveInspectedChatSticker(this.channels.store, c, input);
     if (c.transport !== 'onebot11') return row;
     const key = c.accountId + ':' + row.sha256;
     while (this.nativeSaves.has(key)) await this.nativeSaves.get(key);
@@ -390,11 +395,11 @@ export class ChatTransports {
     }
   }
   private favoriteImports = new Map<string, Promise<unknown>>();
-  private async importFavoriteStickers(c: ChatConnection, count = 48) {
+  private async importFavoriteStickers(c: ChatConnection, count = 0) {
     assert(
-      Number.isInteger(count) && count >= 1 && count <= 200,
+      Number.isSafeInteger(count) && count >= 0,
       'CHAT_FAVORITES_LIMIT',
-      'Request 1 to 200 favorites.',
+      'Use zero for all available favorites, or a positive count.',
     );
     assert(c.transport === 'onebot11', 'CHAT_UNSUPPORTED', 'This bridge has no favorites adapter.');
     if (this.favoriteImports.has(c.id)) return this.favoriteImports.get(c.id)!;
@@ -404,7 +409,11 @@ export class ChatTransports {
       let details: ReturnType<typeof favoriteDetails> = [];
       let result: unknown;
       try {
-        const raw = await this.socketRequest(c, s, 'fetch_custom_face_detail', { count });
+        const raw = await fetchFavoriteCatalog(
+          (a, p) => this.socketRequest(c, s, a, p),
+          'fetch_custom_face_detail',
+          count,
+        );
         assert(
           Array.isArray(raw) && raw.every((x) => x && typeof x === 'object'),
           'CHAT_FAVORITES_UNSUPPORTED',
@@ -413,7 +422,11 @@ export class ChatTransports {
         details = favoriteDetails(raw);
         result = details.map((x) => x.url);
       } catch {
-        result = await this.socketRequest(c, s, 'fetch_custom_face', { count });
+        result = await fetchFavoriteCatalog(
+          (a, p) => this.socketRequest(c, s, a, p),
+          'fetch_custom_face',
+          count,
+        );
       }
 
       assert(
@@ -423,7 +436,7 @@ export class ChatTransports {
       );
       const imported: string[] = [];
       let failed = 0;
-      for (const url of result.slice(0, count)) {
+      for (const url of [...new Set(count ? result.slice(0, count) : result)]) {
         try {
           assert(this.current(c, s), 'CHAT_CHANGED', 'Chat changed during import.');
           const signal = AbortSignal.any([s.abort.signal, AbortSignal.timeout(20000)]);
@@ -500,11 +513,13 @@ export class ChatTransports {
             messageEventId: event.id,
           });
           imported.push(
-            saveChatSticker(
-              store,
-              c,
-              { reference: 'attachment:' + id, name: 'Favorite ' + hash.slice(0, 8), tags: [] },
-              'favorites',
+            (
+              await saveInspectedChatSticker(
+                store,
+                c,
+                { reference: 'attachment:' + id, name: 'Favorite ' + hash.slice(0, 8), tags: [] },
+                'favorites',
+              )
             ).id,
           );
           markNative(imported[imported.length - 1]);

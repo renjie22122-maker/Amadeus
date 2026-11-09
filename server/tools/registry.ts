@@ -47,7 +47,7 @@ import { executionSettings } from '../../shared/execution.js';
 import { installMedia } from './media.js';
 import { installVideoTools } from './video-tools.js';
 import type { MediaService } from '../services/media.js';
-import { readScopedImage, normalizeImage } from '../services/images.js';
+import { readScopedImage, normalizeImageSequence } from '../services/images.js';
 import { prepareCoordination, commitCoordination } from '../services/coordination-journal.js';
 import { Teams } from '../services/team-space.js';
 import { installPlanning } from './planning.js';
@@ -482,11 +482,12 @@ export function tools() {
     name: 'read_image',
     effect: 'read',
     description:
-      'Inspect actual pixels of a workspace PNG/JPEG/WebP/GIF or public image URL, including local files without an extension. Provide exactly one path, url or mediaRef (attachment:id or media:jobId:outputId from this conversation). Images are decoded, resized to at most 640k pixels and 1 MB, and attached to the next model request. Requires an image-capable current model. Animated files show the first frame. Optional crop uses original unrotated pixel coordinates before resizing, for local detail verification. Use this instead of reading binary data or installing an image library.',
+      'Inspect actual pixels of a workspace PNG/JPEG/WebP/GIF or public image URL, including local files without an extension. Provide exactly one path, url or mediaRef (attachment:id or media:jobId:outputId from this conversation). Images are decoded, resized to at most 640k pixels and 1 MB, and attached to the next model request. Requires an image-capable current model. Animated files provide a chronological contact sheet, up to eight frames by default. Use frameIndices to inspect other frames; unsampled motion is unknown. Optional crop uses original unrotated pixel coordinates before resizing, for local detail verification. Use this instead of reading binary data or installing an image library.',
     schema: z.object({
       path: z.string().min(1).max(2048).optional(),
       url: z.url().optional(),
       mediaRef: z.string().optional(),
+      frameIndices: z.array(z.number().int().min(0)).min(1).max(12).optional(),
       crop: z
         .object({
           left: z.number().int().min(0),
@@ -527,10 +528,14 @@ export function tools() {
         );
       }
       const image = a.mediaRef
-        ? await normalizeImage(mediaOutput!.bytes, a.crop)
+        ? await normalizeImageSequence(mediaOutput!.bytes, a.crop, a.frameIndices)
         : a.url
-          ? await normalizeImage(await fetchPublicImage(a.url, c.signal, c.sourcePolicy), a.crop)
-          : await readScopedImage(c.files, a.path, a.crop);
+          ? await normalizeImageSequence(
+              await fetchPublicImage(a.url, c.signal, c.sourcePolicy),
+              a.crop,
+              a.frameIndices,
+            )
+          : await readScopedImage(c.files, a.path, a.crop, a.frameIndices);
       return {
         content: JSON.stringify({
           path: a.path,

@@ -36,3 +36,22 @@ test('public image fetch denies loopback', async () => {
     /Private|loopback/,
   );
 });
+
+test('animated reading preserves different frames, sequence metadata and explicit frame selection', async () => {
+  const { normalizeImageSequence } = await import('../server/services/images.js');
+  const pixels = Buffer.from([255, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 255]);
+  const gif = await sharp(pixels, { raw: { width: 2, height: 2, channels: 3, pageHeight: 1 } })
+    .gif({ delay: [100, 300], loop: 0 })
+    .toBuffer();
+  const result = await normalizeImageSequence(gif);
+  assert.equal(result.metadata.firstFrameOnly, false);
+  assert.deepEqual((result.metadata as any).animation.sampledFrames, [0, 1]);
+  assert.deepEqual((result.metadata as any).animation.frameTimesMs, [0, 100]);
+  assert.equal((result.metadata as any).animation.durationMs, 400);
+  assert.equal((result.metadata as any).animation.complete, true);
+  const last = await normalizeImageSequence(gif, undefined, [1]);
+  assert.deepEqual((last.metadata as any).animation.sampledFrames, [1]);
+  assert.equal((last.metadata as any).animation.complete, false);
+  await assert.rejects(normalizeImageSequence(gif, undefined, [2]));
+  assert.notEqual(result.url, last.url);
+});

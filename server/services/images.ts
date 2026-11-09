@@ -94,6 +94,86 @@ export async function normalizeImage(data: Buffer, crop?: ImageCrop) {
     },
   };
 }
-export async function readScopedImage(files: FileScope, path: string, crop?: ImageCrop) {
-  return normalizeImage(await files.readBytes(path, 25 * 1024 * 1024), crop);
+export async function readScopedImage(
+  files: FileScope,
+  path: string,
+  crop?: ImageCrop,
+  frames?: number[],
+) {
+  return normalizeImageSequence(await files.readBytes(path, 25 * 1024 * 1024), crop, frames);
+}
+
+/** Chronological contact sheet keeps tool images bounded without hiding motion. */
+export async function normalizeImageSequence(data: Buffer, crop?: ImageCrop, frames?: number[]) {
+  assert(
+    data.length <= 25 * 1024 * 1024 && imageFormat(data),
+    'IMAGE_SIZE',
+    'Use a supported image under 25 MB.',
+  );
+  const meta = await sharp(data, { limitInputPixels: 40000000, failOn: 'error' }).metadata();
+  const pages = meta.pages || 1;
+  const indexes = frames?.length
+    ? [...new Set(frames)].sort((a, b) => a - b)
+    : Array.from({ length: Math.min(pages, 8) }, (_, i) =>
+        Math.round((i * (pages - 1)) / Math.max(1, Math.min(pages, 8) - 1)),
+      );
+  assert(
+    indexes.length <= 12 && indexes.every((i) => Number.isInteger(i) && i >= 0 && i < pages),
+    'IMAGE_FRAMES',
+    'Select up to 12 valid zero-based frame indices.',
+  );
+  if (pages === 1) return normalizeImage(data, crop);
+  const tiles: { input: Buffer; left: number; top: number }[] = [];
+  const columns = Math.min(4, indexes.length),
+    cellWidth = 320,
+    cellHeight = 260;
+  for (const [position, page] of indexes.entries()) {
+    let frame = await sharp(data, { page, pages: 1, limitInputPixels: 40000000, failOn: 'error' })
+      .png()
+      .toBuffer();
+    if (crop) frame = await cropImage(frame, crop);
+    const tile = await sharp(frame)
+      .rotate()
+      .resize(320, 240, { fit: 'contain', background: '#ffffff' })
+      .png()
+      .toBuffer();
+    const left = (position % columns) * cellWidth,
+      top = Math.floor(position / columns) * cellHeight;
+    tiles.push({ input: tile, left, top });
+    const label = Buffer.from(
+      `<svg width="320" height="20"><rect width="100%" height="100%" fill="white"/><text x="4" y="15" font-size="14" fill="black">Frame ${page + 1}</text></svg>`,
+    );
+    tiles.push({ input: label, left, top: top + 240 });
+  }
+  const sheet = await sharp({
+    create: {
+      width: columns * cellWidth,
+      height: Math.ceil(indexes.length / columns) * cellHeight,
+      channels: 3,
+      background: '#ffffff',
+    },
+  })
+    .composite(tiles)
+    .png()
+    .toBuffer();
+  const normalized = await normalizeImage(sheet);
+  return {
+    ...normalized,
+    metadata: {
+      ...normalized.metadata,
+      format: imageFormat(data)!,
+      firstFrameOnly: indexes.length === 1,
+      animation: {
+        totalFrames: pages,
+        sampledFrames: indexes,
+        complete: indexes.length === pages,
+        frameTimesMs: indexes.map((i) =>
+          (meta.delay || []).slice(0, i).reduce((sum, n) => sum + n, 0),
+        ),
+        durationMs: meta.delay?.reduce((sum, n) => sum + n, 0),
+        layout:
+          'left-to-right, then top-to-bottom; labels are one-based frame numbers; unsampled motion is unknown',
+      },
+    },
+  };
 }
