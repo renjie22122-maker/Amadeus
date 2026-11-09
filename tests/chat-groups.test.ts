@@ -1545,3 +1545,50 @@ test('all participation styles explicitly allow silence without granting task au
     /Prefer listening/,
   );
 });
+
+test('shared socket recovery updates sibling routes and ignores stale socket close', async (t) => {
+  const { store, channels, c } = setup(t);
+  const peer = { ...c, id: id(), peerType: 'private', peerId: '123' };
+  const paused = { ...c, id: id(), enabled: false };
+  const foreign = { ...c, id: id(), accountId: 'another-account' };
+  for (const route of [peer, paused, foreign]) store.put('chat-connection', route);
+  const transport: any = new ChatTransports(channels);
+  // Fixture secrets do not require platform encryption for these sibling routes.
+  t.mock.method(channels, 'secrets', () => ({ token: 'fixture' }) as any);
+  class Socket {
+    static OPEN = 1;
+    static CONNECTING = 0;
+    readyState = 0;
+    onopen: any;
+    onclose: any;
+    onerror: any;
+    onmessage: any;
+    close() {}
+    send() {}
+  }
+  t.mock.property(globalThis, 'WebSocket', Socket as any);
+  const session: any = { abort: new AbortController(), pending: new Map(), nextPoll: 0 };
+  transport.status(peer, 'disconnected', 'old failure');
+  transport.connectSocket(c, session);
+  const socket = session.socket;
+  socket.readyState = 1;
+  socket.onopen();
+  assert.equal(store.get<any>('chat-transport-state', peer.id).status, 'connected');
+  assert.equal(store.maybe('chat-transport-state', paused.id), undefined);
+  assert.equal(store.maybe('chat-transport-state', foreign.id), undefined);
+  socket.onclose();
+  assert.equal(store.get<any>('chat-transport-state', c.id).status, 'disconnected');
+  assert.equal(store.get<any>('chat-transport-state', peer.id).status, 'disconnected');
+  session.socket = undefined;
+  session.nextPoll = 0;
+  transport.connectSocket(c, session);
+  session.socket.readyState = 1;
+  session.socket.onopen();
+  socket.onclose();
+  socket.onerror();
+  assert.equal(store.get<any>('chat-transport-state', peer.id).status, 'connected');
+  transport.status(peer, 'delivery-failed', 'needs review');
+  session.socket.onopen();
+  assert.equal(store.get<any>('chat-transport-state', peer.id).status, 'delivery-failed');
+  await transport.close();
+});

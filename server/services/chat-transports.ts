@@ -673,6 +673,18 @@ export class ChatTransports {
       updatedAt: Date.now(),
     });
   }
+  private accountStatus(c: ChatConnection, status: 'connected' | 'disconnected', error?: string) {
+    const key = this.accountKey(c);
+    for (const route of this.channels
+      .list()
+      .filter((r) => r.enabled && this.accountKey(r) === key)) {
+      const prior = this.channels.store.maybe<any>('chat-transport-state', route.id);
+      // Transport recovery must not erase a route-specific delivery or permission error.
+      if (status === 'connected' && prior && !['connected', 'disconnected'].includes(prior.status))
+        continue;
+      this.status(route, status, error);
+    }
+  }
   private stop(s: Session) {
     s.abort.abort();
     clearInterval(s.heartbeat);
@@ -987,9 +999,9 @@ export class ChatTransports {
     s.socket = socket;
     s.openingAt = Date.now();
     socket.onopen = () => {
-      if (!this.current(c, s)) return socket.close();
+      if (!this.current(c, s) || s.socket !== socket) return socket.close();
       if (c.transport !== 'wecom') {
-        this.status(c, 'connected');
+        this.accountStatus(c, 'connected');
         return;
       }
       s.ready = false;
@@ -1009,14 +1021,17 @@ export class ChatTransports {
       s.heartbeat.unref();
     };
     socket.onerror = () => {
-      if (this.current(c, s))
-        this.status(
+      if (this.current(c, s) && s.socket === socket)
+        this.accountStatus(
           c,
           'disconnected',
-          'OneBot connection failed. Check the local bridge and token.',
+          'Chat socket connection failed. Check the bridge and credentials.',
         );
     };
     socket.onclose = () => {
+      if (s.socket !== socket) return;
+      if (this.current(c, s))
+        this.accountStatus(c, 'disconnected', 'Chat socket closed; reconnecting automatically.');
       clearInterval(s.heartbeat);
       s.ready = false;
       s.nextPoll = Date.now() + 10000;
@@ -1026,6 +1041,7 @@ export class ChatTransports {
     socket.onmessage = (event) => {
       if (
         !this.current(c, s) ||
+        s.socket !== socket ||
         typeof event.data !== 'string' ||
         event.data.length >
           (s.downloading ? 72 * 1024 * 1024 : s.querying ? 2 * 1024 * 1024 : 256000)
@@ -1037,10 +1053,10 @@ export class ChatTransports {
           if (data.errcode === 0) {
             s.ready = true;
             s.lastAck = Date.now();
-            this.status(c, 'connected');
+            this.accountStatus(c, 'connected');
           } else {
             socket.close();
-            this.status(c, 'disconnected', 'WeCom authentication rejected.');
+            this.accountStatus(c, 'disconnected', 'WeCom authentication rejected.');
           }
           return;
         }

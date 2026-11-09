@@ -13,3 +13,14 @@ function Get-BotBridgePage($config) {
     $builder.Fragment = ''
     return $builder.Uri.AbsoluteUri
 }
+# Probe only a configured loopback endpoint, without its query, credentials or redirects.
+function Test-BotManagementReady($config) {
+    $uri = $null
+    if (-not [Uri]::TryCreate([string]$config.bridgePage, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @('http','https') -or -not $uri.IsLoopback -or $uri.UserInfo) { return $false }
+    try {
+        $probe = New-Object UriBuilder($uri)
+        $probe.Query = ''; $probe.Fragment = ''
+        $response = Invoke-WebRequest -Uri $probe.Uri.AbsoluteUri -UseBasicParsing -TimeoutSec 2 -MaximumRedirection 0
+        return ([int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 400)
+    } catch { return $false }
+}
