@@ -1,3 +1,4 @@
+import { listKnowledgeDocuments } from '../services/knowledge-discovery.js';
 import { ResearchCases } from '../services/research-case.js';
 import { installResearchTools } from './research.js';
 import { z } from 'zod';
@@ -71,29 +72,14 @@ export function installKnowledgeTools(registry: ToolRegistry) {
     name: 'list_knowledge_documents',
     effect: 'read',
     description:
-      'List current scoped knowledge document IDs and names without vector search. Filter by title before document-specific retrieval.',
+      'List current scoped imported documents without vector search. Search query matches file names AND source directories (including course codes, folder names and normalized separators). Returns source metadata, pagination and relevant import diagnostics. A zero-match result is not proof of failed import, and document counts are not proof of full topic coverage. Paginate and read evidence before claiming completeness.',
     schema: z.object({
       query: z.string().default(''),
       offset: z.number().int().min(0).default(0),
       limit: z.number().int().min(1).max(100).default(30),
     }),
     run: (a, c) => {
-      const docs = c.store
-        .list<any>('document')
-        .filter(
-          (d) =>
-            c.scopes.includes(d.scope) &&
-            documentAt(d, Date.now()) &&
-            String(d.name).toLowerCase().includes(a.query.toLowerCase()),
-        )
-        .sort((a, b) => a.id.localeCompare(b.id));
-      return text({
-        total: docs.length,
-        documents: docs
-          .slice(a.offset, a.offset + a.limit)
-          .map((d) => ({ id: d.id, name: d.name, scope: d.scope })),
-        nextOffset: a.offset + a.limit < docs.length ? a.offset + a.limit : null,
-      });
+      return text(listKnowledgeDocuments(c.store, c.scopes, a.query, a.offset, a.limit));
     },
   });
   registry.add({
