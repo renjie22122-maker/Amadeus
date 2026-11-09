@@ -1,3 +1,6 @@
+import { archiveExtension, inspectArchive } from '../services/archive-reader.js';
+import { identifyAttachment } from '../services/attachment-identification.js';
+import { documentMime } from '../services/file-delivery.js';
 import { deliverFile } from '../services/file-delivery.js';
 import { tokenActivityRoutes } from './token-activity.js';
 import { createVideoAccountSettings } from '../services/video-account-settings.js';
@@ -38,8 +41,8 @@ import Fastify from 'fastify';
 import { randomBytes, createHash } from 'node:crypto';
 import { conditionalState, stateRun } from './state-response.js';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, mkdtemp, rm, open } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { mkdir, readFile, mkdtemp, rm, open, rename } from 'node:fs/promises';
+import { basename, join, resolve, extname } from 'node:path';
 import { z } from 'zod';
 import type { Attachment, Conversation, Project, Skill } from '../../shared/types.js';
 import { AppError, assert, errorMessage } from '../core/errors.js';
@@ -891,10 +894,10 @@ export async function createApp(options: { directory: string; dist?: string; run
       assert(file, 'FILE_REQUIRED', 'Choose a file.');
 
       const key = id(),
-        name = basename(file.filename).replace(/[<>:"|?*]/g, '_'),
         folder = join(directory, 'attachments', key);
+      let name = basename(file.filename).replace(/[<>:"|?*]/g, '_');
       await mkdir(folder, { recursive: true });
-      const path = join(folder, name);
+      let path = join(folder, name);
       let saved;
       try {
         saved = await saveMediaStream(file.file, path);
@@ -902,6 +905,16 @@ export async function createApp(options: { directory: string; dist?: string; run
       } catch (error) {
         await rm(folder, { recursive: true, force: true });
         throw error;
+      }
+      const identified = await identifyAttachment(
+        name,
+        saved.size <= 25 * 1024 * 1024 ? await readFile(path) : saved.head,
+      );
+      if (identified.name !== name) {
+        const recoveredPath = join(folder, identified.name);
+        await rename(path, recoveredPath);
+        name = identified.name;
+        path = recoveredPath;
       }
       const mediaMime = attachmentMediaType(saved.head);
       let text: string;
@@ -914,7 +927,14 @@ export async function createApp(options: { directory: string; dist?: string; run
         text =
           !req.query.scope && mediaMime
             ? mediaAttachmentText(key, mediaMime)
-            : await extract(path, { ocr: !!req.query.scope });
+            : archiveExtension.test(name) && !req.query.scope
+              ? JSON.stringify(
+                  await inspectArchive(path).catch(() => ({
+                    error:
+                      'ARCHIVE_INSPECTION_FAILED: original preserved; decoder unavailable or inspection budget exceeded',
+                  })),
+                )
+              : await extract(path, { ocr: !!req.query.scope });
       } catch (error) {
         await rm(folder, { recursive: true, force: true });
         throw error;
@@ -938,6 +958,8 @@ export async function createApp(options: { directory: string; dist?: string; run
         name,
         mime:
           mediaMime ||
+          identified.mime ||
+          documentMime[extname(name).toLowerCase()] ||
           (/^(image|audio|video)\//.test(file.mimetype)
             ? 'application/octet-stream'
             : file.mimetype),

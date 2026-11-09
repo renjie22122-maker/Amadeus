@@ -79,7 +79,7 @@ export function listKnowledgeDocuments(
     nextOffset: offset + limit < matches.length ? offset + limit : null,
     maintenance,
     notice:
-      'This is a metadata inventory of currently accessible imported documents, not a course completeness assessment or read evidence. No matches do not establish missing import: names and directories may use other identifiers. Inspect source metadata, paginate, and distinguish current scan progress from recorded failures. Imported document counts do not prove all files or topics are covered. Search/read passages before claiming content coverage. Source paths are metadata, not permission to access host files.',
+      'This is a metadata inventory of currently accessible imported documents, not a course completeness assessment or read evidence. No matches do not establish missing import: names and directories may use other identifiers. Inspect source metadata, paginate, and distinguish current scan progress from recorded failures. Imported document counts do not prove all files or topics are covered. Search/read passages before claiming content coverage. Source paths are metadata, not permission to access host files. When the user requests an original file, use send_knowledge_file with a returned document ID; it verifies the registered original without granting arbitrary host paths. Do not assume remote chat cannot deliver registered knowledge originals.',
   };
 }
 

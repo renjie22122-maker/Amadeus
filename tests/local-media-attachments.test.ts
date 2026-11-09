@@ -131,7 +131,9 @@ test('local media upload, range playback, scope and integrity are preserved', as
     assert.equal(v.statusCode, 200, v.body);
     assert.equal(store.get<any>('attachment', v.json().id).mime, 'video/mp4');
     const bad = await upload(Buffer.from('<html>bad</html>'), 'fake.mp4', 'video/mp4');
-    assert.notEqual(bad.statusCode, 200);
+    assert.equal(bad.statusCode, 200);
+    assert.equal(store.get<any>('attachment', bad.json().id).mime, 'text/html');
+    assert.equal(store.get<any>('attachment', bad.json().id).name, 'fake.html');
     const kb = await upload(wav, 'recording.wav', 'audio/wav', 'scope=general');
     assert.notEqual(kb.statusCode, 200, 'media must not become a pretend document transcript');
   } finally {

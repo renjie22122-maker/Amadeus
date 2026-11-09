@@ -492,10 +492,12 @@ function onebotMedia(parts: any, v12: boolean): { text: string; media: ChatRemot
   const media: ChatRemoteFile[] = parts
     .filter((p) => p.type !== 'text')
     .map((p) => ({
-      id: v12 ? p.data?.file_id : p.data?.file,
+      id: v12 ? p.data?.file_id : p.data?.file_id || p.data?.file,
       url: !v12 ? p.data?.url : undefined,
       name:
         p.data?.name ||
+        p.data?.file_name ||
+        p.data?.filename ||
         p.type +
           (p.type === 'image'
             ? '.jpg'

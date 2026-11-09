@@ -60,6 +60,7 @@ export const coreTools = new Set([
   'find_skills',
   'read_skill',
   'search_knowledge',
+  'send_knowledge_file',
   'read_spill',
   'inspect_operations',
   'resolve_effect',

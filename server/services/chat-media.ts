@@ -1,3 +1,6 @@
+import { archiveExtension, inspectArchive } from './archive-reader.js';
+import { identifyAttachment } from './attachment-identification.js';
+import { chatTextExtension } from './attachment-text-repair.js';
 import https from 'node:https';
 import { lookup } from 'node:dns/promises';
 import { createHash, createDecipheriv } from 'node:crypto';
@@ -112,10 +115,14 @@ export async function storeChatAttachment(
     );
   const key = id(),
     folder = join(directory, 'attachments', key);
-  const name =
+  const identified = await identifyAttachment(
     basename(file.name.replaceAll('\\', '/'))
       .replace(/[<>:"|?*\x00-\x1f]/g, '_')
-      .slice(0, 180) || 'attachment';
+      .slice(0, 180) || 'attachment',
+    bytes,
+  );
+  const name = identified.name;
+  assert(!identified.executable, 'CHAT_MEDIA_TYPE', 'Executable attachments are not accepted.');
   const extension = extname(name).toLowerCase();
   assert(
     !['.exe', '.dll', '.com', '.msi', '.lnk', '.scr'].includes(extension),
@@ -130,26 +137,43 @@ export async function storeChatAttachment(
     let text = mime
       ? mediaAttachmentText(key, mime)
       : 'Remote file attachment. Content has not been interpreted.';
-    if (!mime && /\.(pdf|docx|xlsx|csv|txt|md|json)$/i.test(name)) {
+    if (!mime && (/\.(pdf|docx|xlsx)$/i.test(name) || chatTextExtension.test(name))) {
       assert(
         saved.size <= 25 * 1024 * 1024,
         'CHAT_DOCUMENT_SIZE',
         'Document parsing budget is 25 MiB.',
       );
-      text = await extract(path, { ocr: true });
+      try {
+        text = await extract(path, { ocr: true });
+      } catch {
+        signal.throwIfAborted();
+        text =
+          '[Attachment bytes preserved. Document text extraction failed; use an appropriate document inspection tool. Do not infer that the file could not be downloaded.]';
+      }
+    }
+    if (archiveExtension.test(name)) {
+      try {
+        text = JSON.stringify(await inspectArchive(path, undefined, signal));
+      } catch {
+        signal.throwIfAborted();
+        text =
+          '[Archive bytes preserved. Decoder unavailable or inspection limit reached. Use read_attachment to retry.]';
+      }
     }
     signal.throwIfAborted();
-    const a: Attachment & { remoteInboxId: string } = {
+    const a: Attachment & { remoteInboxId: string; originalName: string; typeEvidence: string } = {
       id: key,
       conversationId,
       name,
-      mime: mime || documentMime[extension] || 'application/octet-stream',
+      mime: mime || identified.mime || documentMime[extension] || 'application/octet-stream',
       path,
       size: saved.size,
       sha256: saved.sha256,
       text,
       createdAt: Date.now(),
       remoteInboxId: inboxId,
+      originalName: file.name,
+      typeEvidence: identified.evidence,
     };
     store.put('attachment', a);
     store.event(conversationId, null, 'attachment.added', {
