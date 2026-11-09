@@ -12,6 +12,8 @@ export const documentMime: Record<string, string> = {
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.tex': 'application/x-tex',
+  '.latex': 'application/x-tex',
+  '.htm': 'text/html',
   '.rtf': 'application/rtf',
   '.md': 'text/markdown',
   '.txt': 'text/plain',
@@ -25,7 +27,7 @@ export const documentMime: Record<string, string> = {
 export async function deliverFile(
   store: Store,
   conversationId: string,
-  runId: string,
+  runId: string | null,
   name: string,
   source: AsyncIterable<Uint8Array> | Iterable<Uint8Array>,
   signal?: AbortSignal,
@@ -41,7 +43,13 @@ export async function deliverFile(
     name = basename(name.replaceAll('\\', '/')).replace(/[\x00-\x1f\x7f]/g, '_');
     const prior = store
       .attachmentMetadata(conversationId)
-      .find((a: any) => a.deliveryRunId === runId && a.name === name && a.sha256 === saved.sha256);
+      .find(
+        (a: any) =>
+          runId !== null &&
+          a.deliveryRunId === runId &&
+          a.name === name &&
+          a.sha256 === saved.sha256,
+      );
     if (prior) {
       await rm(folder, { recursive: true, force: true });
       return {
@@ -54,7 +62,7 @@ export async function deliverFile(
       };
     }
     const mime = documentMime[extname(name).toLowerCase()] || 'application/octet-stream';
-    const attachment: Attachment & { deliveryRunId: string } = {
+    const attachment: Attachment & { deliveryRunId: string | null } = {
       id: key,
       conversationId,
       name,

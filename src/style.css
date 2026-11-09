@@ -4667,3 +4667,14 @@ input.team-switch:checked::after {
 .draft-attachment .local-media-attachment {
   width: 220px;
 }
+
+.workbench-editor {
+  width: 100%;
+  min-height: 60vh;
+  resize: vertical;
+  font-family: monospace;
+  box-sizing: border-box;
+}
+.workbench-actions {
+  flex-wrap: wrap;
+}

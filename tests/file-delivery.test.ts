@@ -100,3 +100,57 @@ test('delivered files are immutable, authenticated, deduplicated per run, and do
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('user text revisions preserve originals, enforce complete input and keep provenance without remote delivery', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'amadeus-revisions-'));
+  const { app, store } = await createApp({ directory: dir });
+  try {
+    const boot = await app.inject({ url: '/api/bootstrap', headers: { host: 'localhost' } });
+    const headers = {
+      host: 'localhost',
+      cookie: String(boot.headers['set-cookie']).split(';')[0],
+      'x-csrf-token': boot.json().csrf,
+    };
+    const chat = (
+      await app.inject({ method: 'POST', url: '/api/conversations', headers, payload: {} })
+    ).json();
+    const original = await deliverFile(store, chat.id, 'r', 'page.html', [
+      Buffer.from('<h1>Original</h1>'),
+    ]);
+    const url = original.downloadUrl + '/revisions';
+    const save = (payload: any, h = headers) =>
+      app.inject({ method: 'POST', url, headers: h, payload });
+    assert.equal(
+      (await save({ text: 'changed', sha256: original.sha256 }, { ...headers, 'x-csrf-token': '' }))
+        .statusCode,
+      403,
+    );
+    assert.notEqual((await save({ text: 'changed', sha256: 'wrong' })).statusCode, 200);
+    assert.notEqual(
+      (await save({ text: 'x'.repeat(270000), sha256: original.sha256 })).statusCode,
+      200,
+    );
+    const revised = await save({ text: '<h1>Edited</h1>', sha256: original.sha256 });
+    assert.equal(revised.statusCode, 200);
+    assert.notEqual(revised.json().id, original.id);
+    assert.equal(
+      (await app.inject({ url: original.downloadUrl, headers })).body,
+      '<h1>Original</h1>',
+    );
+    assert.equal(store.get<any>('attachment-revision', revised.json().id).parentId, original.id);
+    assert.equal(store.get<any>('attachment', revised.json().id).conversationId, chat.id);
+    assert.equal(
+      store
+        .events(chat.id)
+        .filter((e) => e.type === 'file.attached')
+        .at(-1)?.runId,
+      null,
+    );
+    const repeated = await save({ text: '<h1>Edited</h1>', sha256: original.sha256 });
+    assert.notEqual(repeated.json().id, revised.json().id);
+    assert.equal(store.db.prepare('SELECT count(*) AS n FROM chat_outbox').get()!.n, 0);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

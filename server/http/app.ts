@@ -1,3 +1,4 @@
+import { deliverFile } from '../services/file-delivery.js';
 import { tokenActivityRoutes } from './token-activity.js';
 import { createVideoAccountSettings } from '../services/video-account-settings.js';
 import { memoryReviewViews } from '../services/memory-conflict-review.js';
@@ -34,7 +35,7 @@ import { inspectionRoutes } from './inspection.js';
 import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
 import Fastify from 'fastify';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { conditionalState, stateRun } from './state-response.js';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, mkdtemp, rm, open } from 'node:fs/promises';
@@ -943,6 +944,47 @@ export async function createApp(options: { directory: string; dist?: string; run
       return { id: key, name, size: saved.size };
     },
   );
+  app.post<{ Params: { id: string } }>('/api/attachments/:id/revisions', async (req) => {
+    const original = store.get<Attachment>('attachment', req.params.id);
+    const body = z.object({ text: z.string(), sha256: z.string() }).parse(req.body);
+    assert(
+      /\.(txt|md|markdown|csv|tsv|json|jsonl|yaml|yml|xml|html?|svg|tex|latex|log|py|js|jsx|ts|tsx|css|sh|ps1|sql|toml|ini)$/i.test(
+        original.name,
+      ),
+      'PREVIEW_TYPE',
+      'Only text attachments can be edited.',
+    );
+    assert(
+      original.sha256 === body.sha256,
+      'ATTACHMENT_CHANGED',
+      'The source attachment changed; reload before saving.',
+    );
+    assert(
+      original.size <= 256 * 1024 &&
+        Buffer.byteLength(body.text, 'utf8') <= 256 * 1024 &&
+        !body.text.includes('\0'),
+      'EDIT_SIZE',
+      'Editing requires complete text within 256 KiB.',
+    );
+    const current = await readFile(original.path);
+    assert(
+      !current.includes(0) && createHash('sha256').update(current).digest('hex') === body.sha256,
+      'ATTACHMENT_CHANGED',
+      'The original bytes changed; reload before saving.',
+    );
+    // A user revision is a new local artifact, never a model delivery or a workspace overwrite.
+    const saved = await deliverFile(store, original.conversationId, null, original.name, [
+      Buffer.from(body.text),
+    ]);
+    store.put('attachment-revision', {
+      id: saved.id,
+      parentId: original.id,
+      sourceSha256: original.sha256,
+      author: 'user',
+      createdAt: Date.now(),
+    });
+    return saved;
+  });
   app.get<{
     Params: { id: string };
     Querystring: { preview?: string; inline?: string; view?: string };
@@ -950,7 +992,7 @@ export async function createApp(options: { directory: string; dist?: string; run
     const a = store.get<Attachment>('attachment', req.params.id);
     if (req.query.view === 'text') {
       assert(
-        /\.(txt|md|markdown|csv|tsv|json|jsonl|yaml|yml|xml|html?|svg|tex|log|py|js|jsx|ts|tsx|css|sh|ps1|sql|toml|ini)$/i.test(
+        /\.(txt|md|markdown|csv|tsv|json|jsonl|yaml|yml|xml|html?|svg|tex|latex|log|py|js|jsx|ts|tsx|css|sh|ps1|sql|toml|ini)$/i.test(
           a.name,
         ),
         'PREVIEW_TYPE',
@@ -962,7 +1004,7 @@ export async function createApp(options: { directory: string; dist?: string; run
         const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
         const text = buffer.subarray(0, bytesRead).toString('utf8');
         assert(!text.includes('\0'), 'BINARY_FILE', 'Binary content cannot be previewed as text.');
-        return { text, truncated: (await handle.stat()).size > bytesRead };
+        return { text, truncated: (await handle.stat()).size > bytesRead, sha256: a.sha256 };
       } finally {
         await handle.close();
       }

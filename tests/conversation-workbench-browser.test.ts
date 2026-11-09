@@ -122,12 +122,27 @@ test(
         text: 'Final report ready',
         final: true,
       });
+      await deliverFile(created.store, c.id, 'r', 'interactive.HTML', [
+        Buffer.from(
+          `<!doctype html><html><head><style>h1{color:rgb(12,34,56)}</style></head><body><h1>Rendered HTML</h1><button onclick="document.querySelector('h1').textContent='Clicked'">Try interaction</button><script>try{parent.pwned=true}catch{};fetch('/api/config').catch(()=>{});</script></body></html>`,
+        ),
+      ]);
+      await deliverFile(created.store, c.id, 'r', 'large.htm', [
+        Buffer.from('<h1>Incomplete HTML must not run</h1>' + ' '.repeat(270000)),
+      ]);
+      await deliverFile(created.store, c.id, 'r', 'formula.tex', [Buffer.from(String.raw`E=mc^2`)]);
+      await deliverFile(created.store, c.id, 'r', 'drawing.svg', [
+        Buffer.from(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><circle cx="50" cy="50" r="40" fill="red"/></svg>',
+        ),
+      ]);
       await app.listen({ host: '127.0.0.1', port: 0 });
       browser = await chromium.launch({ channel: 'msedge', headless: true });
       const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
       const errors: string[] = [];
       page.on('pageerror', (e) => errors.push(e.message));
       await page.addInitScript(() => {
+        if (window !== window.top) return;
         localStorage.setItem('agentdemo.language', 'en');
         localStorage.setItem('agentdemo.chat', 'workbench');
       });
@@ -203,6 +218,66 @@ test(
       assert.ok(
         (await page.locator('.workbench-body pre').textContent())?.includes('# Report preview'),
       );
+      await page
+        .getByRole('button', { name: '打开 / Open · interactive.HTML', exact: true })
+        .click();
+      const htmlFrame = page.frameLocator('.workbench iframe');
+      await htmlFrame.getByRole('heading', { name: 'Rendered HTML' }).waitFor();
+      assert.equal(
+        await htmlFrame.locator('h1').evaluate((el) => getComputedStyle(el).color),
+        'rgb(12, 34, 56)',
+      );
+      assert.equal(
+        await page.locator('.workbench iframe').getAttribute('sandbox'),
+        'allow-scripts',
+      );
+      await htmlFrame.getByRole('button', { name: 'Try interaction' }).click();
+      await htmlFrame.getByRole('heading', { name: 'Clicked' }).waitFor();
+      assert.equal(await page.evaluate(() => (window as any).pwned), undefined);
+      await page.getByRole('button', { name: 'Source', exact: true }).click();
+      assert.match(await page.locator('.workbench-body pre').innerText(), /<!doctype html>/);
+      await page
+        .locator('.workbench')
+        .getByRole('button', { name: 'Preview', exact: true })
+        .click();
+      await htmlFrame.getByRole('heading', { name: 'Rendered HTML' }).waitFor();
+      await page.locator('.workbench').getByRole('button', { name: 'Edit', exact: true }).click();
+      await page
+        .getByRole('textbox', { name: 'Edit file content' })
+        .fill('<h1>User revised page</h1>');
+      page.once('dialog', (dialog) => dialog.dismiss());
+      await page.getByRole('button', { name: 'Close panel', exact: true }).click();
+      assert.equal(
+        await page.getByRole('textbox', { name: 'Edit file content' }).inputValue(),
+        '<h1>User revised page</h1>',
+      );
+      await page.getByRole('button', { name: 'Save new version' }).click();
+      await htmlFrame.getByRole('heading', { name: 'User revised page' }).waitFor();
+      const revisions = created.store.list<any>('attachment-revision');
+      assert.equal(revisions.length, 1);
+      const original = created.store.get<any>('attachment', revisions[0].parentId);
+      const originalText = await app.inject({
+        method: 'GET',
+        url: '/api/attachments/' + original.id + '?view=text',
+        headers: {
+          cookie: (await page.context().cookies()).map((c) => c.name + '=' + c.value).join('; '),
+        },
+      });
+      assert.match(originalText.json().text, /Rendered HTML/);
+      await page.getByRole('button', { name: '打开 / Open · large.htm', exact: true }).click();
+      await page.locator('.workbench-body pre').waitFor();
+      assert.equal(await page.locator('.workbench iframe').count(), 0);
+      assert.match(
+        await page.locator('.workbench-body').innerText(),
+        /Truncated HTML is not executed/,
+      );
+      await page.getByRole('button', { name: '打开 / Open · formula.tex', exact: true }).click();
+      await page.locator('.workbench .katex').waitFor();
+      await page.locator('.workbench').getByRole('button', { name: 'Source', exact: true }).click();
+      assert.equal(await page.locator('.workbench pre').innerText(), 'E=mc^2');
+      await page.getByRole('button', { name: '打开 / Open · drawing.svg', exact: true }).click();
+      await page.frameLocator('.workbench iframe').locator('svg circle').waitFor();
+      assert.equal(await page.locator('.workbench iframe').getAttribute('sandbox'), '');
       await page.getByRole('button', { name: 'Operations', exact: true }).click();
       await page.getByAltText('Captured tool frame').waitFor();
       await page.waitForFunction(
