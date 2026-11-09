@@ -56,3 +56,29 @@ test('isolated analysis tools are never advertised on a host backend', () => {
     );
   }
 });
+
+test('proactive chat can inspect existing Office data but cannot edit, export or execute', () => {
+  const proactive = {
+    ...ctx,
+    conversation: { permission: 'ask', remoteChatOnly: true },
+    store: { maybe: (kind: string) => (kind === 'chat-proactive-run' ? {} : undefined) },
+  } as any;
+  for (const name of ['office_open', 'office_query', 'office_read'])
+    assert.equal(capabilityDecision(proactive, name, 'read').allowed, true, name);
+  for (const name of [
+    'office_export',
+    'office_edit',
+    'office_create',
+    'send_knowledge_file',
+    'run_command',
+  ])
+    assert.equal(capabilityDecision(proactive, name, 'write').reason, 'proactive-read-only', name);
+  const limited = {
+    ...proactive,
+    conversation: { ...proactive.conversation, allowedTools: ['read_attachment'] },
+  };
+  assert.equal(
+    capabilityDecision(limited, 'office_query', 'read').reason,
+    'tool-not-in-allowed-set',
+  );
+});

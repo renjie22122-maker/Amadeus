@@ -35,7 +35,7 @@ async function session(c: ToolContext, key: string) {
     );
   } else {
     assert(
-      !c.conversation.remoteChatOnly,
+      !c.conversation.remoteChatOnly && !c.store.maybe?.('chat-proactive-run', c.run?.id),
       'OFFICE_SCOPE',
       'Ordinary chat can only process its received attachments.',
     );
@@ -112,7 +112,7 @@ export function installOfficeTools(registry: ToolRegistry) {
         source = new FileScope([dirname(item.path)]).readChunks(basename(item.path), c.signal);
       } else {
         assert(
-          !c.conversation.remoteChatOnly,
+          !c.conversation.remoteChatOnly && !c.store.maybe('chat-proactive-run', c.run.id),
           'OFFICE_SCOPE',
           'Ordinary chat cannot read host paths.',
         );

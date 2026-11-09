@@ -254,8 +254,14 @@ export class ToolRegistry {
           ' Command backend remains unavailable; no further commands will be requested in this run. Use Settings diagnostics; do not repeat probes.',
       );
 
-    if (!def || !this.specs(ctx).some((d) => d.name === name))
-      throw new NotStartedError('TOOL_DENIED', 'Tool unavailable in the current task permissions.');
+    const initialAdmission = def ? capabilityDecision(ctx, name, def.effect) : undefined;
+    if (!def || !initialAdmission?.allowed)
+      throw new NotStartedError(
+        'TOOL_DENIED',
+        'Tool unavailable in the current task permissions: ' +
+          (initialAdmission?.reason || 'unregistered-tool') +
+          '.',
+      );
     const related = relatedToolNames([name]);
     if (related.length > 1) {
       const old = ctx.store.maybe<{ names: string[] }>('tool-selection', ctx.run.id)?.names || [];
