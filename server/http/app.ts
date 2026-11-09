@@ -921,7 +921,15 @@ export async function createApp(options: { directory: string; dist?: string; run
       }
       if (req.query.scope) {
         checkScope(req.query.scope);
-        return runtime.knowledge.import(req.query.scope, name, text);
+        const doc: any = runtime.knowledge.import(req.query.scope, name, text);
+        store.put('knowledge-original', {
+          id: doc.id,
+          scope: req.query.scope,
+          path,
+          hash: saved.sha256,
+          size: saved.size,
+        });
+        return doc;
       }
       const c = conversation!;
       const attachment: Attachment = {

@@ -170,6 +170,7 @@ const toolFamilies = [
     'investigate_research_gap',
     'read_knowledge_context',
     'read_knowledge_document',
+    'send_knowledge_file',
   ],
   [
     'media_services',

@@ -47,6 +47,7 @@ export const socialChatTools = new Set([
   'search_knowledge',
   'list_knowledge_documents',
   'read_knowledge_document',
+  'send_knowledge_file',
   'investigate_knowledge',
   'assess_retrieval',
   'inspect_retrieval_trace',

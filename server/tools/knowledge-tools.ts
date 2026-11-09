@@ -1,3 +1,4 @@
+import { deliverKnowledge } from '../services/knowledge-delivery.js';
 import { listKnowledgeDocuments } from '../services/knowledge-discovery.js';
 import { ResearchCases } from '../services/research-case.js';
 import { installResearchTools } from './research.js';
@@ -11,6 +12,17 @@ const text = (value: unknown) => ({
 });
 export function installKnowledgeTools(registry: ToolRegistry) {
   installResearchTools(registry);
+  registry.add({
+    name: 'send_knowledge_file',
+    effect: 'write',
+    description:
+      'When the user requests a knowledge-library file, attach its verified original to this conversation. Connected QQ/chat routes use the existing file delivery queue. Accepts only accessible current document IDs, never arbitrary paths or recipients. Original is the default; extracted-text is an explicitly labeled fallback requiring user intent, not a substitute original. Do not send files merely because they were retrieved. Platform receipt, not attachment creation, confirms remote delivery.',
+    schema: z.object({
+      documentId: z.string(),
+      format: z.enum(['original', 'extracted-text']).default('original'),
+    }),
+    run: async (a, c) => text(await deliverKnowledge(c, a.documentId, a.format)),
+  });
   registry.add({
     name: 'read_knowledge_document',
     effect: 'read',
