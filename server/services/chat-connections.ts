@@ -1,3 +1,4 @@
+import { localLoginStatus } from './chat-login-status.js';
 import { stickerContext } from './chat-stickers.js';
 import { chatReplyPolicy } from './chat-reply-policy.js';
 import { recordChatMemorySource } from './chat-memory-source.js';
@@ -1503,6 +1504,9 @@ export class ChatConnections {
     const own = this.store.maybe<any>('chat-transport-state', c.id);
     if (!c.enabled)
       return own?.status === 'reauthorize' ? own : { status: 'paused', reason: 'manual' };
+    const login = localLoginStatus(this.directory, c);
+    if (login && (!own || ['connected', 'connecting', 'disconnected'].includes(own.status)))
+      return login;
     if (own) return own;
     const peer = this.list().find(
       (x) =>

@@ -147,9 +147,13 @@ export function ChatConnectionsPage({
                     ? tr('已手动停用', 'Manually disabled')
                     : c.status.status === 'connected'
                       ? tr('已连接', 'Connected')
-                      : c.status.status === 'disconnected'
-                        ? tr('连接断开', 'Disconnected')
-                        : c.status.status}
+                      : c.status.status === 'login-required'
+                        ? tr('等待扫码登录', 'Login required')
+                        : c.status.status === 'login-confirming'
+                          ? tr('等待登录确认', 'Confirming login')
+                          : c.status.status === 'disconnected'
+                            ? tr('连接断开', 'Disconnected')
+                            : c.status.status}
               </span>
             </div>
             <p>

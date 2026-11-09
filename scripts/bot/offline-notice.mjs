@@ -1,3 +1,4 @@
+import { createLoginProbe, LoginPrompt } from './login-health.mjs';
 import { BridgeHealth } from './bridge-health.mjs';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +50,50 @@ const atomic = (path, data) => {
   writeFileSync(temp, JSON.stringify(data), { mode: 0o600 });
   renameSync(temp, path);
 };
+const loginStatusFile = c.statusFile + '.login.json';
+let loginSaved = {};
+try {
+  loginSaved = JSON.parse(readFileSync(loginStatusFile, 'utf8'));
+} catch {}
+const loginPrompt = new LoginPrompt(loginSaved),
+  loginProbe = createLoginProbe(all);
+let lastLoginProbe = 0;
+async function inspectLogin() {
+  if (Date.now() - lastLoginProbe < 15000) return;
+  lastLoginProbe = Date.now();
+  const state = await loginProbe();
+  const open = loginPrompt.observe(state);
+  atomic(loginStatusFile, {
+    state,
+    accountId: c.accountId,
+    endpoint: c.bridgeUrl,
+    at: Date.now(),
+    prompted: loginPrompt.prompted,
+  });
+  if (open && all.bridgeHealth?.openLoginOnDisconnect !== false) {
+    await new Promise((resolve) =>
+      execFile(
+        all.powershell,
+        [
+          '-NoProfile',
+          '-WindowStyle',
+          'Hidden',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          fileURLToPath(new URL('./Open-Login.ps1', import.meta.url)),
+          '-Config',
+          resolveConfig,
+        ],
+        { windowsHide: true, timeout: 15000 },
+        (error) => {
+          if (error) loginPrompt.prompted = false;
+          resolve();
+        },
+      ),
+    );
+  }
+}
 let bridgeHealthState = 'not-probed';
 const status = (state) =>
   atomic(c.statusFile, {
@@ -244,6 +289,7 @@ async function poll() {
   try {
     await engine.poll();
     await inspectBridge();
+    await inspectLogin();
     status(
       ws?.readyState === 1
         ? engine.failures >= c.failureThreshold

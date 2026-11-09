@@ -38,6 +38,7 @@
   },
   "bridgeHealth": {
     "enabled": false,
-    "autoReconnect": false
+    "autoReconnect": false,
+    "openLoginOnDisconnect": true
   }
 }
