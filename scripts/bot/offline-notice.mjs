@@ -1,3 +1,4 @@
+import { BotHealthHistory } from './health-history.mjs';
 import { createLoginProbe, LoginPrompt } from './login-health.mjs';
 import { BridgeHealth } from './bridge-health.mjs';
 import { execFile } from 'node:child_process';
@@ -50,6 +51,16 @@ const atomic = (path, data) => {
   writeFileSync(temp, JSON.stringify(data), { mode: 0o600 });
   renameSync(temp, path);
 };
+const historyFile = c.statusFile + '.history.json';
+let savedHistory = [];
+try {
+  const raw = readFileSync(historyFile, 'utf8');
+  if (raw.length <= 100000) savedHistory = JSON.parse(raw);
+} catch {}
+const history = new BotHealthHistory(savedHistory);
+const recordState = (source, state) => {
+  if (history.observe(source, state)) atomic(historyFile, history.entries);
+};
 const loginStatusFile = c.statusFile + '.login.json';
 let loginSaved = {};
 try {
@@ -62,6 +73,7 @@ async function inspectLogin() {
   if (Date.now() - lastLoginProbe < 15000) return;
   lastLoginProbe = Date.now();
   const state = await loginProbe();
+  recordState('login', state);
   const open = loginPrompt.observe(state);
   atomic(loginStatusFile, {
     state,
@@ -95,13 +107,16 @@ async function inspectLogin() {
   }
 }
 let bridgeHealthState = 'not-probed';
-const status = (state) =>
+const status = (state) => {
+  recordState('watcher', state);
+  recordState('bridge', bridgeHealthState);
   atomic(c.statusFile, {
     state,
     bridgeHealth: bridgeHealthState,
     healthFailures: engine.failures,
     at: new Date().toISOString(),
   });
+};
 let saved = {};
 try {
   saved = JSON.parse(readFileSync(c.ledgerFile, 'utf8'));
