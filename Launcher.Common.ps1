@@ -106,7 +106,9 @@ function Test-AmadeusSupervisor([string]$Data) {
         $taskOwner = Get-Process -Id ([int]$taskLock.pid) -ErrorAction Stop
         if ($null -eq $taskOwner) { return $false }
         try {
-            $taskStartedAt = ([DateTimeOffset]($taskOwner.StartTime.ToUniversalTime())).ToUnixTimeMilliseconds()
+            try { $taskCreated = $taskOwner.StartTime.ToUniversalTime() }
+            catch { $taskCreated = (Get-CimInstance Win32_Process -Filter ('ProcessId=' + [int]$taskLock.pid) -ErrorAction Stop).CreationDate.ToUniversalTime() }
+            $taskStartedAt = ([DateTimeOffset]$taskCreated).ToUnixTimeMilliseconds()
             if ($taskLock.startedAt) { return ([Math]::Abs([double]$taskLock.startedAt - $taskStartedAt) -le 1) }
             $taskWrittenAt = ([DateTimeOffset]((Get-Item -LiteralPath $taskLockPath).LastWriteTimeUtc)).ToUnixTimeMilliseconds()
             return ($taskStartedAt -le $taskWrittenAt + 1000)

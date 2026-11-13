@@ -15,7 +15,7 @@ export function processStartedAt(pid) {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        `$ErrorActionPreference='Stop'; [DateTimeOffset]::new((Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()`,
+        `$ErrorActionPreference='Stop'; [DateTimeOffset]::new((Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' -ErrorAction Stop).CreationDate.ToUniversalTime()).ToUnixTimeMilliseconds()`,
       ],
       { encoding: 'utf8', windowsHide: true, timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] },
     ).trim();
