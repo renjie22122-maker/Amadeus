@@ -16,6 +16,7 @@ export class LoginPrompt {
   constructor(saved = {}) {
     this.prompted = saved.prompted === true;
     this.since = 0;
+    this.waitState = null;
   }
   observe(state, now = Date.now()) {
     if (state === 'online') {
@@ -23,12 +24,16 @@ export class LoginPrompt {
       this.since = 0;
       return false;
     }
-    if (state !== 'login-required') {
+    if (!['login-required', 'reconnecting', 'login-confirming'].includes(state)) {
       this.since = 0;
       return false;
     }
-    if (!this.since) this.since = now;
-    if (this.prompted || now - this.since < 15000) return false;
+    if (!this.since || this.waitState !== state) {
+      this.since = now;
+      this.waitState = state;
+    }
+    const delay = state === 'login-required' ? 15000 : 120000;
+    if (this.prompted || now - this.since < delay) return false;
     this.prompted = true;
     return true;
   }

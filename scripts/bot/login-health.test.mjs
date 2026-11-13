@@ -20,3 +20,16 @@ test('only explicit login evidence opens a page, once per outage including watch
   restarted.observe('login-required', 110000);
   assert.equal(restarted.observe('login-required', 126000), true);
 });
+
+test('stuck reconnect/confirmation opens login once without a restart loop', () => {
+  for (const state of ['reconnecting', 'login-confirming']) {
+    const p = new LoginPrompt();
+    assert.equal(p.observe(state, 1000), false);
+    assert.equal(p.observe(state, 120999), false);
+    assert.equal(p.observe(state, 121000), true);
+    assert.equal(p.observe(state, 200000), false);
+    p.observe('online', 210000);
+    assert.equal(p.observe('login-required', 211000), false);
+    assert.equal(p.observe('login-required', 226000), true);
+  }
+});
