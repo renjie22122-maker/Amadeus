@@ -12,6 +12,7 @@ export function patchLoginRecovery(bytes) {
   const end = source.indexOf('class LAe {', start);
   const event = 'const i = `[KickedOffLine] [${r.tipsTitle}] ${r.tipsDesc}`;';
   if (
+    !source.includes('const e = UAe({') ||
     start < 0 ||
     end < start ||
     source.indexOf(event) < 0 ||
@@ -32,8 +33,12 @@ export function patchLoginRecovery(bytes) {
     '\n' +
     safeLoginReason.toString() +
     '\n' +
-    'function UAe(options) { console.warn("[AmadeusLoginRecovery] ready v1"); return createLoginRecovery({ ...options, report: (event) => console.warn("[AmadeusLoginRecovery]", JSON.stringify(event)) }); }\n';
+    'function UAe(options) { options.report?.({ state: "recovery-ready", attempt: 0 }); return createLoginRecovery(options); }\n';
   source = source.slice(0, start) + helpers + source.slice(end);
+  source = source.replace(
+    'const e = UAe({',
+    'const e = UAe({ report: (event) => this.context.logger.logWarn("[AmadeusLoginRecovery]", JSON.stringify(event)),',
+  );
   source = source.replace(
     event,
     event +

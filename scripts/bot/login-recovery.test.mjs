@@ -106,7 +106,7 @@ test('patch refuses unknown layout, preserves arbitrary bytes and is idempotent'
   assert.throws(() => patchLoginRecovery(Buffer.from('unknown')), /Unsupported/);
   const prefix = Buffer.from([255, 254, 128]);
   const source = Buffer.from(
-    '\nfunction UAe({kickedDelayMs: i = 3500, selfOfflineDelayMs: o = 6e4}) { r(c).then(() => {}); }\nclass LAe {}\nconst i = `[KickedOffLine] [${r.tipsTitle}] ${r.tipsDesc}`;',
+    '\nfunction UAe({kickedDelayMs: i = 3500, selfOfflineDelayMs: o = 6e4}) { r(c).then(() => {}); }\nclass LAe {}\nconst e = UAe({});\nconst i = `[KickedOffLine] [${r.tipsTitle}] ${r.tipsDesc}`;',
   );
   const patched = patchLoginRecovery(Buffer.concat([prefix, source]));
   assert.deepEqual(patched.subarray(0, 3), prefix);
