@@ -134,6 +134,14 @@ if(Test-AmadeusSupervisor $dir){throw 'Missing lock accepted'}
 @{pid=$PID}|ConvertTo-Json|Set-Content (Join-Path $dir 'supervisor.lock')
 if(-not (Test-AmadeusSupervisor $dir)){throw 'Live owner ignored'}
 if(-not(Test-Path (Join-Path $dir 'supervisor.lock'))){throw 'Live lock was deleted'}
+(Get-Item (Join-Path $dir 'supervisor.lock')).LastWriteTimeUtc=(Get-Process -Id $PID).StartTime.ToUniversalTime().AddMinutes(-1)
+if(Test-AmadeusSupervisor $dir){throw 'Reused PID accepted as old supervisor'}
+if(-not(Test-Path (Join-Path $dir 'supervisor.lock'))){throw 'Probe modified stale lock'}
+$started=([DateTimeOffset]((Get-Process -Id $PID).StartTime.ToUniversalTime())).ToUnixTimeMilliseconds()
+@{pid=$PID;startedAt=$started}|ConvertTo-Json|Set-Content (Join-Path $dir 'supervisor.lock')
+if(-not(Test-AmadeusSupervisor $dir)){throw 'Matching identity ignored'}
+@{pid=$PID;startedAt=($started-60000)}|ConvertTo-Json|Set-Content (Join-Path $dir 'supervisor.lock')
+if(Test-AmadeusSupervisor $dir){throw 'Mismatched identity accepted'}
 @{pid=2147483647}|ConvertTo-Json|Set-Content (Join-Path $dir 'supervisor.lock')
 if(Test-AmadeusSupervisor $dir){throw 'Dead owner accepted'}
 $errors=$null;$tokens=$null

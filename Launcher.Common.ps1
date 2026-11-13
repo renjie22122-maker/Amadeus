@@ -17,7 +17,7 @@ function Get-AgentDemoNode {
 function Get-AgentDemoFingerprint([string]$Root, [switch]$DependenciesOnly) {
     $taskFiles = @('package.json', 'pnpm-lock.yaml')
     if (-not $DependenciesOnly) {
-        $taskFiles += @('index.html', 'vite.config.ts', 'tsconfig.json', 'tsconfig.server.json', 'scripts/build-server.mjs', 'scripts/supervisor.mjs')
+        $taskFiles += @('index.html', 'vite.config.ts', 'tsconfig.json', 'tsconfig.server.json', 'scripts/build-server.mjs', 'scripts/supervisor.mjs', 'scripts/supervisor-lock.mjs')
         foreach ($taskDir in @('src', 'shared', 'server', 'public', 'native')) {
             if (Test-Path -LiteralPath (Join-Path $Root $taskDir)) {
                 $taskFiles += Get-ChildItem -LiteralPath (Join-Path $Root $taskDir) -Recurse -File |
@@ -104,6 +104,12 @@ function Test-AmadeusSupervisor([string]$Data) {
     try {
         $taskLock = Get-Content -LiteralPath $taskLockPath -Raw | ConvertFrom-Json
         $taskOwner = Get-Process -Id ([int]$taskLock.pid) -ErrorAction Stop
-        return ($null -ne $taskOwner)
+        if ($null -eq $taskOwner) { return $false }
+        try {
+            $taskStartedAt = ([DateTimeOffset]($taskOwner.StartTime.ToUniversalTime())).ToUnixTimeMilliseconds()
+            if ($taskLock.startedAt) { return ([Math]::Abs([double]$taskLock.startedAt - $taskStartedAt) -le 1) }
+            $taskWrittenAt = ([DateTimeOffset]((Get-Item -LiteralPath $taskLockPath).LastWriteTimeUtc)).ToUnixTimeMilliseconds()
+            return ($taskStartedAt -le $taskWrittenAt + 1000)
+        } catch { return $true } # Unknown identity is not permission to replace a live process.
     } catch { return $false }
 }

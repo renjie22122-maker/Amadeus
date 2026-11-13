@@ -60,3 +60,5 @@ build/
 !/scripts/video-reader-requirements.txt
 !/scripts/test-desktop-live.ts
 !/scripts/setup-desktop-capture.ts
+
+!/scripts/supervisor-lock.mjs

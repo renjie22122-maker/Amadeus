@@ -1,3 +1,5 @@
+import { processStartedAt, isReusedOwner } from '../supervisor-lock.mjs';
+import { randomUUID } from 'node:crypto';
 import { BotHealthHistory } from './health-history.mjs';
 import { createLoginProbe, LoginPrompt } from './login-health.mjs';
 import { BridgeHealth } from './bridge-health.mjs';
@@ -11,6 +13,7 @@ import {
   mkdirSync,
   openSync,
   closeSync,
+  statSync,
 } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -23,10 +26,13 @@ for (const p of [c.statusFile, c.ledgerFile, c.lockFile])
   mkdirSync(dirname(p), { recursive: true });
 // Refuse a second independent watcher; Task Scheduler also uses IgnoreNew.
 try {
-  const pid = Number(readFileSync(c.lockFile, 'utf8'));
+  const saved = JSON.parse(readFileSync(c.lockFile, 'utf8'));
+  const previous = typeof saved === 'number' ? { pid: saved } : saved;
   try {
-    process.kill(pid, 0);
-    throw new Error('Offline watcher already running');
+    if (!isReusedOwner(previous, statSync(c.lockFile).mtimeMs, processStartedAt(previous.pid))) {
+      process.kill(previous.pid, 0);
+      throw new Error('Offline watcher already running');
+    }
   } catch (e) {
     if (e.code !== 'ESRCH') throw e;
   }
@@ -34,12 +40,18 @@ try {
 } catch (e) {
   if (e.code !== 'ENOENT') throw e;
 }
+const lockOwner = {
+  pid: process.pid,
+  startedAt: processStartedAt(process.pid),
+  token: randomUUID(),
+};
 const fd = openSync(c.lockFile, 'wx', 0o600);
-writeFileSync(fd, String(process.pid));
+writeFileSync(fd, JSON.stringify(lockOwner));
 closeSync(fd);
 process.on('exit', () => {
   try {
-    if (readFileSync(c.lockFile, 'utf8') === String(process.pid)) unlinkSync(c.lockFile);
+    if (JSON.parse(readFileSync(c.lockFile, 'utf8')).token === lockOwner.token)
+      unlinkSync(c.lockFile);
   } catch {}
 });
 const db = new DatabaseSync(c.database, { readOnly: true });

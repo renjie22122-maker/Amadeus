@@ -1,5 +1,15 @@
+import { processStartedAt, isReusedOwner } from './supervisor-lock.mjs';
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { openSync, closeSync, writeFileSync, readFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import {
+  openSync,
+  closeSync,
+  writeFileSync,
+  readFileSync,
+  unlinkSync,
+  mkdirSync,
+  statSync,
+} from 'node:fs';
 import { resolve, join } from 'node:path';
 const root = resolve(import.meta.dirname, '..'),
   data = resolve(process.env.AGENTDEMO_DATA_DIR || join(root, '.data')),
@@ -9,8 +19,10 @@ const lock = join(data, 'supervisor.lock');
 try {
   const previous = JSON.parse(readFileSync(lock, 'utf8'));
   try {
-    process.kill(previous.pid, 0);
-    throw new Error('Supervisor is already running.');
+    if (!isReusedOwner(previous, statSync(lock).mtimeMs, processStartedAt(previous.pid))) {
+      process.kill(previous.pid, 0);
+      throw new Error('Supervisor is already running.');
+    }
   } catch (e) {
     if (e.code !== 'ESRCH') throw e;
   }
@@ -18,8 +30,9 @@ try {
 } catch (e) {
   if (e.code !== 'ENOENT') throw e;
 }
+const owner = { pid: process.pid, startedAt: processStartedAt(process.pid), token: randomUUID() };
 const lockFd = openSync(lock, 'wx');
-writeFileSync(lockFd, JSON.stringify({ pid: process.pid }));
+writeFileSync(lockFd, JSON.stringify(owner));
 closeSync(lockFd);
 let child,
   stopping = false,
@@ -66,7 +79,7 @@ function launch() {
 }
 function cleanup() {
   try {
-    unlinkSync(lock);
+    if (JSON.parse(readFileSync(lock, 'utf8')).token === owner.token) unlinkSync(lock);
   } catch {}
   process.exitCode = stopping ? 0 : 1;
 }
