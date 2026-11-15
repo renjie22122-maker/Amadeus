@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loginState, LoginPrompt } from './login-health.mjs';
+import { loginState, LoginPrompt, createLoginProbe } from './login-health.mjs';
 test('only explicit login evidence opens a page, once per outage including watcher restart', () => {
   assert.equal(loginState({ isLogin: true }), 'online');
   assert.equal(loginState({ isLogin: false, loginPhase: 'waiting_qrcode' }), 'login-required');
@@ -32,4 +32,39 @@ test('stuck reconnect/confirmation opens login once without a restart loop', () 
     assert.equal(p.observe('login-required', 211000), false);
     assert.equal(p.observe('login-required', 226000), true);
   }
+});
+
+test('current offline phases override stale login flags and QR data', () => {
+  assert.equal(loginState({ isLogin: true, isOffline: true }), 'reconnecting');
+  assert.equal(loginState({ isLogin: true, loginPhase: 'initializing' }), 'login-confirming');
+  assert.equal(
+    loginState({ isLogin: false, loginPhase: 'reconnecting', qrcodeurl: 'old' }),
+    'reconnecting',
+  );
+  assert.equal(loginState({ isLogin: true, loginPhase: 'waiting_qrcode' }), 'login-required');
+});
+test('phase churn and intermittent probe failures do not postpone a confirmed outage indefinitely', () => {
+  const p = new LoginPrompt();
+  assert.equal(p.observe('reconnecting', 0), false);
+  assert.equal(p.observe('login-confirming', 60000), false);
+  assert.equal(p.observe('probe-unavailable', 110000), false);
+  assert.equal(p.observe('reconnecting', 120000), true);
+  assert.equal(p.observe('login-required', 140000), false);
+  p.observe('online', 150000);
+  assert.equal(p.observe('login-required', 151000), false);
+  assert.equal(p.observe('login-required', 166000), true);
+});
+test('malformed or external management endpoints do not make requests or reject polling', async () => {
+  let calls = 0;
+  for (const bridgePage of [
+    'invalid URL',
+    'https://example.com',
+    'http://user:password@localhost',
+  ]) {
+    const probe = createLoginProbe({ bridgePage, bridgeWebUiConfig: 'unused' }, async () => {
+      calls++;
+    });
+    assert.equal(await probe(), 'unconfigured');
+  }
+  assert.equal(calls, 0);
 });

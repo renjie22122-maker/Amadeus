@@ -1,39 +1,39 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 export function loginState(data) {
-  if (data?.isLogin === true) return 'online';
-  if (data?.qrLoginAccepted || ['qrcode_scanned', 'initializing'].includes(data?.loginPhase))
-    return 'login-confirming';
-  if (
-    ['waiting_qrcode', 'generating_qrcode', 'offline'].includes(data?.loginPhase) ||
-    (data?.isLogin === false && !!data?.qrcodeurl)
-  )
+  // Explicit current phases override stale QR URLs and cached login flags.
+  if (data?.loginPhase === 'reconnecting') return 'reconnecting';
+  if (['qrcode_scanned', 'initializing'].includes(data?.loginPhase)) return 'login-confirming';
+  if (['waiting_qrcode', 'generating_qrcode', 'offline'].includes(data?.loginPhase))
     return 'login-required';
-  if (data?.isOffline || data?.loginPhase === 'reconnecting') return 'reconnecting';
+  if (data?.isOffline === true) return 'reconnecting';
+  if (data?.isLogin === true) return 'online';
+  if (data?.qrLoginAccepted === true) return 'login-confirming';
+  if (data?.isLogin === false && typeof data?.qrcodeurl === 'string' && data.qrcodeurl)
+    return 'login-required';
   return 'unknown';
 }
 export class LoginPrompt {
   constructor(saved = {}) {
     this.prompted = saved.prompted === true;
-    this.since = 0;
-    this.waitState = null;
+    this.since = null;
+    this.requiredSince = null;
   }
   observe(state, now = Date.now()) {
     if (state === 'online') {
       this.prompted = false;
-      this.since = 0;
+      this.since = null;
+      this.requiredSince = null;
       return false;
     }
-    if (!['login-required', 'reconnecting', 'login-confirming'].includes(state)) {
-      this.since = 0;
-      return false;
-    }
-    if (!this.since || this.waitState !== state) {
-      this.since = now;
-      this.waitState = state;
-    }
+    if (state !== 'login-required') this.requiredSince = null;
+    if (!['login-required', 'reconnecting', 'login-confirming'].includes(state)) return false;
+    // One outage may alternate between reconnecting and confirming; do not reset its deadline.
+    if (this.since === null) this.since = now;
+    if (state === 'login-required' && this.requiredSince === null) this.requiredSince = now;
+    const elapsed = state === 'login-required' ? now - this.requiredSince : now - this.since;
     const delay = state === 'login-required' ? 15000 : 120000;
-    if (this.prompted || now - this.since < delay) return false;
+    if (this.prompted || elapsed < delay) return false;
     this.prompted = true;
     return true;
   }
@@ -43,7 +43,12 @@ export function createLoginProbe(config, fetcher = fetch) {
     expires = 0;
   return async () => {
     if (!config.bridgeWebUiConfig || !config.bridgePage) return 'unconfigured';
-    const base = new URL(config.bridgePage);
+    let base;
+    try {
+      base = new URL(config.bridgePage);
+    } catch {
+      return 'unconfigured';
+    }
     if (
       !['http:', 'https:'].includes(base.protocol) ||
       !['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) ||
