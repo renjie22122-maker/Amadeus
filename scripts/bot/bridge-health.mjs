@@ -3,13 +3,14 @@ export class BridgeHealth {
   constructor(accountId, saved = {}) {
     this.accountId = String(accountId);
     this.baseline = saved.baseline === true;
+    this.groupBaseline = saved.groupBaseline === true;
     this.restarts = Array.isArray(saved.restarts) ? saved.restarts.filter(Number.isFinite) : [];
     this.failures = 0;
     this.started = Date.now();
     this.lastMessage = 0;
   }
   snapshot() {
-    return { baseline: this.baseline, restarts: this.restarts };
+    return { baseline: this.baseline, groupBaseline: this.groupBaseline, restarts: this.restarts };
   }
   observe(sample, now = Date.now()) {
     this.restarts = this.restarts.filter((t) => now - t < 3600000);
@@ -21,10 +22,15 @@ export class BridgeHealth {
       this.failures = 0;
       return { state: 'probe-unavailable', restart: false };
     }
-    if (sample.friends > 0) {
-      this.baseline = true;
+    if (Number.isInteger(sample.groups) && sample.groups > 0) this.groupBaseline = true;
+    if (sample.friends > 0) this.baseline = true;
+    if (sample.friends > 0 || (Number.isInteger(sample.groups) && sample.groups > 0)) {
       this.failures = 0;
       return { state: 'platform-responsive', restart: false };
+    }
+    if (!Number.isInteger(sample.groups) || sample.groups < 0 || !this.groupBaseline) {
+      this.failures = 0;
+      return { state: 'platform-unverified', restart: false };
     }
     if (!this.baseline || now - this.started < 180000 || now - this.lastMessage < 120000) {
       this.failures = 0;

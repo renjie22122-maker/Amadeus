@@ -22,6 +22,7 @@ $script:probes=0
 function Invoke-WebRequest { param($Uri,[switch]$UseBasicParsing,$TimeoutSec,$MaximumRedirection)
  $script:probes++
  if($Uri -match 'secret' -or $MaximumRedirection -ne 0){throw 'Unsafe probe'}
+ if(([Uri]$Uri).AbsolutePath -ne '/webui/web_login'){throw 'Root redirect must not be mistaken for unavailable management'}
  return [pscustomobject]@{StatusCode=200}
 }
 $c.bridgePage='http://127.0.0.1:6099/?token=secret'

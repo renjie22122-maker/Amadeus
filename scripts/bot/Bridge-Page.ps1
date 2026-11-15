@@ -20,6 +20,9 @@ function Test-BotManagementReady($config) {
     try {
         $probe = New-Object UriBuilder($uri)
         $probe.Query = ''; $probe.Fragment = ''
+        # NapCat's root returns 301; Windows PowerShell treats blocked redirects as errors.
+        # Probe the known login document directly without following redirects or sending a token.
+        if ($config.bridgeWebUiConfig) { $probe.Path = '/webui/web_login' }
         $response = Invoke-WebRequest -Uri $probe.Uri.AbsoluteUri -UseBasicParsing -TimeoutSec 2 -MaximumRedirection 0
         return ([int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 400)
     } catch { return $false }

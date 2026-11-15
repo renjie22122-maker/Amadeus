@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BridgeHealth } from './bridge-health.mjs';
-const sample = { accountId: 'bot', online: true, friends: 0 };
+const sample = { accountId: 'bot', online: true, friends: 0, groups: 0 };
 function monitor(saved) {
   const m = new BridgeHealth('bot', saved);
   m.started = 0;
@@ -16,7 +16,7 @@ test('silence, new accounts and unknown probe results do not authorize restartin
   assert.equal(m.observe({ ...sample, online: false }, 11180000).restart, false);
 });
 test('three consecutive empty results after a healthy baseline permit bounded recovery', () => {
-  const m = monitor({ baseline: true });
+  const m = monitor({ baseline: true, groupBaseline: true });
   assert.equal(m.observe(sample, 10000000).restart, false);
   assert.equal(m.observe(sample, 10060000).restart, false);
   assert.equal(m.observe(sample, 10120000).restart, true);
@@ -31,7 +31,7 @@ test('three consecutive empty results after a healthy baseline permit bounded re
     assert.equal(restored.observe(sample, 12000000 + i * 60000).restart, false);
 });
 test('received messages and successful probes reset suspicious streaks', () => {
-  const m = monitor({ baseline: true });
+  const m = monitor({ baseline: true, groupBaseline: true });
   m.observe(sample, 10000000);
   m.observe(sample, 10060000);
   m.lastMessage = 10110000;
@@ -39,4 +39,15 @@ test('received messages and successful probes reset suspicious streaks', () => {
   m.observe(sample, 10300000);
   m.observe({ ...sample, friends: 1 }, 10360000);
   assert.equal(m.observe(sample, 10420000).restart, false);
+});
+
+test('empty friend list alone cannot authorize restarting a working group bot', () => {
+  const m = monitor({ baseline: true, groupBaseline: true });
+  for (const groups of [2, undefined]) {
+    for (let i = 0; i < 5; i++)
+      assert.equal(m.observe({ ...sample, groups }, 10000000 + i * 60000).restart, false);
+  }
+  const legacy = monitor({ baseline: true });
+  for (let i = 0; i < 5; i++)
+    assert.equal(legacy.observe(sample, 10000000 + i * 60000).restart, false);
 });

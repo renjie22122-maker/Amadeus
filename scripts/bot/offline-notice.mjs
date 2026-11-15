@@ -211,15 +211,17 @@ async function inspectBridge() {
   probing = true;
   lastProbe = Date.now();
   try {
-    const [platform, login, friends] = await Promise.all([
+    const [platform, login, friends, groups] = await Promise.all([
       probe('get_status'),
       probe('get_login_info'),
       probe('get_friend_list'),
+      probe('get_group_list').catch(() => undefined),
     ]);
     const result = bridgeHealth.observe({
       online: platform?.online,
       accountId: login?.user_id,
       friends: Array.isArray(friends) ? friends.length : undefined,
+      groups: Array.isArray(groups) ? groups.length : undefined,
     });
     bridgeHealthState = result.state;
     atomic(bridgeStateFile, bridgeHealth.snapshot());
