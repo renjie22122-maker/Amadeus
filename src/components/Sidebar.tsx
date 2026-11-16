@@ -1,3 +1,4 @@
+import { workspaceNavigation } from '../workspace-navigation';
 import { useEffect, useRef, useState } from 'react';
 import brandMark from '../../desktop/brand.svg';
 import { SidebarList } from './SidebarList';
@@ -206,11 +207,23 @@ export function Sidebar({
         />
       </nav>
       <div className="sidebar-tools">
+        <details className="workspace-navigation" open>
+          <summary>{language === 'zh' ? '工作台' : 'Workspace'}</summary>
+          {workspaceNavigation.map((item) => (
+            <button
+              key={item.id}
+              className={page === item.id ? 'selected' : ''}
+              onClick={() => setPage(item.id)}
+            >
+              <Folder size={17} />
+              {language === 'zh' ? item.zh : item.en}
+            </button>
+          ))}
+        </details>
         {[
           ['knowledge', LibraryIcon],
           ['skills', BookOpen],
           ['memory', Brain],
-          ['background', LibraryIcon],
           ['settings', Settings],
           ['chatConnections', MessageCircle],
         ].map(([key, Icon]: any) => (

@@ -1,7 +1,8 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, ipcMain } from 'electron';
 import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { DesktopBackend } from './backend.mjs';
+import { desktopMenus } from './menus.mjs';
 
 app.setName('Amadeus');
 if (process.env.AMADEUS_DESKTOP_USER_DATA)
@@ -87,32 +88,44 @@ else {
       );
       tray.on('double-click', show);
       Menu.setApplicationMenu(
-        Menu.buildFromTemplate([
-          {
-            label: 'Amadeus',
-            submenu: [
-              { label: '隐藏到托盘（任务继续）', click: () => window.hide() },
-              { label: '打开数据目录', click: () => void shell.openPath(directory) },
-              { label: '退出', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() },
-            ],
-          },
-          { role: 'editMenu' },
-          {
-            label: '视图',
-            submenu: [
-              { role: 'reload' },
-              { role: 'resetZoom' },
-              { role: 'zoomIn' },
-              { role: 'zoomOut' },
-            ],
-          },
-        ]),
+        Menu.buildFromTemplate(
+          desktopMenus({
+            command: (id) => {
+              if (backend.url && window.webContents.getURL().startsWith(backend.url + '/')) {
+                show();
+                window.webContents.send('amadeus:command', id);
+              }
+            },
+            hide: () => window.hide(),
+            openData: () => void shell.openPath(directory),
+            quit: () => app.quit(),
+            about: () =>
+              void dialog.showMessageBox(window, {
+                title: 'About Amadeus',
+                message: 'Amadeus',
+                detail: `Version ${app.getVersion()}\nLocal workspace and background agent. Closing the window keeps tasks running; quitting stops the local service.`,
+              }),
+          }),
+        ),
       );
       window.on('close', (event) => {
         if (!quitting) {
           event.preventDefault();
           window.hide();
         }
+      });
+      ipcMain.on('amadeus:menu', (event, label) => {
+        if (
+          event.sender !== window.webContents ||
+          event.senderFrame !== window.webContents.mainFrame ||
+          !backend.url
+        )
+          return;
+        if (new URL(event.senderFrame.url).origin !== backend.url) return;
+        if (!['File', 'Edit', 'View', 'Go', 'Help'].includes(label)) return;
+        Menu.getApplicationMenu()
+          ?.items.find((item) => item.label === label)
+          ?.submenu?.popup({ window });
       });
       window.webContents.on('will-attach-webview', (event) => event.preventDefault());
       const external = async (value) => {
