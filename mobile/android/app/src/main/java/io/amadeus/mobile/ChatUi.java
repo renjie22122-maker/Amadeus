@@ -117,6 +117,12 @@ final class ChatUi {
           canvas.drawRoundRect(3, 4, 21, 18, 4, 4, paint);
           line(canvas, 7, 18, 5, 22);
           break;
+        case "tavern":
+          canvas.drawRoundRect(4, 3, 20, 20, 5, 5, paint);
+          canvas.drawCircle(9, 10, 1, paint);
+          canvas.drawCircle(15, 10, 1, paint);
+          canvas.drawArc(8, 11, 16, 17, 0, 180, false, paint);
+          break;
         case "tools":
           canvas.drawRoundRect(3, 3, 10, 10, 2, 2, paint);
           canvas.drawRoundRect(14, 3, 21, 10, 2, 2, paint);

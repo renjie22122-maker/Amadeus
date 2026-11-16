@@ -26,7 +26,8 @@ public class SettingsActivity extends Activity {
       rootColumn.addView(page);
       pages.put(name, page);
       TextView entry = ChatUi.label(this, name + "  ›", 17, foreground);
-      entry.setPadding(24, 28, 24, 28);
+      entry.setPadding(
+          ChatUi.dp(this, 18), ChatUi.dp(this, 20), ChatUi.dp(this, 18), ChatUi.dp(this, 20));
       entry.setBackground(ChatUi.rounded(card, 20, this));
       LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
       lp.setMargins(0, 0, 0, 16);
@@ -84,14 +85,17 @@ public class SettingsActivity extends Activity {
     v.setHint(hint);
     v.setTextColor(foreground);
     v.setHintTextColor(secondary);
-    v.setPadding(24, 24, 24, 24);
+    v.setPadding(
+        ChatUi.dp(this, 16), ChatUi.dp(this, 16), ChatUi.dp(this, 16), ChatUi.dp(this, 16));
+    v.setBackground(ChatUi.rounded(card, 16, this));
     column.addView(v);
     return v;
   }
 
   void button(String label, Runnable fn) {
     TextView b = ChatUi.label(this, label + "  ›", 16, foreground);
-    b.setPadding(24, 28, 24, 28);
+    b.setPadding(
+        ChatUi.dp(this, 18), ChatUi.dp(this, 16), ChatUi.dp(this, 18), ChatUi.dp(this, 16));
     b.setBackground(ChatUi.rounded(card, 18, this));
     b.setOnClickListener(v -> fn.run());
     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);

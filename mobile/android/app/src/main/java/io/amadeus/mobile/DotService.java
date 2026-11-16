@@ -165,7 +165,9 @@ public class DotService extends Service {
       if (prefs.contains("started:" + key) || prefs.contains("done:" + key)) return;
       prefs.edit().putBoolean("started:" + key, true).commit();
       String capability = command.getString("capability");
-      if (capability.startsWith("screen.")
+      if (capability.equals("sensor.read")
+          || capability.equals("location.current")
+          || capability.startsWith("screen.")
           || capability.startsWith("gallery.")
           || capability.endsWith(".list")
           || capability.equals("todo.create")) {

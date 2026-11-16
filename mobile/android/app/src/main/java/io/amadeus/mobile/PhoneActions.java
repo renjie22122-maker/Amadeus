@@ -23,8 +23,19 @@ final class PhoneActions {
   static JSONArray capabilities(Context c) {
     JSONArray result = new JSONArray();
     for (String name :
-        new String[] {"alarm.create", "timer.create", "calendar.create", "todo.create"})
-      result.put(name);
+        new String[] {
+          "alarm.create",
+          "timer.create",
+          "calendar.create",
+          "todo.create",
+          "reminder.create",
+          "reminder.list",
+          "reminder.cancel",
+          "sms.compose",
+          "maps.open",
+          "sensor.read",
+          "permissions.request"
+        }) result.put(name);
     if (galleryAllowed(c)) {
       result.put("gallery.list");
       result.put("gallery.preview");
@@ -37,6 +48,10 @@ final class PhoneActions {
         == PackageManager.PERMISSION_GRANTED) result.put("calls.list");
     if (c.checkSelfPermission("android.permission.READ_CONTACTS")
         == PackageManager.PERMISSION_GRANTED) result.put("contacts.list");
+    if (c.checkSelfPermission("android.permission.ACCESS_COARSE_LOCATION")
+            == PackageManager.PERMISSION_GRANTED
+        || c.checkSelfPermission("android.permission.ACCESS_FINE_LOCATION")
+            == PackageManager.PERMISSION_GRANTED) result.put("location.current");
     result.put("recordings.list");
     if (c.getSharedPreferences("files", 0).contains("tree")) {
       result.put("files.list");
@@ -54,6 +69,69 @@ final class PhoneActions {
     JSONObject a = command.getJSONObject("args");
     if (command.getLong("expiresAt") < System.currentTimeMillis())
       throw new Exception("Request expired; no action performed");
+    if (capability.equals("permissions.request")) {
+      if (!(c instanceof Activity)) throw new Exception("Open the phone app to request permission");
+      String[] permissions;
+      switch (a.getString("permission")) {
+        case "location":
+          permissions =
+              new String[] {
+                "android.permission.ACCESS_COARSE_LOCATION",
+                "android.permission.ACCESS_FINE_LOCATION"
+              };
+          break;
+        case "sms":
+          permissions = new String[] {"android.permission.READ_SMS"};
+          break;
+        case "contacts":
+          permissions = new String[] {"android.permission.READ_CONTACTS"};
+          break;
+        case "notifications":
+          permissions =
+              Build.VERSION.SDK_INT >= 33
+                  ? new String[] {"android.permission.POST_NOTIFICATIONS"}
+                  : new String[0];
+          break;
+        case "photos":
+          permissions =
+              Build.VERSION.SDK_INT >= 33
+                  ? new String[] {"android.permission.READ_MEDIA_IMAGES"}
+                  : new String[] {"android.permission.READ_EXTERNAL_STORAGE"};
+          break;
+        default:
+          throw new Exception("Unsupported permission request");
+      }
+      ((Activity) c).runOnUiThread(() -> ((Activity) c).requestPermissions(permissions, 72));
+      return new JSONObject()
+          .put("status", "system_permission_requested")
+          .put("granted", false)
+          .put(
+              "note",
+              "Wait for the user to grant permission; request capabilities again on the next"
+                  + " turn.");
+    }
+    if (capability.startsWith("reminder.")) return ReminderReceiver.action(c, capability, a);
+    if (capability.equals("sensor.read"))
+      return PhoneSensors.sample(c, a.optString("type", "gravity"));
+    if (capability.equals("location.current")) return PhoneSensors.location(c);
+    if (capability.equals("maps.open")) {
+      String query = a.getString("query");
+      if (query.length() > 500) throw new Exception("地图查询过长");
+      c.startActivity(
+          new Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(query)))
+              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+      return new JSONObject().put("status", "handed_to_maps_app").put("verified", false);
+    }
+    if (capability.equals("sms.compose")) {
+      String number = a.getString("number"), body = a.getString("body");
+      if (!number.matches("[+0-9 ()-]{1,40}") || body.length() > 4000)
+        throw new Exception("短信号码或内容无效");
+      c.startActivity(
+          new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number)))
+              .putExtra("sms_body", body)
+              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+      return new JSONObject().put("status", "draft_opened_in_sms_app").put("sent", false);
+    }
     if (capability.equals("gallery.preview")) {
       if (!galleryAllowed(c)) throw new Exception("Photo access not granted");
       Uri image =

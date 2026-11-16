@@ -19,12 +19,18 @@ import org.json.*;
 public class MainActivity extends Activity {
   final ExecutorService network = Executors.newSingleThreadExecutor();
   final ExecutorService generationNetwork = Executors.newSingleThreadExecutor();
-  final ExecutorService refreshNetwork = Executors.newSingleThreadExecutor();
+  final ExecutorService refreshNetwork = Executors.newFixedThreadPool(2);
   final LinkedHashMap<String, View> messageViews = new LinkedHashMap<>();
   final HashMap<String, String> messageContents = new HashMap<>();
   boolean responding;
   boolean localMode;
-  int selectionGeneration;
+  volatile int selectionGeneration;
+  AgentClient refreshClient;
+  Future<?> refreshJob;
+  boolean switching;
+  boolean creatingChat;
+  String selectionKey = "";
+  long lastSelectionAt;
   LocalChat local;
   final Handler handler = new Handler(Looper.getMainLooper());
   final AtomicBoolean loading = new AtomicBoolean();
@@ -194,7 +200,7 @@ public class MainActivity extends Activity {
         v -> {
           if (localMode) {
             new AlertDialog.Builder(this)
-                .setMessage("独立聊天暂未连接搜索工具，不能实时搜索网页。")
+                .setMessage("手机直连可通过已配置的 MCP 搜索工具获取网页资料。需自行连接提供搜索能力的服务；模型本身不会因此自动具备实时搜索。")
                 .setPositiveButton("知道了", null)
                 .show();
             return;
@@ -260,21 +266,31 @@ public class MainActivity extends Activity {
                   "允许一次",
                   (d, w) -> {
                     if (result.isDone() || local.cancelled) return;
-                    try {
-                      String receipt = command.optString("id");
-                      getSharedPreferences("local-action-receipts", 0)
-                          .edit()
-                          .putString(receipt, "started; never automatically replay")
-                          .commit();
-                      Object value = PhoneActions.run(this, command);
-                      getSharedPreferences("local-action-receipts", 0)
-                          .edit()
-                          .putString(receipt, String.valueOf(value))
-                          .apply();
-                      result.complete(value);
-                    } catch (Exception e) {
-                      result.complete("Not completed or outcome unknown: " + e.getMessage());
-                    }
+                    network.execute(
+                        () -> {
+                          try {
+                            if (local.cancelled || result.isDone()) {
+                              result.complete("Cancelled; not executed");
+                              return;
+                            }
+                            String receipt = command.optString("id");
+                            getSharedPreferences("local-action-receipts", 0)
+                                .edit()
+                                .putString(receipt, "started; never automatically replay")
+                                .commit();
+                            Object value =
+                                command.optString("capability").equals("mcp.request")
+                                    ? local.mcp.action(command.getJSONObject("args"))
+                                    : PhoneActions.run(this, command);
+                            getSharedPreferences("local-action-receipts", 0)
+                                .edit()
+                                .putString(receipt, String.valueOf(value))
+                                .apply();
+                            result.complete(value);
+                          } catch (Exception e) {
+                            result.complete("Not completed or outcome unknown: " + e.getMessage());
+                          }
+                        });
                   })
               .show();
         });
@@ -385,53 +401,7 @@ public class MainActivity extends Activity {
       Toast.makeText(this, "请先停止当前回复", Toast.LENGTH_SHORT).show();
       return;
     }
-    try {
-      JSONObject cfg = local.config();
-      LinearLayout form = vertical();
-      form.setPadding(dp(24), dp(8), dp(24), 0);
-      EditText base = new EditText(this);
-      base.setHint("API 地址，例如 https://api.example.com/v1");
-      base.setText(cfg.optString("base"));
-      form.addView(base);
-      EditText name = new EditText(this);
-      name.setHint("模型名称");
-      name.setText(cfg.optString("model"));
-      form.addView(name);
-      EditText key = new EditText(this);
-      key.setHint("API 密钥（留空保留；更换地址时清除）");
-      key.setInputType(129);
-      form.addView(key);
-      CheckBox efforts = new CheckBox(this);
-      efforts.setText("此服务支持 reasoning_effort 的 low / medium / high");
-      efforts.setChecked(cfg.optBoolean("effort"));
-      form.addView(efforts);
-      CheckBox tools = new CheckBox(this);
-      tools.setText("允许模型请求手机工具（需要支持工具调用）");
-      tools.setChecked(cfg.optBoolean("tools", true));
-      form.addView(tools);
-      new AlertDialog.Builder(this)
-          .setTitle("手机直连 · OpenAI 兼容接口")
-          .setView(form)
-          .setNegativeButton("取消", null)
-          .setPositiveButton(
-              "保存",
-              (d, w) ->
-                  work(
-                      () -> {
-                        local.configure(
-                            base.getText().toString(),
-                            name.getText().toString(),
-                            key.getText().toString(),
-                            efforts.isChecked(),
-                            tools.isChecked());
-                        loadIndex(null);
-                        runOnUiThread(this::refresh);
-                      }))
-          .show();
-    } catch (Exception e) {
-      status.setVisibility(View.VISIBLE);
-      status.setText("无法读取模型设置");
-    }
+    startActivity(new Intent(this, ModelSetupActivity.class));
   }
 
   void sendLocal() {
@@ -476,6 +446,34 @@ public class MainActivity extends Activity {
   }
 
   void forwardCommand(Intent intent) {
+    String roleId = intent.getStringExtra("localRoleId");
+    if (roleId != null && !sending) {
+      intent.removeExtra("localRoleId");
+      localMode = true;
+      getSharedPreferences("chat-ui", 0).edit().putBoolean("localMode", true).apply();
+      work(
+          () -> {
+            JSONObject chat = local.create();
+            chat.put("roleId", roleId);
+            JSONObject role = local.data.role(roleId);
+            chat.put("roleSnapshot", role);
+            chat.put("title", role.optString("name", "角色聊天"));
+            String first = role.optString("first_mes");
+            if (!first.isEmpty())
+              chat.getJSONArray("events")
+                  .put(
+                      new JSONObject()
+                          .put("id", UUID.randomUUID().toString())
+                          .put("type", "assistant.message")
+                          .put("data", new JSONObject().put("text", first)));
+            local.save(chat);
+            runOnUiThread(
+                () -> {
+                  select(chat.optString("id"));
+                  loadIndex(null);
+                });
+          });
+    }
     String draft = intent.getStringExtra("localDraft");
     if (draft != null && !sending) {
       intent.removeExtra("localDraft");
@@ -548,6 +546,7 @@ public class MainActivity extends Activity {
   }
 
   void refresh() {
+    final int requestGeneration = selectionGeneration;
     if (localMode) {
       if (!loading.compareAndSet(false, true)) return;
       String selected = conversationId;
@@ -558,12 +557,16 @@ public class MainActivity extends Activity {
               JSONObject snapshot = local.state(next.getString("id"));
               runOnUiThread(
                   () -> {
-                    if (isDestroyed() || !localMode || !conversationId.equals(selected)) return;
+                    if (isDestroyed()
+                        || !localMode
+                        || requestGeneration != selectionGeneration
+                        || !conversationId.equals(selected)) return;
                     conversationId = next.optString("id");
                     getSharedPreferences("chat-ui", 0)
                         .edit()
                         .putString("localId", conversationId)
                         .apply();
+                    switching = false;
                     state = snapshot;
                     title.setText("Amadeus · 手机独立");
                     render();
@@ -572,10 +575,15 @@ public class MainActivity extends Activity {
               runOnUiThread(
                   () -> {
                     status.setVisibility(View.VISIBLE);
-                    status.setText("无法读取本机聊天");
+                    if (requestGeneration != selectionGeneration || !localMode) return;
+                    status.setText("无法读取本机聊天 · 轻点重试");
+                    status.setOnClickListener(v -> refresh());
                   });
             } finally {
-              loading.set(false);
+              runOnUiThread(
+                  () -> {
+                    if (requestGeneration == selectionGeneration) loading.set(false);
+                  });
             }
           });
       return;
@@ -584,56 +592,83 @@ public class MainActivity extends Activity {
       return;
     String selected = conversationId;
     int generation = selectionGeneration;
-    refreshNetwork.execute(
-        () -> {
-          try {
-            JSONObject next =
-                new AgentClient(this)
-                    .call(
+    final AgentClient reader;
+    try {
+      reader = new AgentClient(this).freeze();
+      refreshClient = reader;
+    } catch (Exception e) {
+      loading.set(false);
+      status.setText("连接信息不可用，请重新配对");
+      return;
+    }
+    refreshJob =
+        refreshNetwork.submit(
+            () -> {
+              if (generation != selectionGeneration) return;
+              try {
+                JSONObject next =
+                    reader.call(
                         selected.isEmpty() ? "/v1/state" : "/v1/state?conversationId=" + selected,
                         null);
-            runOnUiThread(
-                () -> {
-                  if (isDestroyed()
-                      || generation != selectionGeneration
-                      || localMode
-                      || !visible
-                      || !conversationId.equals(selected)) return;
-                  state = next;
-                  JSONObject chat = next.optJSONObject("conversation");
-                  if (chat != null) {
-                    conversationId = chat.optString("id");
-                    title.setText("Amadeus · 连接电脑");
-                    getSharedPreferences("chat-ui", 0)
-                        .edit()
-                        .putString("conversationId", conversationId)
-                        .apply();
-                  }
-                  render();
-                });
-          } catch (Exception e) {
-            runOnUiThread(
-                () -> {
-                  if (!isDestroyed() && visible) {
-                    status.setVisibility(View.VISIBLE);
-                    status.setText("连接暂时中断，正在重试…");
-                  }
-                });
-          } finally {
-            loading.set(false);
-          }
-        });
+                runOnUiThread(
+                    () -> {
+                      if (isDestroyed()
+                          || generation != selectionGeneration
+                          || localMode
+                          || !visible
+                          || !conversationId.equals(selected)) return;
+                      switching = false;
+                      state = next;
+                      JSONObject chat = next.optJSONObject("conversation");
+                      if (chat != null) {
+                        conversationId = chat.optString("id");
+                        title.setText("Amadeus · 连接电脑");
+                        getSharedPreferences("chat-ui", 0)
+                            .edit()
+                            .putString("conversationId", conversationId)
+                            .apply();
+                      }
+                      render();
+                    });
+              } catch (Exception e) {
+                runOnUiThread(
+                    () -> {
+                      if (!isDestroyed() && visible && generation == selectionGeneration) {
+                        status.setVisibility(View.VISIBLE);
+                        status.setText("连接未完成 · 将自动重试，轻点可立即重试");
+                        status.setOnClickListener(v -> refresh());
+                      }
+                    });
+              } finally {
+                runOnUiThread(
+                    () -> {
+                      if (requestGeneration == selectionGeneration) loading.set(false);
+                    });
+              }
+            });
   }
 
   void loadIndex(Runnable done) {
     boolean selectedMode = localMode;
+    String selectedHost = getSharedPreferences("pair", 0).getString("url", "");
+    final AgentClient indexClient;
+    try {
+      indexClient = selectedMode ? null : new AgentClient(this).freeze();
+    } catch (Exception e) {
+      status.setText("请先连接电脑");
+      return;
+    }
     work(
         () -> {
           JSONObject value =
-              selectedMode ? local.index() : new AgentClient(this).call("/v1/conversations", null);
+              selectedMode ? local.index() : indexClient.call("/v1/conversations", null);
           runOnUiThread(
               () -> {
-                if (isDestroyed() || selectedMode != localMode) return;
+                if (isDestroyed()
+                    || selectedMode != localMode
+                    || (!selectedMode
+                        && !selectedHost.equals(
+                            getSharedPreferences("pair", 0).getString("url", "")))) return;
                 index = value;
                 if (done != null) done.run();
               });
@@ -651,12 +686,11 @@ public class MainActivity extends Activity {
       running = !Arrays.asList("completed", "failed", "interrupted", "cancelled").contains(phase);
     }
     responding = running;
-    status.setVisibility(
-        running || (approvals != null && approvals.length() > 0) ? View.VISIBLE : View.GONE);
+    status.setVisibility(View.VISIBLE);
     status.setText(
         approvals != null && approvals.length() > 0
             ? "需要你确认 · 点击查看"
-            : running ? "正在处理 · 你可以离开，任务会继续" : "已连接 · 手机与电脑同步");
+            : running ? "正在处理 · 你可以离开，任务会继续" : localMode ? "手机独立对话 · 无需电脑在线" : "已切换 · 当前对话已同步");
     status.setOnClickListener(
         v -> {
           if (state.optJSONArray("inputs") != null && state.optJSONArray("inputs").length() > 0)
@@ -667,7 +701,7 @@ public class MainActivity extends Activity {
     if (chat != null) {
       reasoningChip.setText("思考 · " + reasoningName(chat.optString("reasoning", "auto")) + " ▾");
       searchChip.setText(
-          localMode ? "搜索 · 未连接" : "联网搜索 · " + (chat.optBoolean("webSearch", true) ? "开" : "关"));
+          localMode ? "搜索 · 需 MCP" : "联网搜索 · " + (chat.optBoolean("webSearch", true) ? "开" : "关"));
     }
     if (profiles != null && chat != null)
       for (int i = 0; i < profiles.length(); i++) {
@@ -806,7 +840,24 @@ public class MainActivity extends Activity {
   }
 
   void select(String id) {
+    String key =
+        (localMode ? "local" : getSharedPreferences("pair", 0).getString("url", "")) + ":" + id;
+    if (switching && key.equals(selectionKey)) {
+      Toast.makeText(this, "正在打开，请稍候", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    long now = android.os.SystemClock.elapsedRealtime();
+    if (key.equals(selectionKey) && now - lastSelectionAt < 500) {
+      Toast.makeText(this, "正在切换，请稍候", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    lastSelectionAt = now;
+    selectionKey = key;
     selectionGeneration++;
+    if (refreshJob != null) refreshJob.cancel(true);
+    if (refreshClient != null) refreshClient.cancelRead();
+    switching = true;
+    loading.set(false);
     conversationId = id;
     renderKey = "";
     state = new JSONObject();
@@ -816,12 +867,30 @@ public class MainActivity extends Activity {
         .apply();
     input.setText(getSharedPreferences("chat-drafts", 0).getString(id, ""));
     welcome();
+    status.setVisibility(View.VISIBLE);
+    status.setText(localMode ? "正在打开手机对话…" : "正在从电脑加载对话…");
+    int requested = selectionGeneration;
+    handler.postDelayed(
+        () -> {
+          if (switching && requested == selectionGeneration && !isDestroyed()) {
+            status.setVisibility(View.VISIBLE);
+            status.setText("电脑响应较慢 · 请保持连接，无需重复点击");
+          }
+        },
+        3500);
     updateAttachments();
     refresh();
   }
 
   void send() {
-    if (sending) return;
+    if (switching) {
+      Toast.makeText(this, "对话正在加载，完成后即可发送", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    if (sending) {
+      Toast.makeText(this, "消息正在发送，请勿重复提交", Toast.LENGTH_SHORT).show();
+      return;
+    }
     if (localMode) {
       sendLocal();
       return;
@@ -967,6 +1036,24 @@ public class MainActivity extends Activity {
           brand.setTypeface(null, Typeface.BOLD);
           brand.setPadding(dp(8), 0, 0, dp(22));
           panel.addView(brand);
+          drawerRow(
+              panel,
+              "tavern",
+              "酒馆 · 角色与世界",
+              () -> {
+                dialog.dismiss();
+                startActivity(new Intent(this, TavernActivity.class));
+              });
+          drawerRow(
+              panel,
+              "tools",
+              "手机 MCP 与记忆",
+              () -> {
+                dialog.dismiss();
+                startActivity(
+                    new Intent(this, MobileExtensionsActivity.class)
+                        .putExtra("conversationId", localMode ? conversationId : ""));
+              });
           drawerRow(
               panel,
               "folder",
@@ -1156,17 +1243,43 @@ public class MainActivity extends Activity {
   }
 
   void createChat(String project) {
+    if (creatingChat) {
+      Toast.makeText(this, "正在创建对话，无需重复点击", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    creatingChat = true;
+    final boolean mode = localMode;
+    final String host = getSharedPreferences("pair", 0).getString("url", "");
+    status.setVisibility(View.VISIBLE);
+    status.setText("正在创建对话…");
+    final AgentClient client;
+    try {
+      client = mode ? null : new AgentClient(this).freeze();
+    } catch (Exception e) {
+      creatingChat = false;
+      status.setText("连接信息不可用");
+      return;
+    }
     work(
         () -> {
-          JSONObject chat =
-              localMode
-                  ? local.create(project)
-                  : new AgentClient(this)
-                      .call(
-                          "/v1/conversations",
-                          new JSONObject()
-                              .put("projectId", project == null ? JSONObject.NULL : project));
-          runOnUiThread(() -> select(chat.optString("id")));
+          try {
+            JSONObject chat =
+                mode
+                    ? local.create(project)
+                    : client.call(
+                        "/v1/conversations",
+                        new JSONObject()
+                            .put("projectId", project == null ? JSONObject.NULL : project));
+            runOnUiThread(
+                () -> {
+                  if (mode == localMode
+                      && (mode
+                          || host.equals(getSharedPreferences("pair", 0).getString("url", ""))))
+                    select(chat.optString("id"));
+                });
+          } finally {
+            runOnUiThread(() -> creatingChat = false);
+          }
         });
   }
 
@@ -1265,7 +1378,7 @@ public class MainActivity extends Activity {
     if (localMode) {
       new AlertDialog.Builder(this)
           .setItems(
-              new String[] {"切换聊天模式", "模型连接设置", "本机个人偏好", "停止回复", "手机工具与权限"},
+              new String[] {"切换聊天模式", "模型连接设置", "本机记忆与 MCP", "停止回复", "手机工具与权限"},
               (d, which) -> {
                 if (which == 0) modeDialog();
                 else if (which == 1) localSettings();
@@ -1424,22 +1537,9 @@ public class MainActivity extends Activity {
 
   void memory() {
     if (localMode) {
-      EditText value = new EditText(this);
-      value.setMinLines(4);
-      value.setText(getSharedPreferences("local-model", 0).getString("memory", ""));
-      new AlertDialog.Builder(this)
-          .setTitle("本机个人偏好 · 独立聊天共享")
-          .setMessage("手动填写希望模型记住的偏好。随独立聊天发送给所配置的模型服务，不与电脑记忆自动同步。清空后保存即可删除。")
-          .setView(value)
-          .setNegativeButton("取消", null)
-          .setPositiveButton(
-              "保存",
-              (d, w) ->
-                  getSharedPreferences("local-model", 0)
-                      .edit()
-                      .putString("memory", value.getText().toString())
-                      .apply())
-          .show();
+      startActivity(
+          new Intent(this, MobileExtensionsActivity.class)
+              .putExtra("conversationId", conversationId));
       return;
     }
     work(
@@ -1598,6 +1698,7 @@ public class MainActivity extends Activity {
   @Override
   protected void onDestroy() {
     handler.removeCallbacksAndMessages(null);
+    if (refreshClient != null) refreshClient.cancelRead();
     refreshNetwork.shutdownNow();
     local.stop();
     generationNetwork.shutdownNow();

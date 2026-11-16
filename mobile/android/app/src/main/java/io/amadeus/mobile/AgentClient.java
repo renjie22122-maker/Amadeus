@@ -146,6 +146,12 @@ public final class AgentClient {
     }
   }
 
+  final ReadCancellation reads = new ReadCancellation();
+
+  void cancelRead() {
+    reads.cancel();
+  }
+
   JSONObject call(String path, JSONObject body) throws Exception {
     String base, credential;
     synchronized (PAIR_LOCK) {
@@ -155,16 +161,26 @@ public final class AgentClient {
               : frozenBase;
       credential = frozenBase == null ? token() : frozenToken;
     }
-    return request(base, path, body, credential);
+    return request(base, path, body, credential, this);
   }
 
   static JSONObject request(String base, String path, JSONObject body, String token)
       throws Exception {
+    return request(base, path, body, token, null);
+  }
+
+  static JSONObject request(
+      String base, String path, JSONObject body, String token, AgentClient owner) throws Exception {
+    if (owner != null && owner.reads.isCancelled()) throw new IOException("Request superseded");
     HttpURLConnection connection =
         (HttpURLConnection) new URL(endpoint(base) + path).openConnection();
+    if (owner != null && body == null && !owner.reads.attach(connection)) {
+      connection.disconnect();
+      throw new IOException("Request superseded");
+    }
     connection.setInstanceFollowRedirects(false);
-    connection.setConnectTimeout(15000);
-    connection.setReadTimeout(20000);
+    connection.setConnectTimeout(body == null ? 8000 : 15000);
+    connection.setReadTimeout(body == null ? 10000 : 20000);
     connection.setRequestProperty("Accept", "application/json");
     if (token != null) connection.setRequestProperty("Authorization", "Bearer " + token);
     try {
@@ -198,6 +214,7 @@ public final class AgentClient {
       return result;
     } finally {
       connection.disconnect();
+      if (owner != null) owner.reads.release(connection);
     }
   }
 }
