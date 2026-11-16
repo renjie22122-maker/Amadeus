@@ -4678,3 +4678,48 @@ input.team-switch:checked::after {
 .workbench-actions {
   flex-wrap: wrap;
 }
+
+/* Feature navigation remains scrollable on small desktop and mobile windows. */
+.sidebar-tools {
+  max-height: 48vh;
+  overflow-y: auto;
+}
+.workspace-navigation {
+  grid-column: 1 / -1;
+}
+.workspace-navigation summary {
+  cursor: pointer;
+  padding: 8px;
+  color: var(--muted);
+}
+.workspace-navigation button {
+  width: 100%;
+}
+.workspace-hub {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.workspace-hub > p {
+  color: var(--muted);
+}
+.workspace-hub .panel button {
+  margin: 4px;
+}
+.workspace-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 14px;
+  margin: 20px 0;
+}
+.workspace-grid > button {
+  text-align: start;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.workspace-grid > button span {
+  color: var(--muted);
+  font-weight: normal;
+}

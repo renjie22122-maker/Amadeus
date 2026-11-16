@@ -45,6 +45,21 @@
   color: #aaa;
   font-size: 11px;
 }
+.desktop-menus {
+  display: flex;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+.desktop-menus button {
+  padding: 3px 8px;
+  font-size: 12px;
+  color: inherit;
+}
+@media (max-width: 1000px) {
+  [data-desktop] .desktop-titlebar-hint {
+    display: none;
+  }
+}
 [data-desktop] .app {
   padding-top: 76px;
 }

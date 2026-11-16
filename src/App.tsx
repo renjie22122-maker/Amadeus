@@ -1,3 +1,5 @@
+import { WorkspacePage } from './pages/Workspace';
+import { workspacePages, workspaceNavigation } from './workspace-navigation';
 import { runDescendants } from './run-descendants';
 import brandMark from '../desktop/brand.svg';
 import { mergeState } from './state-refresh';
@@ -960,6 +962,34 @@ export function App() {
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
   });
+  useEffect(() => {
+    const desktop = (
+      window as Window & {
+        amadeusDesktop?: { onCommand?: (callback: (id: string) => void) => () => void };
+      }
+    ).amadeusDesktop;
+    return desktop?.onCommand?.((id) => {
+      if (id === 'sidebar') setSidebar((value) => !value);
+      else if (id === 'search') {
+        setSidebar(true);
+        requestAnimationFrame(() =>
+          document.querySelector<HTMLInputElement>('.sidebar .search input')?.focus(),
+        );
+      } else if (id === 'new-project') setProjectDialog(true);
+      else if (id === 'new-chat' && state) void action(() => newChat());
+      else if (
+        [
+          'settings',
+          'knowledge',
+          'memory',
+          'chatConnections',
+          'background',
+          ...workspacePages,
+        ].includes(id)
+      )
+        setPage(id);
+    });
+  });
   if (!state)
     return (
       <div className="loading" role="status">
@@ -981,6 +1011,21 @@ export function App() {
       {'amadeusDesktop' in window && (
         <div className="desktop-titlebar">
           <span>Amadeus</span>
+          <nav className="desktop-menus" aria-label="Application menus">
+            {['File', 'Edit', 'View', 'Go', 'Help'].map((label) => (
+              <button
+                key={label}
+                aria-haspopup="menu"
+                onClick={() => {
+                  (
+                    window as Window & { amadeusDesktop?: { openMenu?: (label: string) => void } }
+                  ).amadeusDesktop?.openMenu?.(label);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
           <span className="desktop-titlebar-hint">
             {language === 'zh'
               ? '关闭窗口后，任务继续运行'
@@ -1051,7 +1096,12 @@ export function App() {
               </button>
             )}
             <span className="breadcrumb">
-              {page === 'chat' ? project?.name || t('general') : t(page)}
+              {page === 'chat'
+                ? project?.name || t('general')
+                : (() => {
+                    const item = workspaceNavigation.find((item) => item.id === page);
+                    return item ? (language === 'zh' ? item.zh : item.en) : t(page);
+                  })()}
             </span>
             <span className="slash">/</span>
             <strong className="truncate">
@@ -1122,7 +1172,29 @@ export function App() {
             }}
           />
         )}
-        {page === 'background' ? (
+        {workspacePages.has(page) ? (
+          <div className="page-scroll">
+            <WorkspacePage
+              page={page}
+              state={state}
+              zh={language === 'zh'}
+              navigate={setPage}
+              createProject={() => setProjectDialog(true)}
+              openProject={(id) => void action(() => newChat(id))}
+              review={(id) =>
+                void action(async () => {
+                  const chat = await newChat(id);
+                  const prompt =
+                    language === 'zh'
+                      ? '请审查当前项目的未提交改动。先确认工作区与差异范围，再检查正确性、回归和安全问题。给出有证据的发现、文件位置、影响与验证建议；如果没有发现也明确说明。不要修改文件或提交代码。'
+                      : 'Review the uncommitted changes in this project. Confirm the workspace and diff scope first. Check correctness, regressions and security. Report evidence, file locations, impact and verification suggestions. Explicitly state if no issues are found. Do not edit files or commit code.';
+                  localStorage.setItem('agentdemo.draft.' + chat, prompt);
+                  setDraft(prompt);
+                })
+              }
+            />
+          </div>
+        ) : page === 'background' ? (
           <div className="page-scroll">
             <Suspense
               fallback={<p role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</p>}

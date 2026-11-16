@@ -121,6 +121,37 @@ try {
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//, { timeout: 90000 });
   await page.waitForLoadState('domcontentloaded');
   await page.locator('.desktop-titlebar').waitFor();
+  assert.equal(await page.locator('.desktop-menus button').count(), 5);
+  assert.deepEqual(await page.evaluate(() => Object.keys(window.amadeusDesktop).sort()), [
+    'onCommand',
+    'openMenu',
+    'platform',
+  ]);
+  assert.deepEqual(
+    await desktop.evaluate(({ Menu }) => Menu.getApplicationMenu().items.map((item) => item.label)),
+    ['File', 'Edit', 'View', 'Go', 'Help'],
+  );
+  await desktop.evaluate(({ Menu }) =>
+    Menu.getApplicationMenu()
+      .items.find((item) => item.label === 'Go')
+      .submenu.items.find((item) => item.label === 'Plugins')
+      .click(),
+  );
+  await page
+    .locator('.workspace-hub h1')
+    .filter({ hasText: /Plugins|插件/ })
+    .waitFor();
+  await desktop.evaluate(({ Menu }) =>
+    Menu.getApplicationMenu()
+      .items.find((item) => item.label === 'View')
+      .submenu.items.find((item) => item.label === 'Site map')
+      .click(),
+  );
+  await page
+    .locator('.workspace-hub h1')
+    .filter({ hasText: /Site map|功能导航/ })
+    .waitFor();
+  await page.screenshot({ path: '.diagnostics/desktop-navigation.png' });
   await page.keyboard.press('Control+k');
   await page.waitForFunction(
     () => document.querySelector('.sidebar .search input') === document.activeElement,
