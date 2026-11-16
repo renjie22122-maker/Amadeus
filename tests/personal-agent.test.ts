@@ -26,7 +26,7 @@ function fixture(t: any) {
   const calls: any[] = [];
   const runtime: any = {
     config: {
-      profile: () => ({ id: 'p', baseUrl: 'https://model.test' }),
+      profile: () => ({ id: 'p', baseUrl: 'https://model.test', efforts: ['auto', 'high'] }),
       get: () => ({
         defaultProfileId: 'p',
         profiles: [{ id: 'p', name: 'Model', model: 'fixture', baseUrl: 'https://model.test' }],
@@ -121,6 +121,37 @@ test('remote memory management checks the selected scope before calling existing
     403,
   );
 });
+test('phone options reject unsupported effort and forward allowed reasoning and search policy', async (t) => {
+  const f = fixture(t),
+    calls: any[] = [];
+  const gateway = createPersonalGateway(f.service, undefined, async (...args) => {
+    calls.push(args);
+    return { ok: true };
+  });
+  t.after(() => gateway.close());
+  const headers = { authorization: 'Bearer ' + f.pair(['read', 'message']).token };
+  const unavailable = await gateway.inject({
+    method: 'POST',
+    url: '/v1/conversations/c/update',
+    headers,
+    payload: { reasoning: 'max' },
+  });
+  assert.equal(unavailable.statusCode, 400);
+  assert.equal(calls.length, 0);
+  const accepted = await gateway.inject({
+    method: 'POST',
+    url: '/v1/conversations/c/update',
+    headers,
+    payload: { reasoning: 'high', webSearch: false },
+  });
+  assert.equal(accepted.statusCode, 200);
+  assert.deepEqual(calls[0], [
+    'PATCH',
+    '/api/conversations/c',
+    { reasoning: 'high', webSearch: false },
+  ]);
+});
+
 test('one-use pairing survives service reconstruction, tokens stay out of snapshots and revocation is immediate', (t) => {
   const f = fixture(t),
     invitation = f.service.invite('Phone', ['read']);

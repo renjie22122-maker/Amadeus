@@ -58,7 +58,14 @@ export function createPersonalGateway(
     return {
       identity: s.identity,
       now: s.now,
-      conversation: { id: c.id, title: c.title, projectId: c.projectId, profileId: c.profileId },
+      conversation: {
+        id: c.id,
+        title: c.title,
+        projectId: c.projectId,
+        profileId: c.profileId,
+        reasoning: c.reasoning,
+        webSearch: c.webSearch !== false,
+      },
       streams: [...(service.runtime.streams?.values() || [])]
         .filter((s) => s.conversationId === c.id)
         .map((s) => ({ messageId: s.messageId, text: s.text.slice(-30000) })),
@@ -88,9 +95,13 @@ export function createPersonalGateway(
             .filter((p) => !p.removedAt)
             .map(({ id, name }) => ({ id, name }))
         : [],
-      models: service.runtime.config
-        .get()
-        .profiles.map(({ id, name, model, vision }) => ({ id, name, model, vision })),
+      models: service.runtime.config.get().profiles.map(({ id, name, model, vision, efforts }) => ({
+        id,
+        name,
+        model,
+        vision,
+        efforts,
+      })),
     };
   });
   app.post('/v1/conversations', async (req) => {
@@ -106,6 +117,8 @@ export function createPersonalGateway(
         title: z.string().trim().min(1).max(120).optional(),
         pinned: z.boolean().optional(),
         profileId: z.string().optional(),
+        reasoning: z.enum(['auto', 'none', 'low', 'medium', 'high', 'max']).optional(),
+        webSearch: z.boolean().optional(),
       })
       .strict()
       .parse(req.body);
@@ -115,6 +128,12 @@ export function createPersonalGateway(
       'Wait for the current task before changing conversation settings.',
       409,
     );
+    if (b.reasoning)
+      assert(
+        service.runtime.config.profile(b.profileId || c.profileId).efforts.includes(b.reasoning),
+        'REASONING_UNAVAILABLE',
+        'This model does not support the selected reasoning level.',
+      );
     assert(memoryRequest, 'UNAVAILABLE', 'Conversation settings unavailable.');
     return memoryRequest('PATCH', '/api/conversations/' + encodeURIComponent(c.id), b);
   });

@@ -368,6 +368,7 @@ export async function createApp(options: { directory: string; dist?: string; run
           .nullable()
           .optional(),
         reasoning: z.enum(['auto', 'none', 'low', 'medium', 'high', 'max']).optional(),
+        webSearch: z.boolean().optional(),
         permission: z.enum(['read-only', 'ask', 'auto', 'trusted']).optional(),
         execution: z
           .object({

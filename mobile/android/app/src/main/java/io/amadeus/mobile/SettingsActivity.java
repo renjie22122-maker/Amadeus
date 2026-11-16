@@ -14,7 +14,41 @@ import org.json.*;
 
 public class SettingsActivity extends Activity {
   final java.util.concurrent.ExecutorService network = Executors.newSingleThreadExecutor();
-  LinearLayout column;
+  LinearLayout column, rootColumn, categories;
+  final java.util.LinkedHashMap<String, LinearLayout> pages = new java.util.LinkedHashMap<>();
+  TextView pageTitle, back;
+  int foreground, background, card, secondary;
+
+  void section(String name) {
+    if (!pages.containsKey(name)) {
+      LinearLayout page = new LinearLayout(this);
+      page.setOrientation(LinearLayout.VERTICAL);
+      rootColumn.addView(page);
+      pages.put(name, page);
+      TextView entry = ChatUi.label(this, name + "  ›", 17, foreground);
+      entry.setPadding(24, 28, 24, 28);
+      entry.setBackground(ChatUi.rounded(card, 20, this));
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+      lp.setMargins(0, 0, 0, 16);
+      categories.addView(entry, lp);
+      entry.setOnClickListener(v -> showPage(name));
+    }
+    column = pages.get(name);
+  }
+
+  void showPage(String name) {
+    categories.setVisibility(name == null ? View.VISIBLE : View.GONE);
+    for (var entry : pages.entrySet())
+      entry.getValue().setVisibility(entry.getKey().equals(name) ? View.VISIBLE : View.GONE);
+    pageTitle.setText(name == null ? "工具与设置" : name);
+    back.setText(name == null ? "‹ 返回聊天" : "‹ 所有设置");
+    back.setOnClickListener(
+        v -> {
+          if (name == null) finish();
+          else showPage(null);
+        });
+  }
+
   TextView status, transcript;
   EditText message;
   final Handler handler = new Handler(Looper.getMainLooper());
@@ -39,6 +73,7 @@ public class SettingsActivity extends Activity {
     TextView v = new TextView(this);
     v.setText(s);
     v.setTextSize(16);
+    v.setTextColor(foreground);
     v.setPadding(0, 12, 0, 12);
     column.addView(v);
     return v;
@@ -47,41 +82,60 @@ public class SettingsActivity extends Activity {
   EditText input(String hint) {
     EditText v = new EditText(this);
     v.setHint(hint);
+    v.setTextColor(foreground);
+    v.setHintTextColor(secondary);
+    v.setPadding(24, 24, 24, 24);
     column.addView(v);
     return v;
   }
 
   void button(String label, Runnable fn) {
-    Button b = new Button(this);
-    b.setText(label);
+    TextView b = ChatUi.label(this, label + "  ›", 16, foreground);
+    b.setPadding(24, 28, 24, 28);
+    b.setBackground(ChatUi.rounded(card, 18, this));
     b.setOnClickListener(v -> fn.run());
-    column.addView(b);
+    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+    lp.setMargins(0, 8, 0, 8);
+    column.addView(b, lp);
   }
 
   @Override
   public void onCreate(Bundle state) {
+    if ((getResources().getConfiguration().uiMode
+            & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+        == android.content.res.Configuration.UI_MODE_NIGHT_YES)
+      setTheme(android.R.style.Theme_Material_NoActionBar);
     super.onCreate(state);
+    boolean dark =
+        (getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+            == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+    foreground = dark ? 0xffe8eaed : 0xff202124;
+    background = dark ? 0xff131314 : 0xfff9f9fc;
+    card = dark ? 0xff26272a : 0xffe9edf5;
+    secondary = dark ? 0xffa6abb7 : 0xff717680;
     ScrollView scroll = new ScrollView(this);
+    scroll.setBackgroundColor(background);
     column = new LinearLayout(this);
     column.setOrientation(LinearLayout.VERTICAL);
     column.setPadding(28, 56, 28, 32);
     scroll.addView(column);
     setContentView(scroll);
-    text("工具与设置").setTextSize(26);
+    rootColumn = column;
+    back = text("‹ 返回聊天");
+    back.setTextColor(secondary);
+    pageTitle = text("工具与设置");
+    pageTitle.setTextSize(28);
     status =
         text(
             getSharedPreferences("pair", 0).contains("token")
                 ? "已配对 · 无需再次输入配对码"
                 : "尚未配对 · 先连接你的电脑");
-    LinearLayout rootColumn = column, setup = new LinearLayout(this);
-    setup.setOrientation(LinearLayout.VERTICAL);
-    button(
-        "设备连接与权限设置",
-        () ->
-            setup.setVisibility(setup.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
-    rootColumn.addView(setup);
-    setup.setVisibility(View.VISIBLE);
-    column = setup;
+    categories = new LinearLayout(this);
+    categories.setOrientation(LinearLayout.VERTICAL);
+    rootColumn.addView(categories);
+    section("设备与连接");
+    text("已配对的电脑无需重复输入配对码。切换电脑请使用聊天侧栏的设备入口。");
     EditText url = input("电脑连接入口：https://your-domain");
     url.setSingleLine(true);
     url.setText(getSharedPreferences("pair", 0).getString("url", ""));
@@ -106,7 +160,7 @@ public class SettingsActivity extends Activity {
                     AgentClient.request(
                         address, "/v1/pair", new JSONObject().put("code", secret), null);
                 new AgentClient(this).save(address, result.getString("token"));
-                getSharedPreferences("commands", 0).edit().clear().commit();
+                AgentClient.commandPreferences(this).edit().clear().commit();
                 getSharedPreferences("outbox", 0).edit().clear().commit();
                 runOnUiThread(
                     () -> {
@@ -116,13 +170,14 @@ public class SettingsActivity extends Activity {
                 refresh();
               });
         });
+    section("常驻助手");
     button(
         "启动常驻连接与悬浮入口",
         () -> {
           if (Build.VERSION.SDK_INT >= 33
               && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
                   != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[] {"android.permission.POST_NOTIFICATIONS"}, 1);
+            requestPermissions(new String[] {"android.permission.POST_NOTIFICATIONS"}, 71);
             return;
           }
           startForegroundService(new Intent(this, DotService.class));
@@ -141,6 +196,7 @@ public class SettingsActivity extends Activity {
                 new Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + getPackageName()))));
+    section("隐私与权限");
     button(
         "屏幕操作权限说明",
         () ->
@@ -184,6 +240,7 @@ public class SettingsActivity extends Activity {
                 .show());
     button(
         "联系人读取权限", () -> requestPermissions(new String[] {"android.permission.READ_CONTACTS"}, 5));
+    section("文件与相册");
     button(
         "选择录音或文件整理目录",
         () ->
@@ -202,6 +259,7 @@ public class SettingsActivity extends Activity {
                     .setType("*/*")
                     .addCategory(Intent.CATEGORY_OPENABLE),
                 11));
+    section("录音与音频");
     button(
         "开始麦克风录音",
         () -> {
@@ -244,6 +302,7 @@ public class SettingsActivity extends Activity {
                           }))
               .show();
         });
+    section("连接的服务");
     button(
         "邮件整理连接说明",
         () ->
@@ -254,7 +313,7 @@ public class SettingsActivity extends Activity {
                         + " 的私有数据库，也不会假装已连接邮箱。也可选择导出的邮件文件上传分析。")
                 .setPositiveButton("知道了", null)
                 .show());
-    column = rootColumn;
+    section("目标与审批");
     message = new EditText(this);
     transcript = new TextView(this);
     button("返回聊天", () -> finish());
@@ -310,22 +369,33 @@ public class SettingsActivity extends Activity {
                               .setNegativeButton("关闭", null)
                               .show());
                 }));
-    button(
-        "查看本机待办",
-        () ->
-            new AlertDialog.Builder(this)
-                .setTitle("Amadeus 待办")
-                .setMessage(getSharedPreferences("todos", 0).getString("items", "[]"))
-                .setPositiveButton("关闭", null)
-                .show());
+    section("手机工具");
+    button("查看本机待办", this::todos);
+    section("文件与相册");
     button(
         "查看智能相册分类",
-        () ->
-            new AlertDialog.Builder(this)
-                .setTitle("Amadeus 相册分类（不移动原图）")
-                .setMessage(getSharedPreferences("albums", 0).getAll().toString())
-                .setPositiveButton("关闭", null)
-                .show());
+        () -> {
+          var albums = getSharedPreferences("albums", 0).getAll();
+          String[] names = albums.keySet().toArray(new String[0]);
+          new AlertDialog.Builder(this)
+              .setTitle(names.length == 0 ? "还没有相册分类" : "相册分类 · 原图不移动")
+              .setItems(
+                  names,
+                  (d, w) -> {
+                    try {
+                      JSONArray ids = new JSONArray(String.valueOf(albums.get(names[w])));
+                      new AlertDialog.Builder(this)
+                          .setTitle(names[w])
+                          .setMessage("包含 " + ids.length() + " 张照片，分类信息保存在本机。")
+                          .setPositiveButton("关闭", null)
+                          .show();
+                    } catch (Exception ignored) {
+                    }
+                  })
+              .setNegativeButton("关闭", null)
+              .show();
+        });
+    section("目标与审批");
     button(
         "处理待审批请求",
         () ->
@@ -340,6 +410,7 @@ public class SettingsActivity extends Activity {
                   JSONObject q = inputs.getJSONObject(0);
                   runOnUiThread(() -> approvalDialog(q));
                 }));
+    section("设备与连接");
     button(
         "断开并清除本机配对",
         () -> {
@@ -348,6 +419,62 @@ public class SettingsActivity extends Activity {
           getSharedPreferences("outbox", 0).edit().clear().commit();
           status.setText("本机已断开。请在电脑撤销设备凭证。");
         });
+    section("手机工具");
+    button(
+        "设置闹钟",
+        () -> {
+          java.util.Calendar now = java.util.Calendar.getInstance();
+          new TimePickerDialog(
+                  this,
+                  (v, h, m) -> {
+                    try {
+                      PhoneActions.run(
+                          this,
+                          new JSONObject()
+                              .put("capability", "alarm.create")
+                              .put("args", new JSONObject().put("hour", h).put("minute", m))
+                              .put("expiresAt", System.currentTimeMillis() + 60000));
+                    } catch (Exception e) {
+                      status.setText(e.getMessage());
+                    }
+                  },
+                  now.get(java.util.Calendar.HOUR_OF_DAY),
+                  now.get(java.util.Calendar.MINUTE),
+                  true)
+              .show();
+        });
+    button(
+        "开始计时器",
+        () -> {
+          EditText seconds = new EditText(this);
+          seconds.setHint("秒数，例如 300");
+          seconds.setInputType(2);
+          new AlertDialog.Builder(this)
+              .setTitle("计时器")
+              .setView(seconds)
+              .setNegativeButton("取消", null)
+              .setPositiveButton(
+                  "打开系统计时器",
+                  (d, w) -> {
+                    try {
+                      PhoneActions.run(
+                          this,
+                          new JSONObject()
+                              .put("capability", "timer.create")
+                              .put(
+                                  "args",
+                                  new JSONObject()
+                                      .put(
+                                          "seconds",
+                                          Integer.parseInt(seconds.getText().toString())))
+                              .put("expiresAt", System.currentTimeMillis() + 60000));
+                    } catch (Exception e) {
+                      status.setText("请输入 1–86400 秒");
+                    }
+                  })
+              .show();
+        });
+    showPage(null);
     handleCommand(getIntent());
     if (getIntent().getBooleanExtra("pickFile", false))
       startActivityForResult(
@@ -355,6 +482,66 @@ public class SettingsActivity extends Activity {
               .setType(getIntent().getBooleanExtra("photos", false) ? "image/*" : "*/*")
               .addCategory(Intent.CATEGORY_OPENABLE),
           11);
+  }
+
+  void todos() {
+    try {
+      JSONArray items = new JSONArray(getSharedPreferences("todos", 0).getString("items", "[]"));
+      String[] names = new String[items.length()];
+      boolean[] done = new boolean[items.length()];
+      for (int i = 0; i < names.length; i++) {
+        names[i] = items.getJSONObject(i).optString("title");
+        done[i] = items.getJSONObject(i).optBoolean("done");
+      }
+      new AlertDialog.Builder(this)
+          .setTitle("本机待办")
+          .setMultiChoiceItems(
+              names,
+              done,
+              (d, which, checked) -> {
+                try {
+                  items.getJSONObject(which).put("done", checked);
+                  getSharedPreferences("todos", 0)
+                      .edit()
+                      .putString("items", items.toString())
+                      .apply();
+                } catch (Exception ignored) {
+                }
+              })
+          .setPositiveButton("完成", null)
+          .setNeutralButton(
+              "新增",
+              (d, w) -> {
+                EditText title = new EditText(this);
+                title.setHint("要做什么？");
+                new AlertDialog.Builder(this)
+                    .setTitle("新增待办")
+                    .setView(title)
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton(
+                        "保存",
+                        (x, y) -> {
+                          try {
+                            PhoneActions.run(
+                                this,
+                                new JSONObject()
+                                    .put("id", UUID.randomUUID().toString())
+                                    .put("capability", "todo.create")
+                                    .put(
+                                        "args",
+                                        new JSONObject().put("title", title.getText().toString()))
+                                    .put("expiresAt", System.currentTimeMillis() + 60000));
+                            todos();
+                          } catch (Exception e) {
+                            status.setText("请填写待办内容");
+                          }
+                        })
+                    .show();
+              })
+          .show();
+    } catch (Exception e) {
+      status.setText("无法读取本机待办");
+    }
   }
 
   @Override
@@ -437,7 +624,7 @@ public class SettingsActivity extends Activity {
   void handleCommand(Intent intent) {
     String key = intent.getStringExtra("commandId");
     if (key == null) return;
-    String raw = getSharedPreferences("commands", 0).getString("pending:" + key, null);
+    String raw = AgentClient.commandPreferences(this).getString("pending:" + key, null);
     if (raw == null) return;
     try {
       JSONObject command = new JSONObject(raw);
@@ -456,12 +643,12 @@ public class SettingsActivity extends Activity {
                       runOnUiThread(
                           () -> {
                             if (!DotService.active
-                                || !getSharedPreferences("commands", 0)
+                                || !AgentClient.commandPreferences(this)
                                     .contains("pending:" + key)) {
                               status.setText("控制会话已停止，请勿重复执行旧请求。");
                               return;
                             }
-                            getSharedPreferences("commands", 0)
+                            AgentClient.commandPreferences(this)
                                 .edit()
                                 .remove("pending:" + key)
                                 .commit();
@@ -582,9 +769,24 @@ public class SettingsActivity extends Activity {
       };
 
   @Override
+  public void onRequestPermissionsResult(int request, String[] permissions, int[] grants) {
+    super.onRequestPermissionsResult(request, permissions, grants);
+    if (request == 71 && grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED) {
+      startForegroundService(new Intent(this, DotService.class));
+      status.setText("常驻连接已启动；悬浮入口需要单独允许悬浮权限。");
+    }
+  }
+
+  @Override
   protected void onResume() {
     super.onResume();
     visible = true;
+    status.setText(
+        (getSharedPreferences("pair", 0).contains("token") ? "电脑已配对" : "未连接电脑 · 本机工具仍可使用")
+            + " · "
+            + (DotService.active ? "常驻已启动" : "常驻未启动")
+            + "\n悬浮入口："
+            + (Settings.canDrawOverlays(this) ? "已授权" : "未授权"));
     if (getIntent().getBooleanExtra("newGoal", false)) {
       getIntent().removeExtra("newGoal");
       goalDialog();

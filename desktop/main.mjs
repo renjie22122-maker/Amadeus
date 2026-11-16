@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, ipcMain } from 'electron';
 import { join, resolve } from 'node:path';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { DesktopBackend } from './backend.mjs';
+import { DesktopBackend, AttachedDesktopBackend } from './backend.mjs';
 import { desktopMenus } from './menus.mjs';
 
 app.setName('Amadeus');
@@ -51,12 +51,17 @@ else {
       const node =
         process.env.AMADEUS_NODE_BINARY ||
         join(process.resourcesPath, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node');
-      if (!existsSync(node) || resolve(node) === resolve(process.execPath))
+      if (
+        !process.env.AMADEUS_BACKEND_URL &&
+        (!existsSync(node) || resolve(node) === resolve(process.execPath))
+      )
         throw new Error('A standalone Node runtime is required. Start with pnpm desktop.');
       const directory = resolve(
         process.env.AGENTDEMO_DATA_DIR || join(app.getPath('userData'), 'agent'),
       );
-      backend = new DesktopBackend({ node, root, directory });
+      backend = process.env.AMADEUS_BACKEND_URL
+        ? new AttachedDesktopBackend(process.env.AMADEUS_BACKEND_URL)
+        : new DesktopBackend({ node, root, directory });
       window = new BrowserWindow({
         width: 1280,
         height: 860,
@@ -253,7 +258,11 @@ else {
         "window.setBootStage(3, 'Loading conversations and tools…', '正在加载会话与工具…')",
       );
       await window.loadURL(url);
-      if (existsSync(dotPreference) && readFileSync(dotPreference, 'utf8') === 'true') toggleDot();
+      if (
+        process.env.AMADEUS_SHOW_DOT === '1' ||
+        (existsSync(dotPreference) && readFileSync(dotPreference, 'utf8') === 'true')
+      )
+        toggleDot();
       show();
     } catch (error) {
       dialog.showErrorBox('Amadeus 启动失败', error.message);

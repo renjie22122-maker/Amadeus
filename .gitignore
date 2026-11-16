@@ -67,3 +67,5 @@ build/
 /mobile/android/local.properties
 /.android-tools/
 /.personal-preview/
+
+/.desktop-connected/

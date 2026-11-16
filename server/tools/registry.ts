@@ -929,6 +929,11 @@ export function tools() {
       limit: z.number().int().min(1).max(12).default(6),
     }),
     run: async (a, c) => {
+      assert(
+        c.conversation.webSearch !== false,
+        'WEB_SEARCH_DISABLED',
+        'Web search is disabled for this conversation.',
+      );
       const perform = () =>
         searchWeb(
           a.query,

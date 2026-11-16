@@ -195,6 +195,7 @@ export interface Conversation {
   projectId: string | null;
   profileId: string;
   reasoning: Reasoning;
+  webSearch?: boolean;
   permission: PermissionMode;
   createdAt: number;
   updatedAt: number;

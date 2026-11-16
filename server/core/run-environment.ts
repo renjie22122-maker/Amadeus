@@ -116,6 +116,11 @@ export class RunEnvironment {
         model: profile.model,
         transport: profile.transport,
         reasoning: profile.reasoning,
+        webSearch: ctx.conversation.webSearch !== false,
+        webSearchGuidance:
+          ctx.conversation.webSearch === false
+            ? 'The user disabled web search for this conversation. Do not search the web or use browser, shell, delegated agents or MCP tools to circumvent this choice. Answer from available context and state when current external information is needed.'
+            : undefined,
         os: process.platform,
         clock: runtimeClock(this.store, run),
         project: ctx.conversation.projectId,

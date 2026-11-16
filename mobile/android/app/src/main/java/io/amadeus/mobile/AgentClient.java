@@ -13,7 +13,22 @@ import javax.crypto.spec.GCMParameterSpec;
 import org.json.*;
 
 public final class AgentClient {
+  static final Object PAIR_LOCK = new Object();
   final Context context;
+  String frozenBase, frozenToken;
+
+  AgentClient freeze() throws Exception {
+    synchronized (PAIR_LOCK) {
+      frozenBase = context.getSharedPreferences("pair", 0).getString("url", "");
+      frozenToken = token();
+    }
+    return this;
+  }
+
+  boolean matchesCurrent() {
+    return frozenBase == null
+        || frozenBase.equals(context.getSharedPreferences("pair", 0).getString("url", ""));
+  }
 
   AgentClient(Context c) {
     context = c.getApplicationContext();
@@ -31,7 +46,7 @@ public final class AgentClient {
     return value.trim().replaceAll("/+$", "");
   }
 
-  private javax.crypto.SecretKey key() throws Exception {
+  javax.crypto.SecretKey key() throws Exception {
     KeyStore store = KeyStore.getInstance("AndroidKeyStore");
     store.load(null);
     if (!store.containsAlias("amadeus-pair")) {
@@ -49,18 +64,22 @@ public final class AgentClient {
   }
 
   void save(String url, String token) throws Exception {
-    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-    cipher.init(Cipher.ENCRYPT_MODE, key());
-    context
-        .getSharedPreferences("pair", 0)
-        .edit()
-        .putString("url", endpoint(url))
-        .putString("iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
-        .putString(
-            "token",
-            Base64.encodeToString(
-                cipher.doFinal(token.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP))
-        .commit();
+    synchronized (PAIR_LOCK) {
+      remember();
+      Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+      cipher.init(Cipher.ENCRYPT_MODE, key());
+      context
+          .getSharedPreferences("pair", 0)
+          .edit()
+          .putString("url", endpoint(url))
+          .putString("iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
+          .putString(
+              "token",
+              Base64.encodeToString(
+                  cipher.doFinal(token.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP))
+          .commit();
+      remember();
+    }
   }
 
   String token() throws Exception {
@@ -75,9 +94,68 @@ public final class AgentClient {
         StandardCharsets.UTF_8);
   }
 
+  static android.content.SharedPreferences commandPreferences(Context context) {
+    String url = context.getSharedPreferences("pair", 0).getString("url", "");
+    try {
+      byte[] bytes =
+          java.security.MessageDigest.getInstance("SHA-256")
+              .digest(url.getBytes(StandardCharsets.UTF_8));
+      StringBuilder key = new StringBuilder("commands-");
+      for (byte b : bytes) key.append(String.format("%02x", b));
+      return context.getSharedPreferences(key.toString(), 0);
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  void remember() throws Exception {
+    synchronized (PAIR_LOCK) {
+      var current = context.getSharedPreferences("pair", 0);
+      String url = current.getString("url", "");
+      if (url.isEmpty() || !current.contains("token")) return;
+      JSONObject saved =
+          new JSONObject()
+              .put("url", url)
+              .put("token", current.getString("token", ""))
+              .put("iv", current.getString("iv", ""));
+      context.getSharedPreferences("computers", 0).edit().putString(url, saved.toString()).commit();
+    }
+  }
+
+  JSONArray computers() throws Exception {
+    remember();
+    JSONArray result = new JSONArray();
+    for (String url : context.getSharedPreferences("computers", 0).getAll().keySet())
+      result.put(new JSONObject().put("url", url).put("name", new URI(url).getHost()));
+    return result;
+  }
+
+  void choose(String url) throws Exception {
+    synchronized (PAIR_LOCK) {
+      remember();
+      String saved = context.getSharedPreferences("computers", 0).getString(url, null);
+      if (saved == null) throw new IOException("Computer is not paired");
+      JSONObject value = new JSONObject(saved);
+      context
+          .getSharedPreferences("pair", 0)
+          .edit()
+          .putString("url", endpoint(value.getString("url")))
+          .putString("token", value.getString("token"))
+          .putString("iv", value.getString("iv"))
+          .commit();
+    }
+  }
+
   JSONObject call(String path, JSONObject body) throws Exception {
-    return request(
-        context.getSharedPreferences("pair", 0).getString("url", ""), path, body, token());
+    String base, credential;
+    synchronized (PAIR_LOCK) {
+      base =
+          frozenBase == null
+              ? context.getSharedPreferences("pair", 0).getString("url", "")
+              : frozenBase;
+      credential = frozenBase == null ? token() : frozenToken;
+    }
+    return request(base, path, body, credential);
   }
 
   static JSONObject request(String base, String path, JSONObject body, String token)

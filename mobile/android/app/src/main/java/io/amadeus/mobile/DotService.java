@@ -69,7 +69,7 @@ public class DotService extends Service {
       manager.addView(dot, params);
     }
     // Recovered in-flight commands are uncertain. Do not execute them again after process death.
-    var prefs = getSharedPreferences("commands", 0);
+    var prefs = AgentClient.commandPreferences(this);
     for (var entry : prefs.getAll().entrySet())
       if (entry.getKey().startsWith("started:")
           && !prefs.contains("result:" + entry.getKey().substring(8)))
@@ -88,10 +88,43 @@ public class DotService extends Service {
     return START_NOT_STICKY;
   }
 
+  Boolean connectionHealthy;
+
+  void connectionStatus(boolean healthy) {
+    if (connectionHealthy != null && connectionHealthy == healthy) return;
+    connectionHealthy = healthy;
+    getSystemService(NotificationManager.class)
+        .notify(
+            1,
+            new Notification.Builder(this, CHANNEL)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(healthy ? "Amadeus 常驻连接已启动" : "Amadeus 等待连接")
+                .setContentText(healthy ? "手机已连接电脑 · 点击查看聊天" : "网络暂不可用，等待恢复；操作不会自动重复执行")
+                .setContentIntent(
+                    PendingIntent.getActivity(
+                        this,
+                        0,
+                        new Intent(this, MainActivity.class),
+                        PendingIntent.FLAG_IMMUTABLE))
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .addAction(
+                    new Notification.Action.Builder(
+                            null,
+                            "停止",
+                            PendingIntent.getService(
+                                this,
+                                1,
+                                new Intent(this, DotService.class).setAction("stop"),
+                                PendingIntent.FLAG_IMMUTABLE))
+                        .build())
+                .build());
+  }
+
   void poll() {
     try {
-      AgentClient client = new AgentClient(this);
-      var prefs = getSharedPreferences("commands", 0);
+      AgentClient client = new AgentClient(this).freeze();
+      var prefs = AgentClient.commandPreferences(this);
       for (var entry : prefs.getAll().entrySet())
         if (entry.getKey().startsWith("result:")) {
           String key = entry.getKey().substring(7);
@@ -102,6 +135,8 @@ public class DotService extends Service {
           client.call(
               "/v1/device/poll",
               new JSONObject().put("capabilities", PhoneActions.capabilities(this)));
+      if (!client.matchesCurrent() || !active) return;
+      connectionStatus(true);
       long latest = response.optLong("latestEventId", 0),
           previous = prefs.getLong("latestEventId", 0);
       if (latest > previous) {
@@ -160,37 +195,13 @@ public class DotService extends Service {
                     .build());
       }
     } catch (Exception e) {
-      getSystemService(NotificationManager.class)
-          .notify(
-              1,
-              new Notification.Builder(this, CHANNEL)
-                  .setSmallIcon(android.R.drawable.ic_dialog_info)
-                  .setContentTitle("Amadeus 等待连接")
-                  .setContentText("网络或权限不可用；动作不会重复执行。打开应用查看详情。")
-                  .setContentIntent(
-                      PendingIntent.getActivity(
-                          this,
-                          0,
-                          new Intent(this, MainActivity.class),
-                          PendingIntent.FLAG_IMMUTABLE))
-                  .setOngoing(true)
-                  .addAction(
-                      new Notification.Action.Builder(
-                              null,
-                              "停止",
-                              PendingIntent.getService(
-                                  this,
-                                  1,
-                                  new Intent(this, DotService.class).setAction("stop"),
-                                  PendingIntent.FLAG_IMMUTABLE))
-                          .build())
-                  .build());
+      connectionStatus(false);
     }
   }
 
   static void finish(Context c, String key, String status, Object result) {
     try {
-      c.getSharedPreferences("commands", 0)
+      AgentClient.commandPreferences(c)
           .edit()
           .putString(
               "result:" + key,

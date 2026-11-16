@@ -18,12 +18,20 @@ import org.json.*;
 
 public class MainActivity extends Activity {
   final ExecutorService network = Executors.newSingleThreadExecutor();
+  final ExecutorService generationNetwork = Executors.newSingleThreadExecutor();
+  final ExecutorService refreshNetwork = Executors.newSingleThreadExecutor();
+  final LinkedHashMap<String, View> messageViews = new LinkedHashMap<>();
+  final HashMap<String, String> messageContents = new HashMap<>();
+  boolean responding;
+  boolean localMode;
+  int selectionGeneration;
+  LocalChat local;
   final Handler handler = new Handler(Looper.getMainLooper());
   final AtomicBoolean loading = new AtomicBoolean();
   LinearLayout root, messages, composer;
   ScrollView scroll;
   EditText input;
-  TextView title, model, status, attachment;
+  TextView title, model, status, attachment, reasoningChip, searchChip;
   TextToSpeech speech;
   JSONObject state = new JSONObject(), index = new JSONObject();
   String conversationId = "", renderKey = "";
@@ -45,7 +53,13 @@ public class MainActivity extends Activity {
           try {
             job.run();
           } catch (Exception e) {
-            runOnUiThread(() -> status.setText(e.getMessage()));
+            runOnUiThread(
+                () -> {
+                  if (!isDestroyed()) {
+                    status.setVisibility(View.VISIBLE);
+                    status.setText(e.getMessage());
+                  }
+                });
           }
         });
   }
@@ -66,15 +80,22 @@ public class MainActivity extends Activity {
 
   @Override
   public void onCreate(Bundle saved) {
+    if ((getResources().getConfiguration().uiMode
+            & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+        == android.content.res.Configuration.UI_MODE_NIGHT_YES)
+      setTheme(android.R.style.Theme_Material_NoActionBar);
     super.onCreate(saved);
+    local = new LocalChat(this);
+    local.toolExecutor = this::confirmLocalAction;
+    localMode = getSharedPreferences("chat-ui", 0).getBoolean("localMode", false);
     boolean dark =
         (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
             == Configuration.UI_MODE_NIGHT_YES;
-    bg = dark ? 0xff15171c : 0xfffbfcff;
+    bg = dark ? 0xff131314 : 0xfff9f9fc;
     fg = dark ? 0xffe9eaf0 : 0xff202124;
     muted = dark ? 0xffa6abb7 : 0xff717680;
-    surface = dark ? 0xff252932 : 0xffeef1f7;
-    accent = dark ? 0xffb4c4ff : 0xff4c5ca6;
+    surface = dark ? 0xff26272a : 0xffe9edf5;
+    accent = dark ? 0xffa8c7fa : 0xff3569b6;
     getWindow().setStatusBarColor(bg);
     getWindow().setNavigationBarColor(bg);
     if (!dark)
@@ -98,7 +119,7 @@ public class MainActivity extends Activity {
     header.addView(icon("menu", "打开会话侧栏", this::drawer));
     LinearLayout heading = vertical();
     title = label("Amadeus", 21, fg);
-    title.setTypeface(null, Typeface.BOLD);
+    title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
     title.setSingleLine(true);
     title.setEllipsize(TextUtils.TruncateAt.END);
     model = label("连接你的个人助手  ▾", 12, muted);
@@ -109,9 +130,15 @@ public class MainActivity extends Activity {
     header.addView(heading, new LinearLayout.LayoutParams(0, dp(50), 1));
     header.addView(icon("plus", "新对话", this::newChat));
     header.addView(icon("dots", "会话菜单", this::chatMenu));
+    title.setOnLongClickListener(
+        v -> {
+          modeDialog();
+          return true;
+        });
     root.addView(header);
     status = label("", 12, muted);
     status.setPadding(dp(24), 0, dp(24), dp(6));
+    status.setVisibility(View.GONE);
     root.addView(status);
     scroll = new ScrollView(this);
     scroll.setFillViewport(true);
@@ -130,7 +157,7 @@ public class MainActivity extends Activity {
     composer.setPadding(dp(8), dp(4), dp(8), dp(6));
     composer.setBackground(ChatUi.rounded(surface, 28, this));
     input = new EditText(this);
-    input.setHint("问 Amadeus，或描述你想完成的事");
+    input.setHint("问问 Amadeus");
     input.setTextColor(fg);
     input.setHintTextColor(muted);
     input.setTextSize(16);
@@ -155,9 +182,39 @@ public class MainActivity extends Activity {
     send.setBackground(ChatUi.rounded(accent, 24, this));
     actions.addView(send);
     composer.addView(actions);
+    LinearLayout choices = new LinearLayout(this);
+    reasoningChip = label("思考 · 自动 ▾", 13, muted);
+    searchChip = label("联网搜索 · 开", 13, muted);
+    for (TextView chip : new TextView[] {reasoningChip, searchChip}) {
+      chip.setPadding(dp(12), dp(10), dp(12), dp(10));
+      choices.addView(chip);
+    }
+    reasoningChip.setOnClickListener(v -> reasoningOptions());
+    searchChip.setOnClickListener(
+        v -> {
+          if (localMode) {
+            new AlertDialog.Builder(this)
+                .setMessage("独立聊天暂未连接搜索工具，不能实时搜索网页。")
+                .setPositiveButton("知道了", null)
+                .show();
+            return;
+          }
+          JSONObject chat = state.optJSONObject("conversation");
+          if (chat == null) return;
+          boolean enabled = chat.optBoolean("webSearch", true);
+          new AlertDialog.Builder(this)
+              .setTitle("联网搜索")
+              .setMessage("允许助手按需搜索网页。关闭不会断开模型服务或电脑连接。")
+              .setNegativeButton("取消", null)
+              .setPositiveButton(
+                  enabled ? "关闭搜索" : "开启搜索", (d, w) -> updateOption("webSearch", !enabled))
+              .show();
+        });
+    composer.addView(choices);
     bottom.addView(composer);
     root.addView(bottom);
-    conversationId = getSharedPreferences("chat-ui", 0).getString("conversationId", "");
+    conversationId =
+        getSharedPreferences("chat-ui", 0).getString(localMode ? "localId" : "conversationId", "");
     input.addTextChangedListener(
         new TextWatcher() {
           public void beforeTextChanged(CharSequence s, int a, int c, int f) {}
@@ -182,12 +239,259 @@ public class MainActivity extends Activity {
     forwardCommand(getIntent());
   }
 
+  Object confirmLocalAction(JSONObject command) throws Exception {
+    CompletableFuture<Object> result = new CompletableFuture<>();
+    runOnUiThread(
+        () -> {
+          if (isDestroyed() || !visible) {
+            result.complete("Not executed: open Amadeus to confirm");
+            return;
+          }
+          new AlertDialog.Builder(this)
+              .setTitle("允许手机执行？")
+              .setMessage(
+                  command.optString("capability")
+                      + "\n"
+                      + command.optJSONObject("args")
+                      + "\n由本机执行，结果将返回当前模型服务。")
+              .setNegativeButton("取消", (d, w) -> result.complete("User declined; not executed"))
+              .setOnCancelListener(d -> result.complete("User declined; not executed"))
+              .setPositiveButton(
+                  "允许一次",
+                  (d, w) -> {
+                    if (result.isDone() || local.cancelled) return;
+                    try {
+                      String receipt = command.optString("id");
+                      getSharedPreferences("local-action-receipts", 0)
+                          .edit()
+                          .putString(receipt, "started; never automatically replay")
+                          .commit();
+                      Object value = PhoneActions.run(this, command);
+                      getSharedPreferences("local-action-receipts", 0)
+                          .edit()
+                          .putString(receipt, String.valueOf(value))
+                          .apply();
+                      result.complete(value);
+                    } catch (Exception e) {
+                      result.complete("Not completed or outcome unknown: " + e.getMessage());
+                    }
+                  })
+              .show();
+        });
+    try {
+      return result.get(120, TimeUnit.SECONDS);
+    } catch (Exception e) {
+      result.complete("Expired; not executed");
+      throw e;
+    }
+  }
+
+  void richView(String text, boolean html) {
+    // Keep large payloads out of Binder transactions.
+    if (text.length() > 150000) {
+      Toast.makeText(this, "内容过长，请复制后打开", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    startActivity(
+        new Intent(this, RichMessageActivity.class).putExtra("text", text).putExtra("html", html));
+  }
+
+  void codeBlocks(LinearLayout wrap, TextView plain, String text) {
+    java.util.regex.Matcher m =
+        java.util.regex.Pattern.compile("(?s)```([^\n]*)\n(.*?)```").matcher(text);
+    if (!m.find()) return;
+    plain.setVisibility(View.GONE);
+    int end = 0;
+    do {
+      if (m.start() > end) {
+        TextView p = label("", 16, fg);
+        p.setText(ChatUi.markdown(text.substring(end, m.start())));
+        p.setTextIsSelectable(true);
+        p.setLineSpacing(dp(5), 1);
+        wrap.addView(p);
+      }
+      String language = m.group(1).trim(), code = m.group(2);
+      LinearLayout block = vertical();
+      block.setPadding(dp(14), dp(8), dp(14), dp(12));
+      block.setBackground(ChatUi.rounded(surface, 16, this));
+      LinearLayout bar = new LinearLayout(this);
+      TextView lang = label(language.isEmpty() ? "代码" : language, 12, muted);
+      bar.addView(lang, new LinearLayout.LayoutParams(0, dp(40), 1));
+      TextView copy = label("复制代码", 13, accent);
+      copy.setPadding(dp(8), dp(8), dp(8), dp(8));
+      copy.setOnClickListener(
+          v -> {
+            ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
+                .setPrimaryClip(ClipData.newPlainText("code", code));
+            Toast.makeText(this, "代码已复制", Toast.LENGTH_SHORT).show();
+          });
+      bar.addView(copy);
+      if (language.equalsIgnoreCase("html")) {
+        TextView preview = label("静态预览", 13, accent);
+        preview.setPadding(dp(8), dp(8), dp(8), dp(8));
+        preview.setOnClickListener(v -> richView(code, true));
+        bar.addView(preview);
+      }
+      block.addView(bar);
+      HorizontalScrollView horizontal = new HorizontalScrollView(this);
+      TextView source = label(code, 14, fg);
+      source.setTypeface(Typeface.MONOSPACE);
+      source.setTextIsSelectable(true);
+      horizontal.addView(source);
+      block.addView(horizontal);
+      wrap.addView(block);
+      end = m.end();
+    } while (m.find());
+    if (end < text.length()) {
+      TextView p = label("", 16, fg);
+      p.setText(ChatUi.markdown(text.substring(end)));
+      p.setTextIsSelectable(true);
+      wrap.addView(p);
+    }
+  }
+
+  void modeDialog() {
+    if (sending) {
+      Toast.makeText(this, "请等待当前回复完成，或先停止回复", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    new AlertDialog.Builder(this)
+        .setTitle("聊天模式")
+        .setSingleChoiceItems(
+            new String[] {"连接电脑 · 项目与远程工具", "手机独立 · 直连模型 API"},
+            localMode ? 1 : 0,
+            (dialog, which) -> {
+              dialog.dismiss();
+              localMode = which == 1;
+              getSharedPreferences("chat-ui", 0).edit().putBoolean("localMode", localMode).apply();
+              index = new JSONObject();
+              select(
+                  getSharedPreferences("chat-ui", 0)
+                      .getString(localMode ? "localId" : "conversationId", ""));
+              loadIndex(null);
+              if (localMode) {
+                try {
+                  if (local.config().optString("base").isEmpty()) localSettings();
+                } catch (Exception ignored) {
+                }
+              }
+            })
+        .setNegativeButton("取消", null)
+        .show();
+  }
+
+  void localSettings() {
+    if (sending) {
+      Toast.makeText(this, "请先停止当前回复", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    try {
+      JSONObject cfg = local.config();
+      LinearLayout form = vertical();
+      form.setPadding(dp(24), dp(8), dp(24), 0);
+      EditText base = new EditText(this);
+      base.setHint("API 地址，例如 https://api.example.com/v1");
+      base.setText(cfg.optString("base"));
+      form.addView(base);
+      EditText name = new EditText(this);
+      name.setHint("模型名称");
+      name.setText(cfg.optString("model"));
+      form.addView(name);
+      EditText key = new EditText(this);
+      key.setHint("API 密钥（留空保留；更换地址时清除）");
+      key.setInputType(129);
+      form.addView(key);
+      CheckBox efforts = new CheckBox(this);
+      efforts.setText("此服务支持 reasoning_effort 的 low / medium / high");
+      efforts.setChecked(cfg.optBoolean("effort"));
+      form.addView(efforts);
+      CheckBox tools = new CheckBox(this);
+      tools.setText("允许模型请求手机工具（需要支持工具调用）");
+      tools.setChecked(cfg.optBoolean("tools", true));
+      form.addView(tools);
+      new AlertDialog.Builder(this)
+          .setTitle("手机直连 · OpenAI 兼容接口")
+          .setView(form)
+          .setNegativeButton("取消", null)
+          .setPositiveButton(
+              "保存",
+              (d, w) ->
+                  work(
+                      () -> {
+                        local.configure(
+                            base.getText().toString(),
+                            name.getText().toString(),
+                            key.getText().toString(),
+                            efforts.isChecked(),
+                            tools.isChecked());
+                        loadIndex(null);
+                        runOnUiThread(this::refresh);
+                      }))
+          .show();
+    } catch (Exception e) {
+      status.setVisibility(View.VISIBLE);
+      status.setText("无法读取模型设置");
+    }
+  }
+
+  void sendLocal() {
+    String text = input.getText().toString().trim(), selected = conversationId;
+    if (text.isEmpty() || selected.isEmpty()) return;
+    sending = true;
+    input.setEnabled(false);
+    status.setVisibility(View.VISIBLE);
+    status.setText("手机正在请求模型…");
+    generationNetwork.execute(
+        () -> {
+          try {
+            local.send(selected, text);
+            runOnUiThread(
+                () -> {
+                  if (conversationId.equals(selected)) input.setText("");
+                });
+          } catch (Exception e) {
+            runOnUiThread(
+                () -> {
+                  if (!isDestroyed()) {
+                    status.setVisibility(View.VISIBLE);
+                    status.setText(e.getMessage());
+                  }
+                });
+          } finally {
+            sending = false;
+            runOnUiThread(
+                () -> {
+                  if (!isDestroyed()) {
+                    input.setEnabled(true);
+                    refresh();
+                  }
+                });
+          }
+        });
+  }
+
   void settings() {
     startActivity(
         new Intent(this, SettingsActivity.class).putExtra("conversationId", conversationId));
   }
 
   void forwardCommand(Intent intent) {
+    String draft = intent.getStringExtra("localDraft");
+    if (draft != null && !sending) {
+      intent.removeExtra("localDraft");
+      localMode = true;
+      getSharedPreferences("chat-ui", 0).edit().putBoolean("localMode", true).apply();
+      String project = intent.getStringExtra("localProject");
+      work(
+          () -> {
+            JSONObject chat = local.create(project == null || project.isEmpty() ? null : project);
+            runOnUiThread(
+                () -> {
+                  select(chat.optString("id"));
+                  input.setText(draft);
+                });
+          });
+    }
     String key = intent.getStringExtra("commandId");
     if (key != null) {
       intent.removeExtra("commandId");
@@ -203,21 +507,24 @@ public class MainActivity extends Activity {
 
   void welcome() {
     messages.removeAllViews();
+    messageViews.clear();
+    messageContents.clear();
     LinearLayout hero = vertical();
-    hero.setPadding(dp(4), dp(70), dp(4), dp(24));
-    TextView mark = label("Amadeus", 15, accent);
+    hero.setPadding(dp(4), dp(48), dp(4), dp(28));
+    TextView mark = label("✦", 42, accent);
     hero.addView(mark);
-    TextView hello = label("你好，\n今天想聊些什么？", 34, fg);
+    TextView hello = label("你好，\n有什么我能帮你的？", 32, fg);
+    hello.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
     hello.setPadding(0, dp(18), 0, dp(22));
     hero.addView(hello);
-    TextView description = label("聊一个想法，探索一个项目，\n或让我帮你把事情继续推进。", 16, muted);
+    TextView description = label("从一个想法开始。", 16, muted);
     description.setLineSpacing(dp(5), 1);
     hero.addView(description);
     messages.addView(hero);
     for (String suggestion : new String[] {"一起梳理一个想法", "帮我研究一个问题", "继续推进我的长期目标"}) {
       TextView chip = label(suggestion + "  ↗", 14, fg);
       chip.setPadding(dp(18), dp(14), dp(18), dp(14));
-      chip.setBackground(ChatUi.rounded(surface, 18, this));
+      chip.setBackground(ChatUi.rounded(surface, 24, this));
       LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
       lp.setMargins(0, dp(8), 0, 0);
       messages.addView(chip, lp);
@@ -227,7 +534,7 @@ public class MainActivity extends Activity {
             input.requestFocus();
           });
     }
-    if (!getSharedPreferences("pair", 0).contains("token")) {
+    if (!localMode && !getSharedPreferences("pair", 0).contains("token")) {
       TextView connect = label("连接电脑 →", 16, accent);
       connect.setPadding(0, dp(24), 0, dp(8));
       connect.setOnClickListener(v -> settings());
@@ -241,10 +548,43 @@ public class MainActivity extends Activity {
   }
 
   void refresh() {
+    if (localMode) {
+      if (!loading.compareAndSet(false, true)) return;
+      String selected = conversationId;
+      refreshNetwork.execute(
+          () -> {
+            try {
+              JSONObject next = selected.isEmpty() ? local.create() : local.read(selected);
+              JSONObject snapshot = local.state(next.getString("id"));
+              runOnUiThread(
+                  () -> {
+                    if (isDestroyed() || !localMode || !conversationId.equals(selected)) return;
+                    conversationId = next.optString("id");
+                    getSharedPreferences("chat-ui", 0)
+                        .edit()
+                        .putString("localId", conversationId)
+                        .apply();
+                    state = snapshot;
+                    title.setText("Amadeus · 手机独立");
+                    render();
+                  });
+            } catch (Exception e) {
+              runOnUiThread(
+                  () -> {
+                    status.setVisibility(View.VISIBLE);
+                    status.setText("无法读取本机聊天");
+                  });
+            } finally {
+              loading.set(false);
+            }
+          });
+      return;
+    }
     if (!getSharedPreferences("pair", 0).contains("token") || !loading.compareAndSet(false, true))
       return;
     String selected = conversationId;
-    work(
+    int generation = selectionGeneration;
+    refreshNetwork.execute(
         () -> {
           try {
             JSONObject next =
@@ -254,21 +594,30 @@ public class MainActivity extends Activity {
                         null);
             runOnUiThread(
                 () -> {
-                  if (!conversationId.equals(selected)) return;
+                  if (isDestroyed()
+                      || generation != selectionGeneration
+                      || localMode
+                      || !visible
+                      || !conversationId.equals(selected)) return;
                   state = next;
                   JSONObject chat = next.optJSONObject("conversation");
                   if (chat != null) {
                     conversationId = chat.optString("id");
-                    title.setText(
-                        chat.optString("title", "Amadeus").equals("New chat")
-                            ? "Amadeus"
-                            : chat.optString("title"));
+                    title.setText("Amadeus · 连接电脑");
                     getSharedPreferences("chat-ui", 0)
                         .edit()
                         .putString("conversationId", conversationId)
                         .apply();
                   }
                   render();
+                });
+          } catch (Exception e) {
+            runOnUiThread(
+                () -> {
+                  if (!isDestroyed() && visible) {
+                    status.setVisibility(View.VISIBLE);
+                    status.setText("连接暂时中断，正在重试…");
+                  }
                 });
           } finally {
             loading.set(false);
@@ -277,11 +626,14 @@ public class MainActivity extends Activity {
   }
 
   void loadIndex(Runnable done) {
+    boolean selectedMode = localMode;
     work(
         () -> {
-          JSONObject value = new AgentClient(this).call("/v1/conversations", null);
+          JSONObject value =
+              selectedMode ? local.index() : new AgentClient(this).call("/v1/conversations", null);
           runOnUiThread(
               () -> {
+                if (isDestroyed() || selectedMode != localMode) return;
                 index = value;
                 if (done != null) done.run();
               });
@@ -298,6 +650,9 @@ public class MainActivity extends Activity {
       String phase = runs.optJSONObject(runs.length() - 1).optString("status");
       running = !Arrays.asList("completed", "failed", "interrupted", "cancelled").contains(phase);
     }
+    responding = running;
+    status.setVisibility(
+        running || (approvals != null && approvals.length() > 0) ? View.VISIBLE : View.GONE);
     status.setText(
         approvals != null && approvals.length() > 0
             ? "需要你确认 · 点击查看"
@@ -309,6 +664,11 @@ public class MainActivity extends Activity {
         });
     JSONArray profiles = index.optJSONArray("models");
     JSONObject chat = state.optJSONObject("conversation");
+    if (chat != null) {
+      reasoningChip.setText("思考 · " + reasoningName(chat.optString("reasoning", "auto")) + " ▾");
+      searchChip.setText(
+          localMode ? "搜索 · 未连接" : "联网搜索 · " + (chat.optBoolean("webSearch", true) ? "开" : "关"));
+    }
     if (profiles != null && chat != null)
       for (int i = 0; i < profiles.length(); i++) {
         JSONObject p = profiles.optJSONObject(i);
@@ -322,7 +682,8 @@ public class MainActivity extends Activity {
         scroll.getChildCount() == 0
             || scroll.getChildAt(0).getHeight() - scroll.getHeight() - scroll.getScrollY()
                 < dp(120);
-    messages.removeAllViews();
+    LinkedHashSet<String> retained = new LinkedHashSet<>();
+    if (messageViews.isEmpty()) messages.removeAllViews();
     int count = 0;
     if (events != null)
       for (int i = 0; i < events.length(); i++) {
@@ -331,7 +692,13 @@ public class MainActivity extends Activity {
         if (data != null
             && data.has("text")
             && (type.equals("user.message") || type.equals("assistant.message"))) {
-          bubble(data.optString("text"), type.equals("user.message"), false);
+          reconcileMessage(
+              "event:" + event.optString("id", String.valueOf(i)),
+              data.optString("text"),
+              type.equals("user.message"),
+              false,
+              retained,
+              count);
           count++;
         }
       }
@@ -339,19 +706,52 @@ public class MainActivity extends Activity {
       for (int i = 0; i < streams.length(); i++) {
         String text = streams.optJSONObject(i).optString("text");
         if (!text.isEmpty()) {
-          bubble(text, false, true);
+          reconcileMessage(
+              "stream:" + streams.optJSONObject(i).optString("messageId", String.valueOf(i)),
+              text,
+              false,
+              true,
+              retained,
+              count);
           count++;
         }
       }
+    for (String key : new ArrayList<>(messageViews.keySet())) {
+      if (!retained.contains(key)) {
+        messages.removeView(messageViews.remove(key));
+        messageContents.remove(key);
+      }
+    }
     if (count == 0) welcome();
     else if (nearBottom) scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
   }
 
-  void bubble(String text, boolean user, boolean partial) {
+  void reconcileMessage(
+      String key, String text, boolean user, boolean partial, Set<String> retained, int position) {
+    retained.add(key);
+    View row = messageViews.get(key);
+    if (row == null || (!partial && !text.equals(messageContents.get(key)))) {
+      if (row != null) messages.removeView(row);
+      row = bubble(text, user, partial);
+      messageViews.put(key, row);
+      messageContents.put(key, text);
+      messages.addView(row, Math.min(position, messages.getChildCount()));
+    } else if (!text.equals(messageContents.get(key))) {
+      ((TextView) row.findViewWithTag("message-body")).setText(text);
+      messageContents.put(key, text);
+    }
+    if (messages.indexOfChild(row) != position) {
+      messages.removeView(row);
+      messages.addView(row, Math.min(position, messages.getChildCount()));
+    }
+  }
+
+  View bubble(String text, boolean user, boolean partial) {
     LinearLayout wrap = vertical();
     wrap.setPadding(user ? dp(36) : 0, dp(10), 0, dp(14));
     TextView body = label("", 16, fg);
-    body.setText(ChatUi.markdown(text));
+    body.setTag("message-body");
+    body.setText(partial ? text : ChatUi.markdown(text));
     body.setLineSpacing(dp(5), 1);
     body.setTextIsSelectable(true);
     body.setMovementMethod(LinkMovementMethod.getInstance());
@@ -360,12 +760,17 @@ public class MainActivity extends Activity {
       body.setPadding(dp(16), dp(12), dp(16), dp(12));
       wrap.setGravity(Gravity.END);
     } else {
-      TextView author = label(partial ? "Amadeus · 正在回复" : "Amadeus", 12, accent);
+      TextView author = label(partial ? "✦  正在回复" : "✦  Amadeus", 13, accent);
       author.setPadding(0, 0, 0, dp(10));
       wrap.addView(author);
     }
     wrap.addView(body);
     if (!user && !partial) {
+      codeBlocks(wrap, body, text);
+      TextView formatted = label("查看公式与完整排版 ↗", 12, accent);
+      formatted.setPadding(0, dp(12), 0, dp(4));
+      formatted.setOnClickListener(v -> richView(text, false));
+      wrap.addView(formatted);
       TextView options = label("复制    朗读    分享", 12, muted);
       options.setPadding(0, dp(12), 0, 0);
       options.setOnClickListener(
@@ -397,14 +802,18 @@ public class MainActivity extends Activity {
                   .show());
       wrap.addView(options);
     }
-    messages.addView(wrap);
+    return wrap;
   }
 
   void select(String id) {
+    selectionGeneration++;
     conversationId = id;
     renderKey = "";
     state = new JSONObject();
-    getSharedPreferences("chat-ui", 0).edit().putString("conversationId", id).apply();
+    getSharedPreferences("chat-ui", 0)
+        .edit()
+        .putString(localMode ? "localId" : "conversationId", id)
+        .apply();
     input.setText(getSharedPreferences("chat-drafts", 0).getString(id, ""));
     welcome();
     updateAttachments();
@@ -413,6 +822,10 @@ public class MainActivity extends Activity {
 
   void send() {
     if (sending) return;
+    if (localMode) {
+      sendLocal();
+      return;
+    }
     var prefs = getSharedPreferences("outbox", 0);
     String pending = prefs.getString("pending", null);
     try {
@@ -487,17 +900,105 @@ public class MainActivity extends Activity {
     }
   }
 
+  void library(String collection) {
+    startActivity(new Intent(this, LibraryActivity.class).putExtra("collection", collection));
+  }
+
+  void computers() {
+    if (sending) {
+      Toast.makeText(this, "请先停止当前回复", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    work(
+        () -> {
+          JSONArray devices = new AgentClient(this).computers();
+          String[] names = new String[devices.length() + 2];
+          names[0] = "手机独立聊天";
+          names[1] = "配对另一台电脑";
+          for (int i = 0; i < devices.length(); i++)
+            names[i + 2] = devices.getJSONObject(i).getString("name");
+          runOnUiThread(
+              () ->
+                  new AlertDialog.Builder(this)
+                      .setTitle("设备与工作区")
+                      .setItems(
+                          names,
+                          (d, which) -> {
+                            if (which == 0) {
+                              localMode = true;
+                              getSharedPreferences("chat-ui", 0)
+                                  .edit()
+                                  .putBoolean("localMode", true)
+                                  .apply();
+                              select(getSharedPreferences("chat-ui", 0).getString("localId", ""));
+                              loadIndex(null);
+                            } else if (which == 1) settings();
+                            else
+                              work(
+                                  () -> {
+                                    stopService(new Intent(this, DotService.class));
+                                    new AgentClient(this)
+                                        .choose(devices.getJSONObject(which - 2).getString("url"));
+                                    runOnUiThread(
+                                        () -> {
+                                          localMode = false;
+                                          getSharedPreferences("chat-ui", 0)
+                                              .edit()
+                                              .putBoolean("localMode", false)
+                                              .apply();
+                                          index = new JSONObject();
+                                          select("");
+                                          loadIndex(null);
+                                        });
+                                  });
+                          })
+                      .show());
+        });
+  }
+
   void drawer() {
-    loadIndex(
+    Runnable open =
         () -> {
           Dialog dialog = new Dialog(this);
           LinearLayout panel = vertical();
-          panel.setBackgroundColor(bg);
+          panel.setBackground(ChatUi.rounded(surface, 28, this));
           panel.setPadding(dp(18), dp(36), dp(18), dp(20));
           TextView brand = label("Amadeus", 24, fg);
           brand.setTypeface(null, Typeface.BOLD);
           brand.setPadding(dp(8), 0, 0, dp(22));
           panel.addView(brand);
+          drawerRow(
+              panel,
+              "folder",
+              localMode ? "手机独立 · 切换设备" : "连接电脑 · 切换设备",
+              () -> {
+                dialog.dismiss();
+                computers();
+              });
+          drawerRow(
+              panel,
+              "folder",
+              "笔记与资料库",
+              () -> {
+                dialog.dismiss();
+                library("notes");
+              });
+          drawerRow(
+              panel,
+              "folder",
+              "手机项目",
+              () -> {
+                dialog.dismiss();
+                library("projects");
+              });
+          drawerRow(
+              panel,
+              "tools",
+              "自定义助手",
+              () -> {
+                dialog.dismiss();
+                library("assistants");
+              });
           drawerRow(
               panel,
               "plus",
@@ -540,8 +1041,7 @@ public class MainActivity extends Activity {
           panel.addView(search);
           ScrollView listScroll = new ScrollView(this);
           LinearLayout list = vertical();
-          listScroll.addView(list);
-          panel.addView(listScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+          panel.addView(list);
           Runnable populate =
               () -> {
                 list.removeAllViews();
@@ -603,7 +1103,13 @@ public class MainActivity extends Activity {
                 public void afterTextChanged(Editable e) {}
               });
           populate.run();
-          dialog.setContentView(panel);
+          loadIndex(
+              () -> {
+                if (dialog.isShowing()) populate.run();
+              });
+          ScrollView drawerScroll = new ScrollView(this);
+          drawerScroll.addView(panel);
+          dialog.setContentView(drawerScroll);
           Window window = dialog.getWindow();
           if (window != null) {
             window.setBackgroundDrawableResource(android.R.color.transparent);
@@ -612,7 +1118,8 @@ public class MainActivity extends Activity {
           }
           dialog.show();
           window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * .87), -1);
-        });
+        };
+    open.run();
   }
 
   void drawerRow(LinearLayout parent, String type, String text, Runnable action) {
@@ -629,6 +1136,7 @@ public class MainActivity extends Activity {
   }
 
   void newChat() {
+
     loadIndex(
         () -> {
           JSONArray projects = index.optJSONArray("projects");
@@ -651,16 +1159,79 @@ public class MainActivity extends Activity {
     work(
         () -> {
           JSONObject chat =
-              new AgentClient(this)
-                  .call(
-                      "/v1/conversations",
-                      new JSONObject()
-                          .put("projectId", project == null ? JSONObject.NULL : project));
+              localMode
+                  ? local.create(project)
+                  : new AgentClient(this)
+                      .call(
+                          "/v1/conversations",
+                          new JSONObject()
+                              .put("projectId", project == null ? JSONObject.NULL : project));
           runOnUiThread(() -> select(chat.optString("id")));
         });
   }
 
+  String reasoningName(String value) {
+    switch (value) {
+      case "none":
+        return "关闭";
+      case "low":
+        return "轻量";
+      case "medium":
+        return "标准";
+      case "high":
+        return "深入";
+      case "max":
+        return "充分";
+      default:
+        return "自动";
+    }
+  }
+
+  void updateOption(String key, Object value) {
+    String selected = conversationId;
+    work(
+        () -> {
+          if (localMode) local.update(selected, key, value);
+          else
+            new AgentClient(this)
+                .call(
+                    "/v1/conversations/" + selected + "/update", new JSONObject().put(key, value));
+          runOnUiThread(this::refresh);
+        });
+  }
+
+  void reasoningOptions() {
+    JSONObject chat = state.optJSONObject("conversation");
+    JSONArray profiles = index.optJSONArray("models");
+    if (chat == null || profiles == null) return;
+    ArrayList<String> values = new ArrayList<>();
+    for (int i = 0; i < profiles.length(); i++) {
+      JSONObject profile = profiles.optJSONObject(i);
+      if (!profile.optString("id").equals(chat.optString("profileId"))) continue;
+      JSONArray levels = profile.optJSONArray("efforts");
+      if (levels != null) for (int j = 0; j < levels.length(); j++) values.add(levels.optString(j));
+    }
+    if (values.isEmpty()) values.add("auto");
+    String[] labels = new String[values.size()];
+    for (int i = 0; i < labels.length; i++) labels[i] = reasoningName(values.get(i));
+    new AlertDialog.Builder(this)
+        .setTitle("推理强度 · 当前连接支持的档位")
+        .setSingleChoiceItems(
+            labels,
+            values.indexOf(chat.optString("reasoning", "auto")),
+            (dialog, which) -> {
+              dialog.dismiss();
+              updateOption("reasoning", values.get(which));
+            })
+        .setNegativeButton("取消", null)
+        .show();
+  }
+
   void models() {
+    if (localMode) {
+      localSettings();
+      return;
+    }
     loadIndex(
         () -> {
           JSONArray values = index.optJSONArray("models");
@@ -691,9 +1262,23 @@ public class MainActivity extends Activity {
   }
 
   void chatMenu() {
+    if (localMode) {
+      new AlertDialog.Builder(this)
+          .setItems(
+              new String[] {"切换聊天模式", "模型连接设置", "本机个人偏好", "停止回复", "手机工具与权限"},
+              (d, which) -> {
+                if (which == 0) modeDialog();
+                else if (which == 1) localSettings();
+                else if (which == 2) memory();
+                else if (which == 3) local.stop();
+                else settings();
+              })
+          .show();
+      return;
+    }
     new AlertDialog.Builder(this)
         .setItems(
-            new String[] {"重命名会话", "置顶会话", "停止当前任务", "刷新连接", "工具与设置"},
+            new String[] {"重命名会话", "置顶会话", "停止当前任务", "刷新连接", "工具与设置", "切换聊天模式"},
             (d, which) -> {
               if (which == 0) {
                 EditText value = new EditText(this);
@@ -731,6 +1316,7 @@ public class MainActivity extends Activity {
                           .call("/v1/stop", new JSONObject().put("conversationId", conversationId));
                       refresh();
                     });
+              else if (which == 5) modeDialog();
               else if (which == 3) refresh();
               else settings();
             })
@@ -738,6 +1324,13 @@ public class MainActivity extends Activity {
   }
 
   void attachments() {
+    if (localMode) {
+      new AlertDialog.Builder(this)
+          .setMessage("独立模式当前支持文字对话。照片与文件分析请切换连接电脑模式。")
+          .setPositiveButton("知道了", null)
+          .show();
+      return;
+    }
     new AlertDialog.Builder(this)
         .setTitle("添加到对话")
         .setItems(
@@ -776,6 +1369,10 @@ public class MainActivity extends Activity {
   }
 
   void tools() {
+    if (localMode) {
+      settings();
+      return;
+    }
     new AlertDialog.Builder(this)
         .setTitle("工具与能力")
         .setItems(
@@ -826,6 +1423,25 @@ public class MainActivity extends Activity {
   }
 
   void memory() {
+    if (localMode) {
+      EditText value = new EditText(this);
+      value.setMinLines(4);
+      value.setText(getSharedPreferences("local-model", 0).getString("memory", ""));
+      new AlertDialog.Builder(this)
+          .setTitle("本机个人偏好 · 独立聊天共享")
+          .setMessage("手动填写希望模型记住的偏好。随独立聊天发送给所配置的模型服务，不与电脑记忆自动同步。清空后保存即可删除。")
+          .setView(value)
+          .setNegativeButton("取消", null)
+          .setPositiveButton(
+              "保存",
+              (d, w) ->
+                  getSharedPreferences("local-model", 0)
+                      .edit()
+                      .putString("memory", value.getText().toString())
+                      .apply())
+          .show();
+      return;
+    }
     work(
         () -> {
           JSONObject data = new AgentClient(this).call(path("/v1/memory"), null);
@@ -919,7 +1535,7 @@ public class MainActivity extends Activity {
         public void run() {
           if (visible) {
             refresh();
-            handler.postDelayed(this, 1800);
+            handler.postDelayed(this, responding ? 900 : 5000);
           }
         }
       };
@@ -964,7 +1580,7 @@ public class MainActivity extends Activity {
     visible = true;
     updateAttachments();
     handler.post(poll);
-    if (getSharedPreferences("pair", 0).contains("token")) loadIndex(null);
+    if (localMode || getSharedPreferences("pair", 0).contains("token")) loadIndex(null);
     String pending = getSharedPreferences("outbox", 0).getString("pending", null);
     if (pending != null) {
       attachment.setText("有待发送内容 · 点击发送可安全重试");
@@ -981,6 +1597,10 @@ public class MainActivity extends Activity {
 
   @Override
   protected void onDestroy() {
+    handler.removeCallbacksAndMessages(null);
+    refreshNetwork.shutdownNow();
+    local.stop();
+    generationNetwork.shutdownNow();
     network.shutdownNow();
     if (speech != null) speech.shutdown();
     super.onDestroy();
