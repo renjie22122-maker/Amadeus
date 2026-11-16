@@ -6,6 +6,7 @@ import type { Runtime } from '../core/runtime.js';
 import type { Conversation } from '../../shared/types.js';
 import type { ScheduledWork } from './scheduled-work.js';
 import { executionWindowSchema } from './schedule-window.js';
+import { inheritedMemory } from './memory-policy.js';
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 export const goalFields = z.object({
@@ -75,6 +76,71 @@ export class PersonalAgent {
         'Restore the project first.',
       );
     return c;
+  }
+  conversation(device: PairedDevice, key = device.conversationId) {
+    const conversation = this.available(key);
+    assert(
+      key === device.conversationId ||
+        (device.scopes.includes('workspace') &&
+          !conversation.remoteChatOnly &&
+          !conversation.remoteMemoryOnly),
+      'DEVICE_SCOPE',
+      'Workspace conversation access has not been granted to this device.',
+      403,
+    );
+    return conversation;
+  }
+  conversations(device: PairedDevice) {
+    this.require(device, 'read');
+    return this.store
+      .conversations()
+      .filter(
+        (c) =>
+          !c.archived &&
+          !c.parentId &&
+          !c.isolationId &&
+          ((device.scopes.includes('workspace') && !c.remoteChatOnly && !c.remoteMemoryOnly) ||
+            c.id === device.conversationId) &&
+          (!c.projectId || !this.store.maybe<any>('project', c.projectId)?.removedAt),
+      )
+      .map(({ id, title, projectId, profileId, pinned, updatedAt }) => ({
+        id,
+        title,
+        projectId,
+        profileId,
+        pinned,
+        updatedAt,
+      }));
+  }
+  createConversation(device: PairedDevice, projectId: string | null) {
+    this.require(device, 'workspace');
+    this.require(device, 'message');
+    if (projectId)
+      assert(
+        !this.store.get<any>('project', projectId).removedAt,
+        'PROJECT',
+        'Restore the project first.',
+      );
+    const now = Date.now();
+    const c: Conversation = {
+      id: id(),
+      title: 'New chat',
+      projectId,
+      profileId: this.runtime.config.get().defaultProfileId,
+      reasoning: 'auto',
+      permission: 'ask',
+      createdAt: now,
+      updatedAt: now,
+      pinned: false,
+      archived: false,
+      parentId: null,
+      forkEvent: null,
+      skillIds: [],
+      knowledge: true,
+      memory: true,
+    };
+    Object.assign(c, inheritedMemory(this.store, this.runtime.config, c));
+    return this.store.put('conversation', c);
   }
   snapshot() {
     const identity = this.identity();
@@ -233,11 +299,18 @@ export class PersonalAgent {
       this.store.put('device-command', { ...command, status: 'cancelled' });
     return { ok: true };
   }
-  message(device: PairedDevice, requestId: string, text: string, attachmentIds: string[] = []) {
+  message(
+    device: PairedDevice,
+    requestId: string,
+    text: string,
+    attachmentIds: string[] = [],
+    conversationId = device.conversationId,
+  ) {
     this.require(device, 'message');
+    this.conversation(device, conversationId);
     const key = device.id + ':' + requestId;
     const old = this.store.maybe<any>('device-request', key);
-    const textHash = hash(JSON.stringify([text, attachmentIds]));
+    const textHash = hash(JSON.stringify([text, attachmentIds, conversationId]));
     if (old) {
       assert(
         old.textHash === textHash,
@@ -248,7 +321,7 @@ export class PersonalAgent {
       return old;
     }
     assert(
-      !this.runtime.active(device.conversationId),
+      !this.runtime.active(conversationId),
       'BUSY',
       'Agent is busy; wait or stop the current turn.',
       409,
@@ -256,7 +329,7 @@ export class PersonalAgent {
     const receipt = { id: key, runId: id(), textHash, status: 'dispatching', at: Date.now() };
     this.store.put('device-request', receipt);
     try {
-      this.runtime.start(device.conversationId, text, 0, { runId: receipt.runId, attachmentIds });
+      this.runtime.start(conversationId, text, 0, { runId: receipt.runId, attachmentIds });
       return this.store.put('device-request', { ...receipt, status: 'accepted' });
     } catch (e) {
       // Never automatically replay a reserved request after an uncertain failure.

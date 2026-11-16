@@ -25,7 +25,13 @@ function fixture(t: any) {
   });
   const calls: any[] = [];
   const runtime: any = {
-    config: { profile: () => ({ id: 'p', baseUrl: 'https://model.test' }) },
+    config: {
+      profile: () => ({ id: 'p', baseUrl: 'https://model.test' }),
+      get: () => ({
+        defaultProfileId: 'p',
+        profiles: [{ id: 'p', name: 'Model', model: 'fixture', baseUrl: 'https://model.test' }],
+      }),
+    },
     active: () => false,
     start: (conversationId: string, text: string, _steps: number, options: any) => {
       calls.push({ text, ...options });
@@ -39,6 +45,82 @@ function fixture(t: any) {
     service.pair(service.invite('Phone', scopes).code);
   return { store, service, runtime, calls, pair };
 }
+test('workspace conversations require a separate grant and preserve project boundaries', (t) => {
+  const f = fixture(t),
+    limited = f.service.authenticate(f.pair(['read', 'message']).token);
+  f.store.put('conversation', {
+    id: 'other',
+    title: 'Other chat',
+    projectId: null,
+    profileId: 'p',
+  });
+  assert.throws(() => f.service.conversation(limited, 'other'));
+  assert.equal(f.service.conversations(limited).length, 1);
+  const full = f.service.authenticate(f.pair(['read', 'message', 'workspace']).token);
+  assert.equal(f.service.conversations(full).length, 2);
+  f.store.put('conversation', { id: 'external', remoteChatOnly: true, title: 'External' });
+  assert.throws(() => f.service.conversation(full, 'external'));
+  assert.equal(f.service.conversations(full).length, 2);
+  f.store.put('project', { id: 'project', name: 'Project' });
+  const created = f.service.createConversation(full, 'project');
+  assert.equal(created.projectId, 'project');
+  assert.equal(created.permission, 'ask');
+  assert.equal(created.includeUserMemory, false);
+  f.store.put('conversation', { ...created, archived: true });
+  assert.throws(() => f.service.conversation(full, created.id));
+});
+test('remote memory management checks the selected scope before calling existing memory APIs', async (t) => {
+  const f = fixture(t),
+    calls: any[] = [];
+  const gateway = createPersonalGateway(f.service, undefined, async (...args) => {
+    calls.push(args);
+    return { ok: true };
+  });
+  t.after(() => gateway.close());
+  f.store.put('project', { id: 'p1', name: 'Project' });
+  f.store.put('conversation', { id: 'pc', projectId: 'p1', profileId: 'p', title: 'Project chat' });
+  f.store.put('memory', { id: 'private', scope: 'project:p1', content: 'Project-only' });
+  const paired = f.pair(['read', 'message', 'workspace']),
+    headers = { authorization: 'Bearer ' + paired.token };
+  const denied = await gateway.inject({
+    method: 'POST',
+    url: '/v1/memory',
+    headers,
+    payload: { action: 'forget', conversationId: 'c', id: 'private' },
+  });
+  assert.equal(denied.statusCode, 403);
+  assert.equal(calls.length, 0);
+  const policy = await gateway.inject({
+    method: 'POST',
+    url: '/v1/memory',
+    headers,
+    payload: { action: 'policy', conversationId: 'pc', enabled: true },
+  });
+  assert.equal(policy.statusCode, 200);
+  assert.deepEqual(calls[0], [
+    'POST',
+    '/api/memory-policy',
+    { scope: 'project:p1', enabled: true, profileId: 'p' },
+  ]);
+  const updated = await gateway.inject({
+    method: 'POST',
+    url: '/v1/conversations/pc/update',
+    headers,
+    payload: { profileId: 'p' },
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.deepEqual(calls[1], ['PATCH', '/api/conversations/pc', { profileId: 'p' }]);
+  const limited = f.pair(['read', 'message']);
+  assert.equal(
+    (
+      await gateway.inject({
+        url: '/v1/memory',
+        headers: { authorization: 'Bearer ' + limited.token },
+      })
+    ).statusCode,
+    403,
+  );
+});
 test('one-use pairing survives service reconstruction, tokens stay out of snapshots and revocation is immediate', (t) => {
   const f = fixture(t),
     invitation = f.service.invite('Phone', ['read']);

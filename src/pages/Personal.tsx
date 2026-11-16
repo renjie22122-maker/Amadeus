@@ -23,6 +23,7 @@ export function PersonalPage({
   const [deviceName, setDeviceName] = useState('My phone'),
     [approval, setApproval] = useState(false),
     [control, setControl] = useState(false),
+    [workspace, setWorkspace] = useState(false),
     [invite, setInvite] = useState<any>(),
     [busy, setBusy] = useState(false);
   const t = (en: string, cn: string) => (zh ? cn : en);
@@ -252,6 +253,17 @@ export function PersonalPage({
                 />
                 {t('Allow approved agent actions on this phone', '允许 Agent 经审批后操作这台手机')}
               </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={workspace}
+                  onChange={(e) => setWorkspace(e.target.checked)}
+                />
+                {t(
+                  'Allow workspace conversations, projects and memory management',
+                  '允许访问工作区会话、项目与记忆管理',
+                )}
+              </label>
               <button
                 onClick={() =>
                   void act(async () =>
@@ -265,6 +277,7 @@ export function PersonalPage({
                           'goals',
                           ...(approval ? ['approve'] : []),
                           ...(control ? ['device-control'] : []),
+                          ...(workspace ? ['workspace'] : []),
                         ],
                       }),
                     ),
@@ -290,6 +303,23 @@ export function PersonalPage({
                       : t('Not connected yet', '尚未连接')}
                 </p>
                 <p>{d.capabilities?.join(', ')}</p>
+                <label>
+                  <input
+                    type="checkbox"
+                    disabled={!!d.revokedAt}
+                    checked={d.scopes.includes('workspace')}
+                    onChange={(e) =>
+                      void act(() =>
+                        api(`/personal/devices/${d.id}/scopes`, {
+                          scopes: e.target.checked
+                            ? [...d.scopes, 'workspace']
+                            : d.scopes.filter((scope: string) => scope !== 'workspace'),
+                        }),
+                      )
+                    }
+                  />
+                  {t('Workspace conversations, projects and memory', '工作区会话、项目与记忆')}
+                </label>
                 <button
                   disabled={!!d.revokedAt}
                   onClick={() => void act(() => api(`/personal/devices/${d.id}/revoke`, {}))}

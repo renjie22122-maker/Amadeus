@@ -3,13 +3,23 @@ import { z } from 'zod';
 import { AppError, assert } from '../core/errors.js';
 import { PersonalAgent } from '../services/personal-agent.js';
 import { DeviceCommands } from '../services/device-commands.js';
+import { conversationMemoryScope } from '../../shared/memory-scope.js';
 
 const scopes = z
-  .array(z.enum(['read', 'message', 'stop', 'approve', 'goals', 'device-control']))
+  .array(z.enum(['read', 'message', 'stop', 'approve', 'goals', 'device-control', 'workspace']))
   .min(1)
-  .max(6);
+  .max(7);
 type Upload = (conversationId: string, name: string, data: Buffer) => Promise<unknown>;
-export function createPersonalGateway(service: PersonalAgent, upload?: Upload) {
+type OwnerRequest = (
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  body?: unknown,
+) => Promise<unknown>;
+export function createPersonalGateway(
+  service: PersonalAgent,
+  upload?: Upload,
+  memoryRequest?: OwnerRequest,
+) {
   const app = Fastify({ logger: false, bodyLimit: 12 * 1024 * 1024 });
   const commands = new DeviceCommands(service.store);
   app.setErrorHandler((e, _req, reply) =>
@@ -40,28 +50,146 @@ export function createPersonalGateway(service: PersonalAgent, upload?: Upload) {
   app.post('/v1/pair', async (req) =>
     service.pair(z.object({ code: z.string().min(30).max(100) }).parse(req.body).code),
   );
-  app.get('/v1/state', async (req) => {
+  app.get<{ Querystring: { conversationId?: string } }>('/v1/state', async (req) => {
     const d = device(req);
     service.require(d, 'read');
+    const c = service.conversation(d, req.query.conversationId);
     const s = service.snapshot();
     return {
       identity: s.identity,
       now: s.now,
+      conversation: { id: c.id, title: c.title, projectId: c.projectId, profileId: c.profileId },
+      streams: [...(service.runtime.streams?.values() || [])]
+        .filter((s) => s.conversationId === c.id)
+        .map((s) => ({ messageId: s.messageId, text: s.text.slice(-30000) })),
       goals: s.goals.filter((g) => g.conversationId === d.conversationId),
       events: service.store.selectedEvents(
-        d.conversationId,
+        c.id,
         ['user.message', 'assistant.message', 'run.status'],
         80,
       ),
       runs: service.store
-        .runMetadata(d.conversationId)
+        .runMetadata(c.id)
         .slice(-10)
         .map(({ id, status, createdAt }) => ({ id, status, createdAt })),
       inputs: d.scopes.includes('approve')
-        ? service.store.pendingInputs().filter((q) => q.conversationId === d.conversationId)
+        ? service.store.pendingInputs().filter((q) => q.conversationId === c.id)
         : [],
       device: { id: d.id, name: d.name, scopes: d.scopes },
     };
+  });
+  app.get('/v1/conversations', async (req) => {
+    const d = device(req);
+    return {
+      conversations: service.conversations(d),
+      projects: d.scopes.includes('workspace')
+        ? service.store
+            .list<any>('project')
+            .filter((p) => !p.removedAt)
+            .map(({ id, name }) => ({ id, name }))
+        : [],
+      models: service.runtime.config
+        .get()
+        .profiles.map(({ id, name, model, vision }) => ({ id, name, model, vision })),
+    };
+  });
+  app.post('/v1/conversations', async (req) => {
+    const b = z.object({ projectId: z.string().nullable().default(null) }).parse(req.body);
+    return service.createConversation(device(req), b.projectId);
+  });
+  app.post<{ Params: { id: string } }>('/v1/conversations/:id/update', async (req) => {
+    const d = device(req);
+    service.require(d, 'message');
+    const c = service.conversation(d, req.params.id);
+    const b = z
+      .object({
+        title: z.string().trim().min(1).max(120).optional(),
+        pinned: z.boolean().optional(),
+        profileId: z.string().optional(),
+      })
+      .strict()
+      .parse(req.body);
+    assert(
+      !service.runtime.active(c.id),
+      'BUSY',
+      'Wait for the current task before changing conversation settings.',
+      409,
+    );
+    assert(memoryRequest, 'UNAVAILABLE', 'Conversation settings unavailable.');
+    return memoryRequest('PATCH', '/api/conversations/' + encodeURIComponent(c.id), b);
+  });
+  app.get<{ Querystring: { conversationId?: string } }>('/v1/memory', async (req) => {
+    const d = device(req);
+    service.require(d, 'workspace');
+    service.require(d, 'read');
+    const c = service.conversation(d, req.query.conversationId),
+      scope = conversationMemoryScope(c);
+    return {
+      scope,
+      enabled: c.memory === true,
+      automatic: c.automaticMemory === true,
+      memories: service.store
+        .list<any>('memory')
+        .filter((m) => m.scope === scope)
+        .slice(-200)
+        .map(({ id, content, active, kind, revision }) => ({
+          id,
+          content,
+          active,
+          kind,
+          revision,
+        })),
+    };
+  });
+  app.post('/v1/memory', async (req) => {
+    const d = device(req);
+    service.require(d, 'workspace');
+    service.require(d, 'message');
+    assert(memoryRequest, 'UNAVAILABLE', 'Memory management unavailable.');
+    const b = z
+      .object({
+        conversationId: z.string().optional(),
+        action: z.enum(['policy', 'create', 'update', 'forget']),
+        id: z.string().optional(),
+        content: z.string().trim().min(1).max(4000).optional(),
+        enabled: z.boolean().optional(),
+        revision: z.number().int().optional(),
+      })
+      .parse(req.body);
+    const c = service.conversation(d, b.conversationId),
+      scope = conversationMemoryScope(c);
+    if (b.action === 'policy') {
+      assert(typeof b.enabled === 'boolean', 'REQUIRED', 'Choose whether memory is enabled.');
+      return memoryRequest('POST', '/api/memory-policy', {
+        scope,
+        enabled: b.enabled,
+        profileId: c.profileId,
+      });
+    }
+    if (b.action === 'create') {
+      assert(b.content, 'REQUIRED', 'Memory content required.');
+      return memoryRequest('POST', '/api/memories', {
+        scope,
+        content: b.content,
+        kind: 'fact',
+        recallScope: 'scope',
+        source: 'User via paired phone',
+        sourceConversationId: c.id,
+      });
+    }
+    assert(
+      b.id && service.store.get<any>('memory', b.id).scope === scope,
+      'SCOPE',
+      'Memory belongs to another scope.',
+      403,
+    );
+    if (b.action === 'forget')
+      return memoryRequest('DELETE', '/api/memories/' + encodeURIComponent(b.id));
+    assert(b.content, 'REQUIRED', 'Memory content required.');
+    return memoryRequest('PATCH', '/api/memories/' + encodeURIComponent(b.id), {
+      content: b.content,
+      revision: b.revision,
+    });
   });
   app.post('/v1/message', async (req) => {
     const body = z
@@ -69,9 +197,16 @@ export function createPersonalGateway(service: PersonalAgent, upload?: Upload) {
         requestId: z.string().uuid(),
         text: z.string().trim().min(1).max(10000),
         attachmentIds: z.array(z.string().uuid()).max(4).default([]),
+        conversationId: z.string().optional(),
       })
       .parse(req.body);
-    return service.message(device(req), body.requestId, body.text, body.attachmentIds);
+    return service.message(
+      device(req),
+      body.requestId,
+      body.text,
+      body.attachmentIds,
+      body.conversationId,
+    );
   });
   app.post('/v1/attachments', async (req) => {
     const d = device(req);
@@ -80,6 +215,7 @@ export function createPersonalGateway(service: PersonalAgent, upload?: Upload) {
     const b = z
       .object({
         name: z.string().regex(/^[^\r\n"\\/]{1,120}$/),
+        conversationId: z.string().optional(),
         base64: z
           .string()
           .max(12 * 1024 * 1024)
@@ -88,12 +224,13 @@ export function createPersonalGateway(service: PersonalAgent, upload?: Upload) {
       .parse(req.body);
     const data = Buffer.from(b.base64, 'base64');
     assert(data.length > 0 && data.length <= 8 * 1024 * 1024, 'SIZE', 'Select a file up to 8 MB.');
-    return upload(d.conversationId, b.name, data);
+    return upload(service.conversation(d, b.conversationId).id, b.name, data);
   });
   app.post('/v1/stop', async (req) => {
     const d = device(req);
     service.require(d, 'stop');
-    service.runtime.stop(d.conversationId);
+    const b = z.object({ conversationId: z.string().optional() }).parse(req.body);
+    service.runtime.stop(service.conversation(d, b.conversationId).id);
     return { ok: true };
   });
   app.post('/v1/input', async (req) => {
@@ -106,10 +243,9 @@ export function createPersonalGateway(service: PersonalAgent, upload?: Upload) {
         allow: z.boolean().optional(),
       })
       .parse(req.body);
-    const input = service.store
-      .pendingInputs()
-      .find((q) => q.id === body.id && q.conversationId === d.conversationId);
+    const input = service.store.pendingInputs().find((q) => q.id === body.id);
     assert(input, 'SCOPE', 'Input is no longer pending in this conversation.', 403);
+    service.conversation(d, input.conversationId);
     service.runtime.inputs.answer(body.id, body.answer || '', body.allow ?? false, false);
     return { ok: true };
   });
@@ -163,8 +299,13 @@ export function createPersonalGateway(service: PersonalAgent, upload?: Upload) {
   });
   return app;
 }
-export function personalAgentRoutes(app: FastifyInstance, service: PersonalAgent, upload?: Upload) {
-  const gateway = createPersonalGateway(service, upload);
+export function personalAgentRoutes(
+  app: FastifyInstance,
+  service: PersonalAgent,
+  upload?: Upload,
+  memoryRequest?: OwnerRequest,
+) {
+  const gateway = createPersonalGateway(service, upload, memoryRequest);
   let address: string | undefined, starting: Promise<string> | undefined;
   let gatewayError: string | undefined;
   const start = () => {
@@ -229,6 +370,13 @@ export function personalAgentRoutes(app: FastifyInstance, service: PersonalAgent
   app.post<{ Params: { id: string } }>('/api/personal/devices/:id/revoke', async (req) =>
     service.revoke(req.params.id),
   );
+  app.post<{ Params: { id: string } }>('/api/personal/devices/:id/scopes', async (req) => {
+    const b = z.object({ scopes }).parse(req.body),
+      old = service.store.get<any>('paired-device', req.params.id);
+    assert(!old.revokedAt, 'REVOKED', 'Pair the device again before granting access.');
+    service.store.put('paired-device', { ...old, scopes: b.scopes });
+    return { ok: true };
+  });
   app.post('/api/personal/gateway/start', async () => {
     // TLS is terminated by a trusted local reverse proxy/tunnel. Never bind plaintext to LAN.
     return { address: await start() };

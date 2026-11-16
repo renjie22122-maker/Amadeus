@@ -2,26 +2,41 @@ package io.amadeus.mobile;
 
 import android.app.*;
 import android.content.*;
-import android.content.pm.PackageManager;
-import android.net.Uri;
+import android.content.res.Configuration;
+import android.graphics.Typeface;
 import android.os.*;
-import android.provider.Settings;
-import android.view.View;
+import android.speech.RecognizerIntent;
+import android.speech.tts.TextToSpeech;
+import android.text.*;
+import android.text.method.LinkMovementMethod;
+import android.view.*;
 import android.widget.*;
-import java.util.UUID;
-import java.util.concurrent.Executors;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.*;
 
 public class MainActivity extends Activity {
-  final java.util.concurrent.ExecutorService network = Executors.newSingleThreadExecutor();
-  LinearLayout column;
-  TextView status, transcript;
-  EditText message;
+  final ExecutorService network = Executors.newSingleThreadExecutor();
   final Handler handler = new Handler(Looper.getMainLooper());
+  final AtomicBoolean loading = new AtomicBoolean();
+  LinearLayout root, messages, composer;
+  ScrollView scroll;
+  EditText input;
+  TextView title, model, status, attachment;
+  TextToSpeech speech;
+  JSONObject state = new JSONObject(), index = new JSONObject();
+  String conversationId = "", renderKey = "";
   boolean visible;
+  volatile boolean sending;
+  int bg, fg, muted, surface, accent;
 
   interface Work {
     void run() throws Exception;
+  }
+
+  int dp(float n) {
+    return ChatUi.dp(this, n);
   }
 
   void work(Work job) {
@@ -35,480 +50,760 @@ public class MainActivity extends Activity {
         });
   }
 
-  TextView text(String s) {
-    TextView v = new TextView(this);
-    v.setText(s);
-    v.setTextSize(16);
-    v.setPadding(0, 12, 0, 12);
-    column.addView(v);
+  TextView label(String value, int size, int color) {
+    return ChatUi.label(this, value, size, color);
+  }
+
+  LinearLayout vertical() {
+    LinearLayout v = new LinearLayout(this);
+    v.setOrientation(LinearLayout.VERTICAL);
     return v;
   }
 
-  EditText input(String hint) {
-    EditText v = new EditText(this);
-    v.setHint(hint);
-    column.addView(v);
-    return v;
-  }
-
-  void button(String label, Runnable fn) {
-    Button b = new Button(this);
-    b.setText(label);
-    b.setOnClickListener(v -> fn.run());
-    column.addView(b);
+  ChatUi.Icon icon(String type, String description, Runnable action) {
+    return new ChatUi.Icon(this, type, description, fg, action);
   }
 
   @Override
-  public void onCreate(Bundle state) {
-    super.onCreate(state);
-    ScrollView scroll = new ScrollView(this);
-    column = new LinearLayout(this);
-    column.setOrientation(LinearLayout.VERTICAL);
-    column.setPadding(28, 56, 28, 32);
-    scroll.addView(column);
-    setContentView(scroll);
-    text("● Amadeus · 常驻助手").setTextSize(26);
-    status = text("HTTPS 配对 · 同一身份跨设备继续工作");
-    LinearLayout rootColumn = column, setup = new LinearLayout(this);
-    setup.setOrientation(LinearLayout.VERTICAL);
-    button(
-        "设备连接与权限设置",
-        () ->
-            setup.setVisibility(setup.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
-    rootColumn.addView(setup);
-    setup.setVisibility(
-        getSharedPreferences("pair", 0).contains("token") ? View.GONE : View.VISIBLE);
-    column = setup;
-    EditText url = input("电脑连接入口：https://your-domain");
-    url.setSingleLine(true);
-    url.setText(getSharedPreferences("pair", 0).getString("url", ""));
-    EditText code = input("电脑上生成的五分钟配对码");
-    code.setSingleLine(true);
-    code.setInputType(129);
-    button(
-        "配对电脑",
-        () -> {
-          stopService(new Intent(this, DotService.class));
-          String address = url.getText().toString(), secret = code.getText().toString();
-          work(
-              () -> {
-                JSONObject result =
-                    AgentClient.request(
-                        address, "/v1/pair", new JSONObject().put("code", secret), null);
-                new AgentClient(this).save(address, result.getString("token"));
-                getSharedPreferences("commands", 0).edit().clear().commit();
-                getSharedPreferences("outbox", 0).edit().clear().commit();
-                runOnUiThread(
-                    () -> {
-                      code.setText("");
-                      status.setText("已配对。手机和电脑现在使用同一个助手。");
-                    });
-                refresh();
-              });
+  public void onCreate(Bundle saved) {
+    super.onCreate(saved);
+    boolean dark =
+        (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+            == Configuration.UI_MODE_NIGHT_YES;
+    bg = dark ? 0xff15171c : 0xfffbfcff;
+    fg = dark ? 0xffe9eaf0 : 0xff202124;
+    muted = dark ? 0xffa6abb7 : 0xff717680;
+    surface = dark ? 0xff252932 : 0xffeef1f7;
+    accent = dark ? 0xffb4c4ff : 0xff4c5ca6;
+    getWindow().setStatusBarColor(bg);
+    getWindow().setNavigationBarColor(bg);
+    if (!dark)
+      getWindow()
+          .getDecorView()
+          .setSystemUiVisibility(
+              View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+    root = vertical();
+    root.setBackgroundColor(bg);
+    setContentView(root);
+    root.setOnApplyWindowInsetsListener(
+        (view, insets) -> {
+          android.graphics.Insets system =
+              insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
+          view.setPadding(system.left, system.top, system.right, system.bottom);
+          return insets;
         });
-    button(
-        "启动常驻连接与悬浮入口",
-        () -> {
-          if (Build.VERSION.SDK_INT >= 33
-              && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
-                  != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[] {"android.permission.POST_NOTIFICATIONS"}, 1);
-            return;
+    LinearLayout header = new LinearLayout(this);
+    header.setGravity(Gravity.CENTER_VERTICAL);
+    header.setPadding(dp(8), dp(6), dp(8), dp(6));
+    header.addView(icon("menu", "打开会话侧栏", this::drawer));
+    LinearLayout heading = vertical();
+    title = label("Amadeus", 21, fg);
+    title.setTypeface(null, Typeface.BOLD);
+    title.setSingleLine(true);
+    title.setEllipsize(TextUtils.TruncateAt.END);
+    model = label("连接你的个人助手  ▾", 12, muted);
+    heading.addView(title);
+    heading.addView(model);
+    heading.setPadding(dp(8), 0, 0, 0);
+    heading.setOnClickListener(v -> models());
+    header.addView(heading, new LinearLayout.LayoutParams(0, dp(50), 1));
+    header.addView(icon("plus", "新对话", this::newChat));
+    header.addView(icon("dots", "会话菜单", this::chatMenu));
+    root.addView(header);
+    status = label("", 12, muted);
+    status.setPadding(dp(24), 0, dp(24), dp(6));
+    root.addView(status);
+    scroll = new ScrollView(this);
+    scroll.setFillViewport(true);
+    scroll.setClipToPadding(false);
+    messages = vertical();
+    messages.setPadding(dp(20), dp(12), dp(20), dp(20));
+    scroll.addView(messages);
+    root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    LinearLayout bottom = vertical();
+    bottom.setPadding(dp(12), dp(6), dp(12), dp(10));
+    attachment = label("", 12, accent);
+    attachment.setPadding(dp(14), dp(4), dp(14), dp(4));
+    attachment.setVisibility(View.GONE);
+    bottom.addView(attachment);
+    composer = vertical();
+    composer.setPadding(dp(8), dp(4), dp(8), dp(6));
+    composer.setBackground(ChatUi.rounded(surface, 28, this));
+    input = new EditText(this);
+    input.setHint("问 Amadeus，或描述你想完成的事");
+    input.setTextColor(fg);
+    input.setHintTextColor(muted);
+    input.setTextSize(16);
+    input.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+    input.setPadding(dp(12), dp(12), dp(12), dp(8));
+    input.setMinLines(1);
+    input.setMaxLines(6);
+    input.setInputType(
+        android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+    composer.addView(input);
+    LinearLayout actions = new LinearLayout(this);
+    actions.setGravity(Gravity.CENTER_VERTICAL);
+    actions.addView(icon("plus", "添加照片或文件", this::attachments));
+    actions.addView(icon("tools", "工具与能力", this::tools));
+    View spacer = new View(this);
+    actions.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
+    actions.addView(icon("mic", "语音输入", this::dictate));
+    ChatUi.Icon send =
+        new ChatUi.Icon(this, "send", "发送消息", dark ? 0xff202124 : 0xffffffff, this::send);
+    send.setBackground(ChatUi.rounded(accent, 24, this));
+    actions.addView(send);
+    composer.addView(actions);
+    bottom.addView(composer);
+    root.addView(bottom);
+    conversationId = getSharedPreferences("chat-ui", 0).getString("conversationId", "");
+    input.addTextChangedListener(
+        new TextWatcher() {
+          public void beforeTextChanged(CharSequence s, int a, int c, int f) {}
+
+          public void onTextChanged(CharSequence s, int a, int b, int c) {
+            getSharedPreferences("chat-drafts", 0)
+                .edit()
+                .putString(conversationId, s.toString())
+                .apply();
           }
-          startForegroundService(new Intent(this, DotService.class));
-          status.setText("连接已启动；通知栏可随时停止。电脑必须保持运行。");
+
+          public void afterTextChanged(Editable e) {}
         });
-    button(
-        "停止手机常驻连接",
-        () -> {
-          stopService(new Intent(this, DotService.class));
-          status.setText("手机操作会话已停止；电脑上的目标不会因此取消。");
-        });
-    button(
-        "悬浮入口权限",
-        () ->
-            startActivity(
-                new Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName()))));
-    button(
-        "屏幕操作权限说明",
-        () ->
-            new AlertDialog.Builder(this)
-                .setTitle("允许屏幕操作？")
-                .setMessage(
-                    "启用无障碍服务后，仅在你启动常驻连接期间，配对的 Agent"
-                        + " 经审批可以读取屏幕、点击与滑动。可能看到屏幕上的私人信息。关闭连接或关闭无障碍服务即停止。请只在自己的设备使用。")
-                .setNegativeButton("取消", null)
-                .setPositiveButton(
-                    "打开系统设置",
-                    (d, w) -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
-                .show());
-    button(
-        "允许读取选定照片",
-        () ->
-            requestPermissions(
-                Build.VERSION.SDK_INT >= 34
-                    ? new String[] {
-                      "android.permission.READ_MEDIA_IMAGES",
-                      "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
-                    }
-                    : Build.VERSION.SDK_INT >= 33
-                        ? new String[] {"android.permission.READ_MEDIA_IMAGES"}
-                        : new String[] {"android.permission.READ_EXTERNAL_STORAGE"},
-                2));
-    button(
-        "短信 / 通话记录权限（系统可能限制）",
-        () ->
-            new AlertDialog.Builder(this)
-                .setMessage("仅在 Android 与安装来源允许时读取。不能绕过系统限制；不会自动发送、删除短信或开启通话录音。")
-                .setNegativeButton("取消", null)
-                .setPositiveButton(
-                    "申请读取",
-                    (d, w) ->
-                        requestPermissions(
-                            new String[] {
-                              "android.permission.READ_SMS", "android.permission.READ_CALL_LOG"
-                            },
-                            4))
-                .show());
-    button(
-        "联系人读取权限", () -> requestPermissions(new String[] {"android.permission.READ_CONTACTS"}, 5));
-    button(
-        "选择录音或文件整理目录",
-        () ->
-            startActivityForResult(
-                new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                    .addFlags(
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION
-                            | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                            | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),
-                10));
-    button(
-        "选择文件发给 Agent 分析（含邮件导出、录音、照片）",
-        () ->
-            startActivityForResult(
-                new Intent(Intent.ACTION_OPEN_DOCUMENT)
-                    .setType("*/*")
-                    .addCategory(Intent.CATEGORY_OPENABLE),
-                11));
-    button(
-        "开始麦克风录音",
-        () -> {
-          if (checkSelfPermission("android.permission.RECORD_AUDIO")
-              != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[] {"android.permission.RECORD_AUDIO"}, 6);
-            return;
-          }
-          if (Build.VERSION.SDK_INT >= 33
-              && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
-                  != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[] {"android.permission.POST_NOTIFICATIONS"}, 1);
-            return;
-          }
-          startForegroundService(new Intent(this, RecordingService.class));
-          status.setText("麦克风录音已启动；这不是系统通话录音。通知栏可停止。");
-        });
-    button("停止录音", () -> stopService(new Intent(this, RecordingService.class)));
-    button(
-        "发送本机录音分析",
-        () -> {
-          java.io.File[] files =
-              new java.io.File(getExternalFilesDir(null), "recordings").listFiles();
-          if (files == null || files.length == 0) {
-            status.setText("暂无录音");
-            return;
-          }
-          String[] names = new String[files.length];
-          for (int i = 0; i < files.length; i++) names[i] = files[i].getName();
-          new AlertDialog.Builder(this)
-              .setTitle("选择已停止的录音上传到配对电脑")
-              .setItems(
-                  names,
-                  (d, index) ->
-                      work(
-                          () -> {
-                            try (var input = new java.io.FileInputStream(files[index])) {
-                              uploadFile(names[index], input);
-                            }
-                          }))
-              .show();
-        });
-    button(
-        "邮件整理连接说明",
-        () ->
-            new AlertDialog.Builder(this)
-                .setTitle("邮件整理")
-                .setMessage(
-                    "在电脑的插件设置中连接你自己的邮箱 MCP 服务，授权读信、分类或归档。手机可直接给同一个 Agent 下达整理请求。此应用不会读取手机邮箱 App"
-                        + " 的私有数据库，也不会假装已连接邮箱。也可选择导出的邮件文件上传分析。")
-                .setPositiveButton("知道了", null)
-                .show());
-    column = rootColumn;
-    transcript = text("消息与目标将在这里显示");
-    transcript.setTextIsSelectable(true);
-    message = input("给电脑上的 Agent 发消息，也可请求操作已配对的手机");
-    button(
-        "发送 / 重试待发送消息",
-        () -> {
-          var prefs = getSharedPreferences("outbox", 0);
-          String pending = prefs.getString("pending", null);
-          if (pending == null) {
-            String value = message.getText().toString().trim();
-            if (value.isEmpty()) return;
-            try {
-              pending =
-                  new JSONObject()
-                      .put("requestId", UUID.randomUUID().toString())
-                      .put("text", value)
-                      .toString();
-            } catch (Exception e) {
-              return;
-            }
-            prefs.edit().putString("pending", pending).commit();
-          }
-          String payload = pending;
-          work(
-              () -> {
-                JSONObject receipt =
-                    new AgentClient(this).call("/v1/message", new JSONObject(payload));
-                if (!"accepted".equals(receipt.optString("status")))
-                  throw new Exception("请求状态不确定，请在电脑检查。不要重复执行。");
-                prefs.edit().remove("pending").commit();
-                runOnUiThread(
-                    () -> {
-                      message.setText("");
-                      status.setText("已发送，任务在电脑继续运行。");
-                    });
-                refresh();
-              });
-        });
-    button(
-        "停止当前电脑任务",
-        () ->
-            work(
-                () -> {
-                  new AgentClient(this).call("/v1/stop", new JSONObject());
-                  refresh();
-                }));
-    button("刷新进展", this::refresh);
-    button("新增长期目标", this::goalDialog);
-    button(
-        "管理长期目标",
-        () ->
-            work(
-                () -> {
-                  JSONArray goals =
-                      new AgentClient(this).call("/v1/state", null).getJSONArray("goals");
-                  String[] names = new String[goals.length()];
-                  for (int i = 0; i < goals.length(); i++)
-                    names[i] = goals.getJSONObject(i).getString("title");
-                  runOnUiThread(
-                      () ->
-                          new AlertDialog.Builder(this)
-                              .setTitle("选择目标")
-                              .setItems(
-                                  names,
-                                  (d, index) -> {
-                                    try {
-                                      String key = goals.getJSONObject(index).getString("id");
-                                      new AlertDialog.Builder(this)
-                                          .setTitle(names[index])
-                                          .setItems(
-                                              new String[] {"暂停后续执行", "恢复", "现在检查"},
-                                              (dialog, action) ->
-                                                  work(
-                                                      () -> {
-                                                        new AgentClient(this)
-                                                            .call(
-                                                                "/v1/goals/" + key + "/action",
-                                                                new JSONObject()
-                                                                    .put(
-                                                                        "action",
-                                                                        new String[] {
-                                                                              "pause", "resume",
-                                                                              "wake"
-                                                                            }
-                                                                            [action])
-                                                                    .put(
-                                                                        "eventId",
-                                                                        UUID.randomUUID()
-                                                                            .toString()));
-                                                        refresh();
-                                                      }))
-                                          .show();
-                                    } catch (Exception e) {
-                                      status.setText(e.getMessage());
-                                    }
-                                  })
-                              .setNegativeButton("关闭", null)
-                              .show());
-                }));
-    button(
-        "查看本机待办",
-        () ->
-            new AlertDialog.Builder(this)
-                .setTitle("Amadeus 待办")
-                .setMessage(getSharedPreferences("todos", 0).getString("items", "[]"))
-                .setPositiveButton("关闭", null)
-                .show());
-    button(
-        "查看智能相册分类",
-        () ->
-            new AlertDialog.Builder(this)
-                .setTitle("Amadeus 相册分类（不移动原图）")
-                .setMessage(getSharedPreferences("albums", 0).getAll().toString())
-                .setPositiveButton("关闭", null)
-                .show());
-    button(
-        "处理待审批请求",
-        () ->
-            work(
-                () -> {
-                  JSONObject s = new AgentClient(this).call("/v1/state", null);
-                  JSONArray inputs = s.optJSONArray("inputs");
-                  if (inputs == null || inputs.length() == 0) {
-                    runOnUiThread(() -> status.setText("没有待审批请求，或设备未获审批权限。"));
-                    return;
-                  }
-                  JSONObject q = inputs.getJSONObject(0);
-                  runOnUiThread(() -> approvalDialog(q));
-                }));
-    button(
-        "断开并清除本机配对",
-        () -> {
-          stopService(new Intent(this, DotService.class));
-          getSharedPreferences("pair", 0).edit().clear().commit();
-          getSharedPreferences("outbox", 0).edit().clear().commit();
-          status.setText("本机已断开。请在电脑撤销设备凭证。");
-        });
-    handleCommand(getIntent());
+    input.setText(getSharedPreferences("chat-drafts", 0).getString(conversationId, ""));
+    speech =
+        new TextToSpeech(
+            this,
+            code -> {
+              if (code == TextToSpeech.SUCCESS) speech.setLanguage(Locale.getDefault());
+            });
+    welcome();
+    forwardCommand(getIntent());
+  }
+
+  void settings() {
+    startActivity(
+        new Intent(this, SettingsActivity.class).putExtra("conversationId", conversationId));
+  }
+
+  void forwardCommand(Intent intent) {
+    String key = intent.getStringExtra("commandId");
+    if (key != null) {
+      intent.removeExtra("commandId");
+      startActivity(new Intent(this, SettingsActivity.class).putExtra("commandId", key));
+    }
   }
 
   @Override
   protected void onNewIntent(Intent intent) {
     super.onNewIntent(intent);
-    handleCommand(intent);
+    forwardCommand(intent);
   }
 
-  @Override
-  protected void onActivityResult(int request, int result, Intent data) {
-    super.onActivityResult(request, result, data);
-    if (result != RESULT_OK || data == null || data.getData() == null) return;
-    Uri uri = data.getData();
-    if (request == 10) {
-      try {
-        getContentResolver()
-            .takePersistableUriPermission(
-                uri,
-                (data.getFlags() & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0
-                    ? Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                    : Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        getSharedPreferences("files", 0).edit().putString("tree", uri.toString()).commit();
-        status.setText("已授权此目录；重命名需要本机确认。");
-      } catch (Exception e) {
-        status.setText(e.getMessage());
-      }
-    } else if (request == 11)
-      work(
-          () -> {
-            String name = "attachment.bin";
-            try (var cursor =
-                getContentResolver().query(uri, new String[] {"_display_name"}, null, null, null)) {
-              if (cursor != null && cursor.moveToFirst()) name = cursor.getString(0);
-            }
-            try (var input = getContentResolver().openInputStream(uri)) {
-              uploadFile(name, input);
-            }
+  void welcome() {
+    messages.removeAllViews();
+    LinearLayout hero = vertical();
+    hero.setPadding(dp(4), dp(70), dp(4), dp(24));
+    TextView mark = label("Amadeus", 15, accent);
+    hero.addView(mark);
+    TextView hello = label("你好，\n今天想聊些什么？", 34, fg);
+    hello.setPadding(0, dp(18), 0, dp(22));
+    hero.addView(hello);
+    TextView description = label("聊一个想法，探索一个项目，\n或让我帮你把事情继续推进。", 16, muted);
+    description.setLineSpacing(dp(5), 1);
+    hero.addView(description);
+    messages.addView(hero);
+    for (String suggestion : new String[] {"一起梳理一个想法", "帮我研究一个问题", "继续推进我的长期目标"}) {
+      TextView chip = label(suggestion + "  ↗", 14, fg);
+      chip.setPadding(dp(18), dp(14), dp(18), dp(14));
+      chip.setBackground(ChatUi.rounded(surface, 18, this));
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+      lp.setMargins(0, dp(8), 0, 0);
+      messages.addView(chip, lp);
+      chip.setOnClickListener(
+          v -> {
+            input.setText(suggestion);
+            input.requestFocus();
           });
+    }
+    if (!getSharedPreferences("pair", 0).contains("token")) {
+      TextView connect = label("连接电脑 →", 16, accent);
+      connect.setPadding(0, dp(24), 0, dp(8));
+      connect.setOnClickListener(v -> settings());
+      messages.addView(connect);
+      status.setText("尚未连接 · 在设置中完成一次配对即可");
+    }
   }
 
-  void uploadFile(String name, java.io.InputStream input) throws Exception {
-    if (input == null) throw new Exception("Cannot read file");
-    java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-    byte[] chunk = new byte[8192];
-    int n;
-    while ((n = input.read(chunk)) != -1) {
-      if (out.size() + n > 6 * 1024 * 1024) throw new Exception("手机上传上限6MB，请分段录音或在电脑导入较大文件。");
-      out.write(chunk, 0, n);
-    }
-    JSONObject attachment =
-        new AgentClient(this)
-            .call(
-                "/v1/attachments",
-                new JSONObject()
-                    .put("name", name.replaceAll("[\\r\\n\"\\\\/]", "_"))
-                    .put(
-                        "base64",
-                        android.util.Base64.encodeToString(
-                            out.toByteArray(), android.util.Base64.NO_WRAP)));
-    String prompt = "请分析这份我选择上传的文件，说明实际读取到的内容和可用的整理建议。录音转写需要已配置的音频工具，不要编造未读取的内容。";
-    JSONObject pending =
-        new JSONObject()
-            .put("requestId", UUID.randomUUID().toString())
-            .put("text", prompt)
-            .put("attachmentIds", new JSONArray().put(attachment.getString("id")));
-    var prefs = getSharedPreferences("outbox", 0);
-    if (prefs.contains("pending")) throw new Exception("文件已上传，但有待发送消息。请先重试上一条消息，再在电脑会话查看附件。");
-    prefs.edit().putString("pending", pending.toString()).commit();
-    runOnUiThread(
+  String path(String base) {
+    return conversationId.isEmpty() ? base : base + "?conversationId=" + conversationId;
+  }
+
+  void refresh() {
+    if (!getSharedPreferences("pair", 0).contains("token") || !loading.compareAndSet(false, true))
+      return;
+    String selected = conversationId;
+    work(
         () -> {
-          message.setText(prompt);
-          status.setText("文件已上传。点击发送以开始分析；断线重试不会重复提交任务。");
+          try {
+            JSONObject next =
+                new AgentClient(this)
+                    .call(
+                        selected.isEmpty() ? "/v1/state" : "/v1/state?conversationId=" + selected,
+                        null);
+            runOnUiThread(
+                () -> {
+                  if (!conversationId.equals(selected)) return;
+                  state = next;
+                  JSONObject chat = next.optJSONObject("conversation");
+                  if (chat != null) {
+                    conversationId = chat.optString("id");
+                    title.setText(
+                        chat.optString("title", "Amadeus").equals("New chat")
+                            ? "Amadeus"
+                            : chat.optString("title"));
+                    getSharedPreferences("chat-ui", 0)
+                        .edit()
+                        .putString("conversationId", conversationId)
+                        .apply();
+                  }
+                  render();
+                });
+          } finally {
+            loading.set(false);
+          }
         });
   }
 
-  void handleCommand(Intent intent) {
-    String key = intent.getStringExtra("commandId");
-    if (key == null) return;
-    String raw = getSharedPreferences("commands", 0).getString("pending:" + key, null);
-    if (raw == null) return;
+  void loadIndex(Runnable done) {
+    work(
+        () -> {
+          JSONObject value = new AgentClient(this).call("/v1/conversations", null);
+          runOnUiThread(
+              () -> {
+                index = value;
+                if (done != null) done.run();
+              });
+        });
+  }
+
+  void render() {
+    JSONArray events = state.optJSONArray("events"),
+        streams = state.optJSONArray("streams"),
+        runs = state.optJSONArray("runs"),
+        approvals = state.optJSONArray("inputs");
+    boolean running = false;
+    if (runs != null && runs.length() > 0) {
+      String phase = runs.optJSONObject(runs.length() - 1).optString("status");
+      running = !Arrays.asList("completed", "failed", "interrupted", "cancelled").contains(phase);
+    }
+    status.setText(
+        approvals != null && approvals.length() > 0
+            ? "需要你确认 · 点击查看"
+            : running ? "正在处理 · 你可以离开，任务会继续" : "已连接 · 手机与电脑同步");
+    status.setOnClickListener(
+        v -> {
+          if (state.optJSONArray("inputs") != null && state.optJSONArray("inputs").length() > 0)
+            approvals();
+        });
+    JSONArray profiles = index.optJSONArray("models");
+    JSONObject chat = state.optJSONObject("conversation");
+    if (profiles != null && chat != null)
+      for (int i = 0; i < profiles.length(); i++) {
+        JSONObject p = profiles.optJSONObject(i);
+        if (p.optString("id").equals(chat.optString("profileId")))
+          model.setText(p.optString("name") + "  ▾");
+      }
+    String fingerprint = String.valueOf(events) + String.valueOf(streams);
+    if (fingerprint.equals(renderKey)) return;
+    renderKey = fingerprint;
+    boolean nearBottom =
+        scroll.getChildCount() == 0
+            || scroll.getChildAt(0).getHeight() - scroll.getHeight() - scroll.getScrollY()
+                < dp(120);
+    messages.removeAllViews();
+    int count = 0;
+    if (events != null)
+      for (int i = 0; i < events.length(); i++) {
+        JSONObject event = events.optJSONObject(i), data = event.optJSONObject("data");
+        String type = event.optString("type");
+        if (data != null
+            && data.has("text")
+            && (type.equals("user.message") || type.equals("assistant.message"))) {
+          bubble(data.optString("text"), type.equals("user.message"), false);
+          count++;
+        }
+      }
+    if (streams != null)
+      for (int i = 0; i < streams.length(); i++) {
+        String text = streams.optJSONObject(i).optString("text");
+        if (!text.isEmpty()) {
+          bubble(text, false, true);
+          count++;
+        }
+      }
+    if (count == 0) welcome();
+    else if (nearBottom) scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+  }
+
+  void bubble(String text, boolean user, boolean partial) {
+    LinearLayout wrap = vertical();
+    wrap.setPadding(user ? dp(36) : 0, dp(10), 0, dp(14));
+    TextView body = label("", 16, fg);
+    body.setText(ChatUi.markdown(text));
+    body.setLineSpacing(dp(5), 1);
+    body.setTextIsSelectable(true);
+    body.setMovementMethod(LinkMovementMethod.getInstance());
+    if (user) {
+      body.setBackground(ChatUi.rounded(surface, 22, this));
+      body.setPadding(dp(16), dp(12), dp(16), dp(12));
+      wrap.setGravity(Gravity.END);
+    } else {
+      TextView author = label(partial ? "Amadeus · 正在回复" : "Amadeus", 12, accent);
+      author.setPadding(0, 0, 0, dp(10));
+      wrap.addView(author);
+    }
+    wrap.addView(body);
+    if (!user && !partial) {
+      TextView options = label("复制    朗读    分享", 12, muted);
+      options.setPadding(0, dp(12), 0, 0);
+      options.setOnClickListener(
+          v ->
+              new AlertDialog.Builder(this)
+                  .setItems(
+                      new String[] {"复制回复", "朗读回复", "分享回复"},
+                      (d, which) -> {
+                        if (which == 0) {
+                          ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
+                              .setPrimaryClip(ClipData.newPlainText("Amadeus", text));
+                          Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show();
+                        } else if (which == 1)
+                          speech.speak(
+                              text.substring(
+                                  0,
+                                  Math.min(text.length(), TextToSpeech.getMaxSpeechInputLength())),
+                              TextToSpeech.QUEUE_FLUSH,
+                              null,
+                              "reply");
+                        else
+                          startActivity(
+                              Intent.createChooser(
+                                  new Intent(Intent.ACTION_SEND)
+                                      .setType("text/plain")
+                                      .putExtra(Intent.EXTRA_TEXT, text),
+                                  "分享回复"));
+                      })
+                  .show());
+      wrap.addView(options);
+    }
+    messages.addView(wrap);
+  }
+
+  void select(String id) {
+    conversationId = id;
+    renderKey = "";
+    state = new JSONObject();
+    getSharedPreferences("chat-ui", 0).edit().putString("conversationId", id).apply();
+    input.setText(getSharedPreferences("chat-drafts", 0).getString(id, ""));
+    welcome();
+    updateAttachments();
+    refresh();
+  }
+
+  void send() {
+    if (sending) return;
+    var prefs = getSharedPreferences("outbox", 0);
+    String pending = prefs.getString("pending", null);
     try {
-      JSONObject command = new JSONObject(raw);
-      new AlertDialog.Builder(this)
-          .setTitle("手机操作请求")
-          .setMessage(
-              command.getString("capability") + "\n" + command.getJSONObject("args").toString(2))
-          .setNegativeButton(
-              "拒绝", (d, w) -> DotService.finish(this, key, "failed", "User declined"))
-          .setPositiveButton(
-              "执行",
-              (d, w) -> {
-                work(
-                    () -> {
-                      new AgentClient(this).call("/v1/state", null);
-                      runOnUiThread(
-                          () -> {
-                            if (!DotService.active
-                                || !getSharedPreferences("commands", 0)
-                                    .contains("pending:" + key)) {
-                              status.setText("控制会话已停止，请勿重复执行旧请求。");
-                              return;
-                            }
-                            getSharedPreferences("commands", 0)
-                                .edit()
-                                .remove("pending:" + key)
-                                .commit();
-                            try {
-                              Object result = PhoneActions.run(this, command);
-                              DotService.finish(this, key, "completed", result);
-                            } catch (Exception e) {
-                              DotService.finish(this, key, "unknown", e.getMessage());
-                            }
-                          });
-                    });
-              })
-          .show();
+      if (pending == null) {
+        String value = input.getText().toString().trim();
+        JSONArray selectedFiles =
+            new JSONArray(
+                getSharedPreferences("chat-attachments", 0).getString(conversationId, "[]"));
+        if (value.isEmpty() && selectedFiles.length() == 0) return;
+        if (value.isEmpty()) value = "请分析我上传的附件。";
+        JSONArray attachmentIds = new JSONArray();
+        for (int i = 0; i < selectedFiles.length(); i++)
+          attachmentIds.put(selectedFiles.getJSONObject(i).getString("id"));
+        pending =
+            new JSONObject()
+                .put("requestId", UUID.randomUUID().toString())
+                .put("conversationId", conversationId.isEmpty() ? JSONObject.NULL : conversationId)
+                .put("text", value)
+                .put("attachmentIds", attachmentIds)
+                .toString();
+        if (conversationId.isEmpty()) {
+          JSONObject payload = new JSONObject(pending);
+          payload.remove("conversationId");
+          pending = payload.toString();
+        }
+        if (!prefs.edit().putString("pending", pending).commit()) throw new Exception("无法保存待发送消息");
+      }
+      JSONObject payload = new JSONObject(pending);
+      if (payload.has("conversationId")
+          && !payload.isNull("conversationId")
+          && !payload.getString("conversationId").equals(conversationId)) {
+        status.setText("上一条消息尚待确认，请返回原会话重试，避免发到错误会话。");
+        return;
+      }
+      String sendingConversation = payload.optString("conversationId", conversationId);
+      sending = true;
+      input.setEnabled(false);
+      status.setText("正在发送…");
+      work(
+          () -> {
+            try {
+              JSONObject receipt = new AgentClient(this).call("/v1/message", payload);
+              if (!"accepted".equals(receipt.optString("status")))
+                throw new Exception("请求结果尚不确定，请检查电脑任务；不会重复执行。");
+              prefs.edit().remove("pending").commit();
+              var filePrefs = getSharedPreferences("chat-attachments", 0);
+              JSONArray remaining = new JSONArray(filePrefs.getString(sendingConversation, "[]")),
+                  sent = payload.optJSONArray("attachmentIds");
+              if (sent != null)
+                for (int i = remaining.length() - 1; i >= 0; i--)
+                  for (int j = 0; j < sent.length(); j++)
+                    if (remaining.getJSONObject(i).getString("id").equals(sent.getString(j))) {
+                      remaining.remove(i);
+                      break;
+                    }
+              filePrefs.edit().putString(sendingConversation, remaining.toString()).commit();
+              getSharedPreferences("chat-drafts", 0).edit().remove(sendingConversation).apply();
+              runOnUiThread(
+                  () -> {
+                    if (conversationId.equals(sendingConversation)) input.setText("");
+                    updateAttachments();
+                    status.setText("已发送");
+                    refresh();
+                  });
+            } finally {
+              sending = false;
+              runOnUiThread(() -> input.setEnabled(true));
+            }
+          });
     } catch (Exception e) {
       status.setText(e.getMessage());
     }
   }
 
-  void approvalDialog(JSONObject q) {
+  void drawer() {
+    loadIndex(
+        () -> {
+          Dialog dialog = new Dialog(this);
+          LinearLayout panel = vertical();
+          panel.setBackgroundColor(bg);
+          panel.setPadding(dp(18), dp(36), dp(18), dp(20));
+          TextView brand = label("Amadeus", 24, fg);
+          brand.setTypeface(null, Typeface.BOLD);
+          brand.setPadding(dp(8), 0, 0, dp(22));
+          panel.addView(brand);
+          drawerRow(
+              panel,
+              "plus",
+              "新对话",
+              () -> {
+                dialog.dismiss();
+                newChat();
+              });
+          drawerRow(
+              panel,
+              "orbit",
+              "常驻助手",
+              () -> {
+                dialog.dismiss();
+                JSONObject identity = state.optJSONObject("identity");
+                if (identity != null) select(identity.optString("conversationId"));
+              });
+          drawerRow(
+              panel,
+              "memory",
+              "跨对话记忆",
+              () -> {
+                dialog.dismiss();
+                memory();
+              });
+          drawerRow(
+              panel,
+              "tools",
+              "工具与设置",
+              () -> {
+                dialog.dismiss();
+                settings();
+              });
+          EditText search = new EditText(this);
+          search.setSingleLine(true);
+          search.setTextColor(fg);
+          search.setTextSize(14);
+          search.setHintTextColor(muted);
+          search.setHint("搜索会话");
+          panel.addView(search);
+          ScrollView listScroll = new ScrollView(this);
+          LinearLayout list = vertical();
+          listScroll.addView(list);
+          panel.addView(listScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+          Runnable populate =
+              () -> {
+                list.removeAllViews();
+                JSONArray chats = index.optJSONArray("conversations"),
+                    projects = index.optJSONArray("projects");
+                String query = search.getText().toString().toLowerCase(Locale.ROOT);
+                TextView section = label("最近对话", 12, muted);
+                section.setPadding(dp(8), dp(20), 0, dp(8));
+                list.addView(section);
+                if (chats != null)
+                  for (int i = chats.length() - 1; i >= 0; i--) {
+                    JSONObject c = chats.optJSONObject(i);
+                    if (c.isNull("projectId")
+                        && c.optString("title").toLowerCase(Locale.ROOT).contains(query))
+                      drawerRow(
+                          list,
+                          "chat",
+                          c.optString("title"),
+                          () -> {
+                            dialog.dismiss();
+                            select(c.optString("id"));
+                          });
+                  }
+                if (projects != null)
+                  for (int i = 0; i < projects.length(); i++) {
+                    JSONObject p = projects.optJSONObject(i);
+                    drawerRow(
+                        list,
+                        "folder",
+                        p.optString("name"),
+                        () -> {
+                          dialog.dismiss();
+                          createChat(p.optString("id"));
+                        });
+                    if (chats != null)
+                      for (int j = chats.length() - 1; j >= 0; j--) {
+                        JSONObject c = chats.optJSONObject(j);
+                        if (p.optString("id").equals(c.optString("projectId"))
+                            && c.optString("title").toLowerCase(Locale.ROOT).contains(query))
+                          drawerRow(
+                              list,
+                              "chat",
+                              "  " + c.optString("title"),
+                              () -> {
+                                dialog.dismiss();
+                                select(c.optString("id"));
+                              });
+                      }
+                  }
+              };
+          search.addTextChangedListener(
+              new TextWatcher() {
+                public void beforeTextChanged(CharSequence s, int a, int c, int f) {}
+
+                public void onTextChanged(CharSequence s, int a, int b, int c) {
+                  populate.run();
+                }
+
+                public void afterTextChanged(Editable e) {}
+              });
+          populate.run();
+          dialog.setContentView(panel);
+          Window window = dialog.getWindow();
+          if (window != null) {
+            window.setBackgroundDrawableResource(android.R.color.transparent);
+            window.setGravity(Gravity.START);
+            window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * .87), -1);
+          }
+          dialog.show();
+          window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * .87), -1);
+        });
+  }
+
+  void drawerRow(LinearLayout parent, String type, String text, Runnable action) {
+    LinearLayout row = new LinearLayout(this);
+    row.setGravity(Gravity.CENTER_VERTICAL);
+    row.addView(icon(type, text, action));
+    TextView name = label(text, 15, fg);
+    name.setSingleLine(true);
+    name.setEllipsize(TextUtils.TruncateAt.END);
+    row.addView(name, new LinearLayout.LayoutParams(0, dp(46), 1));
+    name.setGravity(Gravity.CENTER_VERTICAL);
+    row.setOnClickListener(v -> action.run());
+    parent.addView(row);
+  }
+
+  void newChat() {
+    loadIndex(
+        () -> {
+          JSONArray projects = index.optJSONArray("projects");
+          String[] choices = new String[(projects == null ? 0 : projects.length()) + 1];
+          choices[0] = "普通聊天";
+          for (int i = 1; i < choices.length; i++)
+            choices[i] = "项目 · " + projects.optJSONObject(i - 1).optString("name");
+          new AlertDialog.Builder(this)
+              .setTitle("新对话")
+              .setItems(
+                  choices,
+                  (d, which) ->
+                      createChat(
+                          which == 0 ? null : projects.optJSONObject(which - 1).optString("id")))
+              .show();
+        });
+  }
+
+  void createChat(String project) {
+    work(
+        () -> {
+          JSONObject chat =
+              new AgentClient(this)
+                  .call(
+                      "/v1/conversations",
+                      new JSONObject()
+                          .put("projectId", project == null ? JSONObject.NULL : project));
+          runOnUiThread(() -> select(chat.optString("id")));
+        });
+  }
+
+  void models() {
+    loadIndex(
+        () -> {
+          JSONArray values = index.optJSONArray("models");
+          if (values == null) return;
+          String[] names = new String[values.length()];
+          for (int i = 0; i < names.length; i++)
+            names[i] =
+                values.optJSONObject(i).optString("name")
+                    + (values.optJSONObject(i).optBoolean("vision") ? " · 可读图片" : "");
+          new AlertDialog.Builder(this)
+              .setTitle("选择模型")
+              .setItems(
+                  names,
+                  (d, which) ->
+                      work(
+                          () -> {
+                            new AgentClient(this)
+                                .call(
+                                    "/v1/conversations/" + conversationId + "/update",
+                                    new JSONObject()
+                                        .put(
+                                            "profileId",
+                                            values.getJSONObject(which).getString("id")));
+                            refresh();
+                          }))
+              .show();
+        });
+  }
+
+  void chatMenu() {
+    new AlertDialog.Builder(this)
+        .setItems(
+            new String[] {"重命名会话", "置顶会话", "停止当前任务", "刷新连接", "工具与设置"},
+            (d, which) -> {
+              if (which == 0) {
+                EditText value = new EditText(this);
+                value.setText(title.getText());
+                new AlertDialog.Builder(this)
+                    .setTitle("会话名称")
+                    .setView(value)
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton(
+                        "保存",
+                        (a, b) ->
+                            work(
+                                () -> {
+                                  new AgentClient(this)
+                                      .call(
+                                          "/v1/conversations/" + conversationId + "/update",
+                                          new JSONObject()
+                                              .put("title", value.getText().toString()));
+                                  refresh();
+                                }))
+                    .show();
+              } else if (which == 1)
+                work(
+                    () -> {
+                      new AgentClient(this)
+                          .call(
+                              "/v1/conversations/" + conversationId + "/update",
+                              new JSONObject().put("pinned", true));
+                      runOnUiThread(() -> status.setText("已置顶"));
+                    });
+              else if (which == 2)
+                work(
+                    () -> {
+                      new AgentClient(this)
+                          .call("/v1/stop", new JSONObject().put("conversationId", conversationId));
+                      refresh();
+                    });
+              else if (which == 3) refresh();
+              else settings();
+            })
+        .show();
+  }
+
+  void attachments() {
+    new AlertDialog.Builder(this)
+        .setTitle("添加到对话")
+        .setItems(
+            new String[] {"照片", "文件 / 录音 / 文档"},
+            (d, which) ->
+                startActivity(
+                    new Intent(this, SettingsActivity.class)
+                        .putExtra("conversationId", conversationId)
+                        .putExtra("pickFile", true)
+                        .putExtra("photos", which == 0)))
+        .show();
+  }
+
+  void dictate() {
+    try {
+      startActivityForResult(
+          new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+              .putExtra(
+                  RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+              .putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+              .putExtra(RecognizerIntent.EXTRA_PROMPT, "对 Amadeus 说些什么"),
+          21);
+    } catch (ActivityNotFoundException e) {
+      status.setText("系统语音输入不可用，可使用键盘麦克风。");
+    }
+  }
+
+  @Override
+  protected void onActivityResult(int request, int result, Intent data) {
+    super.onActivityResult(request, result, data);
+    if (request == 21 && result == RESULT_OK && data != null) {
+      ArrayList<String> values = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+      if (values != null && !values.isEmpty())
+        input.append((input.length() > 0 ? " " : "") + values.get(0));
+    }
+  }
+
+  void tools() {
+    new AlertDialog.Builder(this)
+        .setTitle("工具与能力")
+        .setItems(
+            new String[] {"网页搜索", "深入研究", "图像创作（需要已配置服务）", "长期目标", "手机系统能力与录音", "跨对话记忆"},
+            (d, which) -> {
+              if (which < 3) {
+                input.setText(
+                    new String[] {
+                          "请搜索最新资料，回答我的问题并注明来源：", "请深入研究以下问题，先明确范围，再对照资料给出结论：", "请使用已配置的图像工具创作："
+                        }
+                        [which]);
+                input.requestFocus();
+              } else if (which == 3)
+                startActivity(new Intent(this, SettingsActivity.class).putExtra("newGoal", true));
+              else if (which == 4) settings();
+              else memory();
+            })
+        .show();
+  }
+
+  void approvals() {
+    JSONArray list = state.optJSONArray("inputs");
+    if (list == null || list.length() == 0) return;
+    JSONObject q = list.optJSONObject(0);
     EditText answer = new EditText(this);
     answer.setHint("补充回答（可选）");
     new AlertDialog.Builder(this)
-        .setTitle("Agent 请求确认")
+        .setTitle("需要你的确认")
         .setMessage(q.toString())
         .setView(answer)
         .setNegativeButton("拒绝", (d, w) -> respond(q, false, answer.getText().toString()))
@@ -530,68 +825,92 @@ public class MainActivity extends Activity {
         });
   }
 
-  void goalDialog() {
-    LinearLayout form = new LinearLayout(this);
-    form.setOrientation(LinearLayout.VERTICAL);
-    EditText objective = new EditText(this), success = new EditText(this);
-    objective.setHint("目标");
-    success.setHint("完成标准");
-    form.addView(objective);
-    form.addView(success);
+  void memory() {
+    work(
+        () -> {
+          JSONObject data = new AgentClient(this).call(path("/v1/memory"), null);
+          runOnUiThread(
+              () -> {
+                JSONArray items = data.optJSONArray("memories");
+                String[] names = new String[(items == null ? 0 : items.length()) + 2];
+                names[0] = data.optBoolean("automatic") ? "关闭自动记忆与回忆" : "开启跨对话记忆";
+                names[1] = "添加一条记忆";
+                for (int i = 2; i < names.length; i++)
+                  names[i] = items.optJSONObject(i - 2).optString("content");
+                new AlertDialog.Builder(this)
+                    .setTitle(
+                        data.optString("scope").equals("user") ? "个人记忆 · 普通聊天共享" : "项目记忆 · 当前项目内共享")
+                    .setItems(
+                        names,
+                        (dialog, which) -> {
+                          if (which == 0)
+                            memoryAction("policy", null, null, !data.optBoolean("automatic"), null);
+                          else if (which == 1) editMemory(null);
+                          else {
+                            JSONObject item = items.optJSONObject(which - 2);
+                            new AlertDialog.Builder(this)
+                                .setTitle("管理记忆")
+                                .setMessage(item.optString("content"))
+                                .setNeutralButton("修改", (d, w) -> editMemory(item))
+                                .setNegativeButton("关闭", null)
+                                .setPositiveButton(
+                                    "删除",
+                                    (d, w) ->
+                                        new AlertDialog.Builder(this)
+                                            .setMessage("删除这条共享记忆？不会删除原聊天记录。")
+                                            .setNegativeButton("取消", null)
+                                            .setPositiveButton(
+                                                "删除",
+                                                (x, y) ->
+                                                    memoryAction(
+                                                        "forget",
+                                                        item.optString("id"),
+                                                        null,
+                                                        null,
+                                                        null))
+                                            .show())
+                                .show();
+                          }
+                        })
+                    .setNegativeButton("关闭", null)
+                    .show();
+              });
+        });
+  }
+
+  void editMemory(JSONObject item) {
+    EditText value = new EditText(this);
+    if (item != null) value.setText(item.optString("content"));
     new AlertDialog.Builder(this)
-        .setTitle("长期目标：每30分钟，最多24轮，24小时截止")
-        .setView(form)
+        .setTitle(item == null ? "希望助手记住什么" : "修改记忆")
+        .setView(value)
         .setNegativeButton("取消", null)
         .setPositiveButton(
-            "启动",
-            (d, w) -> {
-              String o = objective.getText().toString(), s = success.getText().toString();
-              work(
-                  () -> {
-                    new AgentClient(this)
-                        .call(
-                            "/v1/goals",
-                            new JSONObject()
-                                .put("title", o.substring(0, Math.min(100, o.length())))
-                                .put("objective", o)
-                                .put("success", s)
-                                .put("intervalMs", 1800000)
-                                .put("maxRuns", 24)
-                                .put("endAt", System.currentTimeMillis() + 86400000));
-                    refresh();
-                  });
-            })
+            "保存",
+            (d, w) ->
+                memoryAction(
+                    item == null ? "create" : "update",
+                    item == null ? null : item.optString("id"),
+                    value.getText().toString(),
+                    null,
+                    item == null ? null : item.optInt("revision")))
         .show();
   }
 
-  void refresh() {
+  void memoryAction(String action, String id, String content, Boolean enabled, Integer revision) {
     work(
         () -> {
-          JSONObject s = new AgentClient(this).call("/v1/state", null);
-          StringBuilder display = new StringBuilder();
-          JSONArray goals = s.optJSONArray("goals");
-          if (goals != null)
-            for (int i = 0; i < goals.length(); i++) {
-              JSONObject g = goals.getJSONObject(i);
-              display
-                  .append("◎ ")
-                  .append(g.optString("title"))
-                  .append(" · ")
-                  .append(g.optJSONObject("task").optString("status"))
-                  .append("\n");
-            }
-          JSONArray events = s.optJSONArray("events");
-          if (events != null)
-            for (int i = 0; i < events.length(); i++) {
-              JSONObject e = events.getJSONObject(i);
-              JSONObject data = e.optJSONObject("data");
-              if (data != null && data.has("text"))
-                display
-                    .append(e.optString("type").startsWith("user") ? "你：" : "Amadeus：")
-                    .append(data.optString("text"))
-                    .append("\n\n");
-            }
-          runOnUiThread(() -> transcript.setText(display.toString()));
+          new AgentClient(this)
+              .call(
+                  "/v1/memory",
+                  new JSONObject()
+                      .put("action", action)
+                      .put("conversationId", conversationId)
+                      .put("id", id)
+                      .put("content", content)
+                      .put("enabled", enabled)
+                      .put("revision", revision));
+          runOnUiThread(() -> status.setText("记忆设置已保存 · 与电脑同步"));
         });
   }
 
@@ -600,16 +919,57 @@ public class MainActivity extends Activity {
         public void run() {
           if (visible) {
             refresh();
-            handler.postDelayed(this, 10000);
+            handler.postDelayed(this, 1800);
           }
         }
       };
+
+  void updateAttachments() {
+    try {
+      JSONArray files =
+          new JSONArray(
+              getSharedPreferences("chat-attachments", 0).getString(conversationId, "[]"));
+      if (files.length() > 0) {
+        attachment.setText("已添加 " + files.length() + " 个附件 · 点击管理");
+        attachment.setVisibility(View.VISIBLE);
+        attachment.setOnClickListener(
+            v -> {
+              String[] names = new String[files.length()];
+              for (int i = 0; i < names.length; i++)
+                names[i] = files.optJSONObject(i).optString("name");
+              new AlertDialog.Builder(this)
+                  .setTitle("点击移除附件")
+                  .setItems(
+                      names,
+                      (d, index) -> {
+                        files.remove(index);
+                        getSharedPreferences("chat-attachments", 0)
+                            .edit()
+                            .putString(conversationId, files.toString())
+                            .commit();
+                        updateAttachments();
+                      })
+                  .setNegativeButton("关闭", null)
+                  .show();
+            });
+      } else attachment.setVisibility(View.GONE);
+    } catch (Exception e) {
+      status.setText("无法读取附件列表");
+    }
+  }
 
   @Override
   protected void onResume() {
     super.onResume();
     visible = true;
+    updateAttachments();
     handler.post(poll);
+    if (getSharedPreferences("pair", 0).contains("token")) loadIndex(null);
+    String pending = getSharedPreferences("outbox", 0).getString("pending", null);
+    if (pending != null) {
+      attachment.setText("有待发送内容 · 点击发送可安全重试");
+      attachment.setVisibility(View.VISIBLE);
+    }
   }
 
   @Override
@@ -622,6 +982,7 @@ public class MainActivity extends Activity {
   @Override
   protected void onDestroy() {
     network.shutdownNow();
+    if (speech != null) speech.shutdown();
     super.onDestroy();
   }
 }

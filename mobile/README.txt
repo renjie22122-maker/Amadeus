@@ -47,3 +47,9 @@ https://tailscale.com/docs/reference/tailscale-cli/serve
 https://developer.android.com/reference/android/provider/AlarmClock
 https://developer.android.com/reference/android/accessibilityservice/AccessibilityService
 https://developer.android.com/training/data-storage/shared/media
+
+
+Android 0.2.1 preview: chat-first interface
+Ordinary and project conversations, history search, model selection, rename/pin, streaming replies, staged file/photo attachments, system speech input, text-to-speech, copy/share, and a separate tools/settings screen. Install over the locally signed previous preview to retain pairing.
+The optional workspace device grant enables local workspace conversations and memory management; external-channel-only conversations remain excluded. Ordinary chats use shared user memory; projects use their own scope. The memory screen can enable/disable, create, edit and forget memories through the existing server memory APIs. Model changes use the normal conversation settings endpoint so memory policy remains consistent.
+Speech input and read-aloud depend on installed Android services. Search, research and image-generation entries compose requests for configured agent tools/providers; they do not provide proprietary Gemini/ChatGPT services or real-time voice/video by themselves.

@@ -155,6 +155,26 @@ export async function createApp(options: { directory: string; dist?: string; run
       );
       return response.json();
     },
+    async (method, url, payload) => {
+      const response = await app.inject({
+        method,
+        url,
+        ...(payload === undefined ? {} : { payload: JSON.stringify(payload) }),
+        headers: {
+          host: '127.0.0.1',
+          cookie: 'agentdemo=' + cookie,
+          'x-csrf-token': csrf,
+          ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+      });
+      assert(
+        response.statusCode < 400,
+        'MEMORY',
+        response.json().error || 'Memory operation failed.',
+        response.statusCode,
+      );
+      return response.json();
+    },
   );
   mediaRoutes(app, runtime);
   mcpRoutes(app, runtime);
