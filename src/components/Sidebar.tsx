@@ -5,6 +5,14 @@ import { SidebarList } from './SidebarList';
 import { recentChats, recentProjects } from '../sidebar-lists';
 import {
   Archive,
+  Orbit,
+  CalendarClock,
+  Plug,
+  Users,
+  GitPullRequest,
+  ShieldCheck,
+  Map,
+  PanelsTopLeft,
   ChevronRight,
   BookOpen,
   Brain,
@@ -125,6 +133,36 @@ export function Sidebar({
         />
       </div>
       <nav className="chat-navigation" ref={navRef}>
+        <details className="workspace-navigation" open>
+          <summary>
+            <PanelsTopLeft size={16} />
+            <span>{language === 'zh' ? '工作台' : 'Workspace'}</span>
+            <ChevronRight size={13} className="workspace-chevron" />
+          </summary>
+          {workspaceNavigation.map((item) => {
+            const Icon = {
+              personal: Orbit,
+              spaces: Folder,
+              background: CalendarClock,
+              plugins: Plug,
+              assistants: Users,
+              codeReview: GitPullRequest,
+              security: ShieldCheck,
+              siteMap: Map,
+            }[item.id];
+            return (
+              <button
+                key={item.id}
+                className={page === item.id ? 'selected' : ''}
+                aria-current={page === item.id ? 'page' : undefined}
+                onClick={() => setPage(item.id)}
+              >
+                <Icon size={18} strokeWidth={1.7} />
+                <span>{language === 'zh' ? item.zh : item.en}</span>
+              </button>
+            );
+          })}
+        </details>
         <div className="nav-heading">
           <span>{t('projects')}</span>
           <button title={t('addProject')} onClick={() => setProjectDialog(true)}>
@@ -207,23 +245,11 @@ export function Sidebar({
         />
       </nav>
       <div className="sidebar-tools">
-        <details className="workspace-navigation" open>
-          <summary>{language === 'zh' ? '工作台' : 'Workspace'}</summary>
-          {workspaceNavigation.map((item) => (
-            <button
-              key={item.id}
-              className={page === item.id ? 'selected' : ''}
-              onClick={() => setPage(item.id)}
-            >
-              <Folder size={17} />
-              {language === 'zh' ? item.zh : item.en}
-            </button>
-          ))}
-        </details>
         {[
           ['knowledge', LibraryIcon],
           ['skills', BookOpen],
           ['memory', Brain],
+          ['background', CalendarClock],
           ['settings', Settings],
           ['chatConnections', MessageCircle],
         ].map(([key, Icon]: any) => (

@@ -277,3 +277,39 @@
     display: none;
   }
 }
+.personal-dot {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg);
+  color: var(--text);
+}
+.personal-dot span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.personal-dot-orb {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(140deg, #b09aff, #6141ab);
+  color: white;
+  box-shadow: 0 0 24px #a78bfa55;
+  animation: dot-breathe 4s ease-in-out infinite;
+}
+@keyframes dot-breathe {
+  50% {
+    transform: translateY(-4px);
+    box-shadow: 0 0 34px #a78bfa88;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .personal-dot-orb {
+    animation: none;
+  }
+}

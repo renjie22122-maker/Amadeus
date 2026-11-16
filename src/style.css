@@ -4679,21 +4679,53 @@ input.team-switch:checked::after {
   flex-wrap: wrap;
 }
 
-/* Feature navigation remains scrollable on small desktop and mobile windows. */
-.sidebar-tools {
-  max-height: 48vh;
-  overflow-y: auto;
-}
+/* Main navigation shares the sidebar scroll area; the original six footer tools stay fixed. */
 .workspace-navigation {
-  grid-column: 1 / -1;
+  margin: 2px 0 20px;
 }
 .workspace-navigation summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   cursor: pointer;
-  padding: 8px;
+  padding: 10px;
   color: var(--muted);
+  font-size: 12px;
+  list-style: none;
+}
+.workspace-navigation summary::-webkit-details-marker {
+  display: none;
+}
+.workspace-navigation .workspace-chevron {
+  margin-left: auto;
+  transition: transform 0.15s;
+}
+.workspace-navigation[open] .workspace-chevron {
+  transform: rotate(90deg);
 }
 .workspace-navigation button {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 11px;
   width: 100%;
+  padding: 10px 12px;
+  margin: 2px 0;
+  border-radius: 8px;
+  font-size: 14px;
+  text-align: start;
+  color: var(--text);
+}
+.workspace-navigation button svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.workspace-navigation button:hover,
+.workspace-navigation button.selected {
+  background: var(--hover);
+}
+.workspace-navigation button.selected svg {
+  color: var(--accent);
 }
 .workspace-hub {
   max-width: 1060px;
@@ -4722,4 +4754,9 @@ input.team-switch:checked::after {
 .workspace-grid > button span {
   color: var(--muted);
   font-weight: normal;
+}
+.personal-agent fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
 }

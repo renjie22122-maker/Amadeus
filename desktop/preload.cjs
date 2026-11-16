@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld(
   'amadeusDesktop',
   Object.freeze({
     platform: process.platform,
+    openAgent() {
+      ipcRenderer.send('amadeus:open-agent');
+    },
     openMenu(label) {
       if (['File', 'Edit', 'View', 'Go', 'Help'].includes(label))
         ipcRenderer.send('amadeus:menu', label);

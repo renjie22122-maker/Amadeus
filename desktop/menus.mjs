@@ -1,5 +1,5 @@
 // Keep native actions in the main process; renderer commands carry no arguments.
-export function desktopMenus({ command, hide, openData, quit, about }) {
+export function desktopMenus({ command, hide, openData, quit, about, toggleDot }) {
   return [
     {
       label: 'File',
@@ -31,6 +31,7 @@ export function desktopMenus({ command, hide, openData, quit, about }) {
     {
       label: 'View',
       submenu: [
+        { label: 'Floating personal agent', click: toggleDot },
         { label: 'Toggle sidebar', accelerator: 'CmdOrCtrl+B', click: () => command('sidebar') },
         { label: 'Site map', click: () => command('siteMap') },
         { type: 'separator' },
@@ -45,6 +46,7 @@ export function desktopMenus({ command, hide, openData, quit, about }) {
     {
       label: 'Go',
       submenu: [
+        ['personal', 'Personal agent'],
         ['spaces', 'Spaces'],
         ['background', 'Scheduled & background tasks'],
         ['plugins', 'Plugins'],

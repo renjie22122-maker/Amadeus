@@ -13,6 +13,7 @@ import { restrictedChat } from '../services/chat-access.js';
 import { installChatTools } from './chat-tools.js';
 import { rootRun } from '../services/task-board.js';
 import { installScheduledTools } from './scheduled-tools.js';
+import { installDeviceTools } from './device-tools.js';
 import type { SourcePolicy } from '../services/source-policy.js';
 import { researchProgress, type ResearchProgress } from '../services/research-progress.js';
 import { installResponseContract } from '../core/response-contract.js';
@@ -1292,6 +1293,7 @@ export function tools() {
   });
   installChatTools(registry);
   installScheduledTools(registry);
+  installDeviceTools(registry);
   installSkills(registry);
   registry.add({
     name: 'suggest_memory',

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, ipcMain } from 'electron';
 import { join, resolve } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { DesktopBackend } from './backend.mjs';
 import { desktopMenus } from './menus.mjs';
 
@@ -9,6 +9,7 @@ if (process.env.AMADEUS_DESKTOP_USER_DATA)
   app.setPath('userData', resolve(process.env.AMADEUS_DESKTOP_USER_DATA));
 const primary = app.requestSingleInstanceLock();
 let window,
+  dot,
   tray,
   backend,
   quitting = false,
@@ -31,6 +32,7 @@ else {
     quitPending = true;
     // Release the window's live HTTP/SSE connections before awaiting Fastify shutdown.
     if (window && !window.isDestroyed()) window.destroy();
+    if (dot && !dot.isDestroyed()) dot.destroy();
     void (backend?.stop() ?? Promise.resolve())
       .then(() => {
         quitting = true;
@@ -76,6 +78,55 @@ else {
         },
       });
       const icon = nativeImage.createFromPath(join(import.meta.dirname, 'icon.png'));
+      const dotPreference = join(app.getPath('userData'), 'personal-dot.json');
+      const toggleDot = () => {
+        if (!backend.url) return;
+        if (dot && !dot.isDestroyed()) {
+          dot.destroy();
+          writeFileSync(dotPreference, 'false');
+          return;
+        }
+        dot = new BrowserWindow({
+          width: 300,
+          height: 250,
+          minWidth: 260,
+          minHeight: 180,
+          title: 'Amadeus Dot',
+          alwaysOnTop: true,
+          skipTaskbar: true,
+          autoHideMenuBar: true,
+          webPreferences: {
+            preload: join(import.meta.dirname, 'preload.cjs'),
+            contextIsolation: true,
+            sandbox: true,
+            nodeIntegration: false,
+            webviewTag: false,
+          },
+        });
+        dot.setMenu(null);
+        dot.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        dot.webContents.on('will-navigate', (event) => event.preventDefault());
+        dot.webContents.on('will-redirect', (event) => event.preventDefault());
+        dot.webContents.on('will-attach-webview', (event) => event.preventDefault());
+        dot.on('close', () => {
+          if (!quitPending) writeFileSync(dotPreference, 'false');
+        });
+        void dot.loadURL(backend.url + '/?surface=dot');
+        writeFileSync(dotPreference, 'true');
+      };
+      ipcMain.on('amadeus:open-agent', (event) => {
+        if (
+          !dot ||
+          dot.isDestroyed() ||
+          event.sender !== dot.webContents ||
+          event.senderFrame !== dot.webContents.mainFrame ||
+          !backend.url ||
+          new URL(event.senderFrame.url).origin !== backend.url
+        )
+          return;
+        show();
+        window.webContents.send('amadeus:command', 'personal');
+      });
       tray = new Tray(icon);
       tray.setToolTip('Amadeus · 关闭窗口后继续运行');
       tray.setContextMenu(
@@ -99,6 +150,7 @@ else {
             hide: () => window.hide(),
             openData: () => void shell.openPath(directory),
             quit: () => app.quit(),
+            toggleDot,
             about: () =>
               void dialog.showMessageBox(window, {
                 title: 'About Amadeus',
@@ -201,6 +253,7 @@ else {
         "window.setBootStage(3, 'Loading conversations and tools…', '正在加载会话与工具…')",
       );
       await window.loadURL(url);
+      if (existsSync(dotPreference) && readFileSync(dotPreference, 'utf8') === 'true') toggleDot();
       show();
     } catch (error) {
       dialog.showErrorBox('Amadeus 启动失败', error.message);

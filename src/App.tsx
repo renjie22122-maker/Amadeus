@@ -1,4 +1,6 @@
 import { WorkspacePage } from './pages/Workspace';
+import { PersonalPage } from './pages/Personal';
+import { PersonalDot } from './components/PersonalDot';
 import { workspacePages, workspaceNavigation } from './workspace-navigation';
 import { runDescendants } from './run-descendants';
 import brandMark from '../desktop/brand.svg';
@@ -1006,7 +1008,10 @@ export function App() {
         </button>
       </div>
     );
-  return (
+  return new URLSearchParams(location.search).get('surface') === 'dot' &&
+    'amadeusDesktop' in window ? (
+    <PersonalDot />
+  ) : (
     <div className={'app ' + (!sidebar ? 'no-sidebar' : '')}>
       {'amadeusDesktop' in window && (
         <div className="desktop-titlebar">
@@ -1172,7 +1177,19 @@ export function App() {
             }}
           />
         )}
-        {workspacePages.has(page) ? (
+        {page === 'personal' ? (
+          <div className="page-scroll">
+            <PersonalPage
+              state={state}
+              zh={language === 'zh'}
+              notify={notify}
+              openChat={(id) => {
+                setSelected(id);
+                setPage('chat');
+              }}
+            />
+          </div>
+        ) : workspacePages.has(page) ? (
           <div className="page-scroll">
             <WorkspacePage
               page={page}
