@@ -114,3 +114,18 @@ test('patch refuses unknown layout, preserves arbitrary bytes and is idempotent'
   new vm.Script(patched.subarray(3).toString('latin1'));
   assert.ok(patched.includes(Buffer.from('[AmadeusLoginDiagnostic]')));
 });
+
+test('4.18.42 layout preserves the same recovery and correct diagnostic references', () => {
+  const source = Buffer.from(
+    'function mke({kickedDelayMs: i = 3500, selfOfflineDelayMs: o = 6e4}) { n(c).then(() => {}); }\nclass gke {}\nconst e = mke({});\nconst i = `[KickedOffLine] [${n.tipsTitle}] ${n.tipsDesc}`;',
+  );
+  const patched = patchLoginRecovery(source);
+  new vm.Script(patched.toString('latin1'));
+  assert.ok(patched.includes(Buffer.from('bridgeVersion: Ql')));
+  assert.ok(patched.includes(Buffer.from('safeLoginReason(n)')));
+  assert.ok(patched.includes(Buffer.from('return createLoginRecovery(options)')));
+  assert.deepEqual(patchLoginRecovery(patched), patched);
+  assert.throws(() =>
+    patchLoginRecovery(Buffer.from(source.toString().replace('n(c).then', 'unknown(c).then'))),
+  );
+});

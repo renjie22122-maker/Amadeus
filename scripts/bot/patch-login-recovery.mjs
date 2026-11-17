@@ -8,22 +8,35 @@ export function patchLoginRecovery(bytes) {
   // latin1 round-trips every byte: do not corrupt non-UTF8 bridge strings.
   let source = bytes.toString('latin1');
   if (source.includes(marker)) return bytes;
-  const start = source.indexOf('function UAe({');
-  const end = source.indexOf('class LAe {', start);
-  const event = 'const i = `[KickedOffLine] [${r.tipsTitle}] ${r.tipsDesc}`;';
+  const layouts = [
+    { name: 'UAe', next: 'LAe', restart: 'r', eventArg: 'r', version: 'Vu' },
+    { name: 'mke', next: 'gke', restart: 'n', eventArg: 'n', version: 'Ql' },
+  ]
+    .map((layout) => {
+      const start = source.indexOf(`function ${layout.name}({`);
+      const end = source.indexOf(`class ${layout.next} {`, start);
+      return { ...layout, start, end };
+    })
+    .filter(
+      ({ start, end }) =>
+        start >= 0 && end > start && source.slice(start, end).includes('kickedDelayMs: i = 3500'),
+    );
+  if (layouts.length !== 1) throw Error('Unsupported or ambiguous bridge layout; no files changed');
+  const { name, start, end, restart, eventArg, version } = layouts[0];
+  const call = `const e = ${name}({`;
+  const event =
+    'const i = `[KickedOffLine] [${' + eventArg + '.tipsTitle}] ${' + eventArg + '.tipsDesc}`;';
   if (
-    !source.includes('const e = UAe({') ||
-    start < 0 ||
-    end < start ||
+    !source.includes(call) ||
     source.indexOf(event) < 0 ||
     source.indexOf(event) !== source.lastIndexOf(event)
   )
-    throw Error('Unsupported bridge layout; no files changed');
+    throw Error('Unsupported bridge callbacks; no files changed');
   const old = source.slice(start, end);
   if (
     !old.includes('kickedDelayMs: i = 3500') ||
     !old.includes('selfOfflineDelayMs: o = 6e4') ||
-    !old.includes('r(c).then')
+    !new RegExp(`\\b${restart}\\(c\\)\\.then`).test(old)
   )
     throw Error('Recovery implementation changed; review before patching');
   const helpers =
@@ -33,16 +46,16 @@ export function patchLoginRecovery(bytes) {
     '\n' +
     safeLoginReason.toString() +
     '\n' +
-    'function UAe(options) { options.report?.({ state: "recovery-ready", attempt: 0 }); return createLoginRecovery(options); }\n';
+    `function ${name}(options) { options.report?.({ state: "recovery-ready", attempt: 0 }); return createLoginRecovery(options); }\n`;
   source = source.slice(0, start) + helpers + source.slice(end);
   source = source.replace(
-    'const e = UAe({',
-    'const e = UAe({ report: (event) => this.context.logger.logWarn("[AmadeusLoginRecovery]", JSON.stringify(event)),',
+    call,
+    `${call} report: (event) => this.context.logger.logWarn("[AmadeusLoginRecovery]", JSON.stringify(event)),`,
   );
   source = source.replace(
     event,
     event +
-      '\n      try { this.context.logger.logWarn("[AmadeusLoginDiagnostic]", JSON.stringify({ event: "session-invalidated", at: new Date().toISOString(), pid: process.pid, uptimeSeconds: Math.floor(process.uptime()), bridgeVersion: Vu, clientVersion: this.context.basicInfoWrapper.getFullQQVersion(), reason: safeLoginReason(r) })); } catch {}',
+      `\n      try { this.context.logger.logWarn("[AmadeusLoginDiagnostic]", JSON.stringify({ event: "session-invalidated", at: new Date().toISOString(), pid: process.pid, uptimeSeconds: Math.floor(process.uptime()), bridgeVersion: ${version}, clientVersion: this.context.basicInfoWrapper.getFullQQVersion(), reason: safeLoginReason(${eventArg}) })); } catch {}`,
   );
   return Buffer.from(source, 'latin1');
 }

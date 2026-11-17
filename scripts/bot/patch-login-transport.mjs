@@ -6,16 +6,29 @@ export function patchLoginTransport(bytes) {
   const source = bytes.toString('latin1');
   const marker = '// Amadeus preserve authenticated session on transport loss v1';
   if (source.includes(marker)) return bytes;
-  const start = source.indexOf('async function KAe(');
-  const end = source.indexOf('async function VAe(', start);
-  if (start < 0 || end < start) throw Error('Unknown login implementation');
+  // Audited layouts only: keep the same maintenance behavior across version trials.
+  const candidates = [
+    { login: 'KAe', next: 'VAe', wait: 'JAe', ui: 'pe' },
+    { login: 'Ake', next: 'Ike', wait: 'Tke', ui: 'de' },
+  ]
+    .map((layout) => {
+      const start = source.indexOf(`async function ${layout.login}(`);
+      const end = source.indexOf(`async function ${layout.next}(`, start);
+      return { ...layout, start, end };
+    })
+    .filter(
+      ({ start, end }) =>
+        start >= 0 && end > start && source.slice(start, end).includes('c.onLoginDisConnected ='),
+    );
+  if (candidates.length !== 1) throw Error('Unknown or ambiguous login implementation');
+  const { start, end, wait, ui } = candidates[0];
   let login = source.slice(start, end);
   const disconnected = /c\.onLoginDisConnected = \(\) => \{[\s\S]*?\n  \}, c\.onLogoutSucceed/;
   const existing = login.match(disconnected)?.[0];
-  const connected = 'JAe(t, e).then(async () => {';
+  const connected = `${wait}(t, e).then(async () => {`;
   if (
     !existing?.includes('o.isLogined = !1') ||
-    !existing.includes('pe.setQQLoginPhase("offline")') ||
+    !existing.includes(`${ui}.setQQLoginPhase("offline")`) ||
     !login.includes(connected)
   )
     throw Error('Unsupported login callbacks');
@@ -23,7 +36,7 @@ export function patchLoginTransport(bytes) {
     disconnected,
     `c.onLoginDisConnected = () => {
     ${marker}
-    pe.setQQLoginStatus(!1), pe.setQQLoginPhase("reconnecting");
+    ${ui}.setQQLoginStatus(!1), ${ui}.setQQLoginPhase("reconnecting");
     e.logWarn("[Core] [Login] transport disconnected; preserving authentication until explicit logout or session invalidation");
   }, c.onLogoutSucceed`,
   );
@@ -32,10 +45,10 @@ export function patchLoginTransport(bytes) {
     connected +
       `
       if (o.isLogined) {
-        const core = pe.getOneBotContext()?.core;
+        const core = ${ui}.getOneBotContext()?.core;
         if (core?.selfInfo?.online === true) {
-          pe.setQQLoginStatus(true), pe.setQQLoginError(""), pe.setQQLoginPhase("ready");
-        } else { pe.setQQLoginPhase("reconnecting"); }
+          ${ui}.setQQLoginStatus(true), ${ui}.setQQLoginError(""), ${ui}.setQQLoginPhase("ready");
+        } else { ${ui}.setQQLoginPhase("reconnecting"); }
         e.logWarn("[Core] [Login] transport reconnected; preserving existing session without requesting a QR code");
         return;
       }`,
