@@ -1,6 +1,7 @@
 import type { ToolSpec } from '../../shared/types.js';
 export const coreTools = new Set([
   'read_clock',
+  'paired_devices',
   'inspect_work_capabilities',
   'schedule_followup',
   'inspect_schedules',
@@ -78,6 +79,9 @@ export function findTools(specs: ToolSpec[], query: string, offset: number, limi
     定时: 'schedule followup',
     唤醒: 'schedule followup',
     提醒: 'schedule followup',
+    手机: 'paired_devices device_action device_action_status',
+    短信: 'device_action sms',
+    录音: 'device_action recording attachment audio',
     团队: 'team agent discussion',
     辩论: 'team discussion limits challenge',
     通讯: 'message agent team',

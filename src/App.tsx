@@ -1,6 +1,9 @@
 const WorkspacePage = lazy(() =>
   import('./pages/Workspace').then((m) => ({ default: m.WorkspacePage })),
 );
+const PersonalPage = lazy(() =>
+  import('./pages/Personal').then((m) => ({ default: m.PersonalPage })),
+);
 import { workspacePages, workspaceNavigation } from './workspace-navigation';
 import { runDescendants } from './run-descendants';
 import brandMark from '../desktop/brand.svg';
@@ -1179,7 +1182,23 @@ export function App() {
             }}
           />
         )}
-        {workspacePages.has(page) ? (
+        {page === 'personal' ? (
+          <div className="page-scroll">
+            <Suspense
+              fallback={<p role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</p>}
+            >
+              <PersonalPage
+                state={state}
+                zh={language === 'zh'}
+                notify={notify}
+                openChat={(id) => {
+                  setSelected(id);
+                  setPage('chat');
+                }}
+              />
+            </Suspense>
+          </div>
+        ) : workspacePages.has(page) ? (
           <div className="page-scroll">
             <Suspense
               fallback={<p role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</p>}

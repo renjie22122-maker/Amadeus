@@ -1,5 +1,12 @@
 export const workspaceNavigation = [
   {
+    id: 'personal',
+    en: 'Personal agent',
+    zh: '常驻助手',
+    description: 'Ongoing goals and paired devices',
+    detail: '长期目标与跨设备连接',
+  },
+  {
     id: 'spaces',
     en: 'Spaces',
     zh: '工作空间',

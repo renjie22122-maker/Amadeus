@@ -62,3 +62,10 @@ build/
 !/scripts/setup-desktop-capture.ts
 
 !/scripts/supervisor-lock.mjs
+/mobile/android/.gradle/
+/mobile/android/**/build/
+/mobile/android/local.properties
+/.android-tools/
+/.personal-preview/
+
+/.desktop-connected/

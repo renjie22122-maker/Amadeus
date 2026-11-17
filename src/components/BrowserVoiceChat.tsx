@@ -8,11 +8,13 @@ import type { ChatConnection } from '../../shared/chat-connections';
 /** Explicit, half-duplex browser voice. Never enables a microphone on mount. */
 export function BrowserVoiceChat({
   connection,
+  voiceBase,
   zh,
   close,
   openConversation,
 }: {
-  connection: ChatConnection;
+  connection: Pick<ChatConnection, 'id' | 'name' | 'conversationId'>;
+  voiceBase?: string;
   zh: boolean;
   close: () => void;
   openConversation: (id: string) => void;
@@ -45,7 +47,8 @@ export function BrowserVoiceChat({
     ownedRun = useRef(''),
     job = useRef(''),
     timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const base = '/chat-connections/' + encodeURIComponent(connection.id) + '/voice-turn';
+  const base =
+    voiceBase || '/chat-connections/' + encodeURIComponent(connection.id) + '/voice-turn';
   const tr = (cn: string, en: string) => (zh ? cn : en);
   function release(cancelWork = false) {
     ctl.current?.abort();

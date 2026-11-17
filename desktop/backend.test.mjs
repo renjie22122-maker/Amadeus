@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DesktopBackend } from './backend.mjs';
+import { DesktopBackend, AttachedDesktopBackend } from './backend.mjs';
 
 test('concurrent starts share one child, stop drains it, and restart uses a new child', async () => {
   const root = mkdtempSync(join(tmpdir(), 'amadeus-desktop-'));
@@ -55,4 +55,19 @@ test('startup failure rejects and does not silently relaunch a failed service', 
     await backend.stop();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('attached desktop only accepts a ready local service and never stops its owner', async (t) => {
+  for (const url of ['https://remote.example', 'http://127.0.0.1/path', 'http://user@localhost'])
+    assert.throws(() => new AttachedDesktopBackend(url));
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    calls.push(url);
+    return Response.json({ application: 'Amadeus', ready: true });
+  });
+  const backend = new AttachedDesktopBackend('http://127.0.0.1:8810');
+  assert.equal(await backend.start(), 'http://127.0.0.1:8810');
+  await backend.stop();
+  assert.deepEqual(calls, ['http://127.0.0.1:8810/api/health']);
+  assert.equal(backend.child, undefined);
 });

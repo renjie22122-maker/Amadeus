@@ -1,0 +1,11 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'io.amadeus.mobile'
+    compileSdk 36
+    buildToolsVersion '36.0.0'
+    defaultConfig { applicationId 'io.amadeus.mobile'; minSdk 30; targetSdk 36; versionCode 4; versionName '0.2.3-preview' }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+
+dependencies { testImplementation "junit:junit:4.13.2"; testImplementation "org.json:json:20240303" }

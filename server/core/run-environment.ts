@@ -45,6 +45,34 @@ export class RunEnvironment {
     );
   }
   async system(run: Run, ctx: ToolContext, profile: Profile, pending: string[]) {
+    const identity = this.store.maybe<{ name: string; conversationId: string }>(
+      'personal-identity',
+      'primary',
+    );
+    const personal =
+      identity?.conversationId === ctx.conversation.id
+        ? {
+            name: identity.name,
+            hosting:
+              'Local computer and service must remain running. Paired devices share this conversation, not extra permissions.',
+            goals: this.store
+              .list<any>('personal-goal')
+              .filter((g) => g.conversationId === ctx.conversation.id)
+              .slice(-10)
+              .map((g) => {
+                const task = this.store.maybe<any>('scheduled-work', g.scheduleId);
+                return {
+                  id: g.id,
+                  title: g.title,
+                  success: g.success,
+                  status: task?.status,
+                  deadline: g.endAt,
+                  launches: task?.dispatchCount || 0,
+                  maxRuns: g.maxRuns,
+                };
+              }),
+          }
+        : undefined;
     const skills = this.store
       .list<Skill>('skill')
       .filter((s) => s.enabled && ctx.conversation.skillIds.includes(s.id))
@@ -84,9 +112,15 @@ export class RunEnvironment {
         runId: run.id,
         agentId: run.conversationId,
         displayName: this.config.get().agentName || 'Amadeus',
+        personalAgent: personal,
         model: profile.model,
         transport: profile.transport,
         reasoning: profile.reasoning,
+        webSearch: ctx.conversation.webSearch !== false,
+        webSearchGuidance:
+          ctx.conversation.webSearch === false
+            ? 'The user disabled web search for this conversation. Do not search the web or use browser, shell, delegated agents or MCP tools to circumvent this choice. Answer from available context and state when current external information is needed.'
+            : undefined,
         os: process.platform,
         clock: runtimeClock(this.store, run),
         project: ctx.conversation.projectId,

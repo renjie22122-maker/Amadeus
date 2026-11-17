@@ -122,8 +122,11 @@ try {
   await page.waitForLoadState('domcontentloaded');
   await page.locator('.desktop-titlebar').waitFor();
   assert.equal(await page.locator('.desktop-menus button').count(), 5);
+  assert.equal(await page.locator('.sidebar-tools > button').count(), 6);
+  assert.equal(await page.locator('.chat-navigation .workspace-navigation button svg').count(), 8);
   assert.deepEqual(await page.evaluate(() => Object.keys(window.amadeusDesktop).sort()), [
     'onCommand',
+    'openAgent',
     'openMenu',
     'platform',
   ]);
@@ -172,6 +175,21 @@ try {
   );
   await page.keyboard.press('Control+Shift+o');
   await page.locator('.chat-link.active').waitFor();
+  await desktop.evaluate(({ Menu }) =>
+    Menu.getApplicationMenu()
+      .items.find((item) => item.label === 'View')
+      .submenu.items.find((item) => item.label === 'Floating personal agent')
+      .click(),
+  );
+  const dotPage =
+    desktop.windows().find((candidate) => candidate !== page) ||
+    (await desktop.waitForEvent('window'));
+  await dotPage.locator('.personal-dot').waitFor();
+  await dotPage.locator('button').click();
+  await page.locator('.personal-agent').waitFor();
+  await page.screenshot({ path: '.diagnostics/personal-agent.png' });
+  await dotPage.screenshot({ path: '.diagnostics/personal-dot.png' });
+  await dotPage.close();
   const url = new URL(page.url()).origin;
   const bootFile = packaged
     ? join(dirname(executablePath), 'resources/app/desktop/boot.html')

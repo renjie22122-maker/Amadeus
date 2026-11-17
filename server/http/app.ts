@@ -57,6 +57,8 @@ import { memoryTarget } from '../services/memory-learning.js';
 import { SkillClassification } from '../services/skill-classification.js';
 import { Skills } from '../services/skills.js';
 import { Store, id } from '../storage/store.js';
+import { PersonalAgent } from '../services/personal-agent.js';
+import { personalAgentRoutes } from './personal-agent.js';
 export async function createApp(options: { directory: string; dist?: string; runtime?: Runtime }) {
   const directory = resolve(options.directory);
   await mkdir(directory, { recursive: true });
@@ -123,6 +125,57 @@ export async function createApp(options: { directory: string; dist?: string; run
       );
   });
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+  personalAgentRoutes(
+    app,
+    new PersonalAgent(store, runtime),
+    async (conversationId, name, data) => {
+      const boundary = 'amadeus-' + randomBytes(16).toString('hex');
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/upload?conversationId=' + encodeURIComponent(conversationId),
+        headers: {
+          host: '127.0.0.1',
+          cookie: 'agentdemo=' + cookie,
+          'x-csrf-token': csrf,
+          'content-type': 'multipart/form-data; boundary=' + boundary,
+        },
+        payload: Buffer.concat([
+          Buffer.from(
+            `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+          ),
+          data,
+          Buffer.from(`\r\n--${boundary}--\r\n`),
+        ]),
+      });
+      assert(
+        response.statusCode < 400,
+        'UPLOAD',
+        response.json().error || 'Upload failed.',
+        response.statusCode,
+      );
+      return response.json();
+    },
+    async (method, url, payload) => {
+      const response = await app.inject({
+        method,
+        url,
+        ...(payload === undefined ? {} : { payload: JSON.stringify(payload) }),
+        headers: {
+          host: '127.0.0.1',
+          cookie: 'agentdemo=' + cookie,
+          'x-csrf-token': csrf,
+          ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+      });
+      assert(
+        response.statusCode < 400,
+        'MEMORY',
+        response.json().error || 'Memory operation failed.',
+        response.statusCode,
+      );
+      return response.json();
+    },
+  );
   mediaRoutes(app, runtime);
   mcpRoutes(app, runtime);
   tokenActivityRoutes(app, store.path);
@@ -315,6 +368,7 @@ export async function createApp(options: { directory: string; dist?: string; run
           .nullable()
           .optional(),
         reasoning: z.enum(['auto', 'none', 'low', 'medium', 'high', 'max']).optional(),
+        webSearch: z.boolean().optional(),
         permission: z.enum(['read-only', 'ask', 'auto', 'trusted']).optional(),
         execution: z
           .object({

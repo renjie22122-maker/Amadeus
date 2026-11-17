@@ -4,6 +4,12 @@ contextBridge.exposeInMainWorld(
   'amadeusDesktop',
   Object.freeze({
     platform: process.platform,
+    captureContext() {
+      return ipcRenderer.invoke('amadeus:capture-context');
+    },
+    openAgent() {
+      ipcRenderer.send('amadeus:open-agent');
+    },
     openMenu(label) {
       if (['File', 'Edit', 'View', 'Go', 'Help'].includes(label))
         ipcRenderer.send('amadeus:menu', label);

@@ -13,6 +13,7 @@ import { restrictedChat } from '../services/chat-access.js';
 import { installChatTools } from './chat-tools.js';
 import { rootRun } from '../services/task-board.js';
 import { installScheduledTools } from './scheduled-tools.js';
+import { installDeviceTools } from './device-tools.js';
 import type { SourcePolicy } from '../services/source-policy.js';
 import { researchProgress, type ResearchProgress } from '../services/research-progress.js';
 import { installResponseContract } from '../core/response-contract.js';
@@ -928,6 +929,11 @@ export function tools() {
       limit: z.number().int().min(1).max(12).default(6),
     }),
     run: async (a, c) => {
+      assert(
+        c.conversation.webSearch !== false,
+        'WEB_SEARCH_DISABLED',
+        'Web search is disabled for this conversation.',
+      );
       const perform = () =>
         searchWeb(
           a.query,
@@ -1292,6 +1298,7 @@ export function tools() {
   });
   installChatTools(registry);
   installScheduledTools(registry);
+  installDeviceTools(registry);
   installSkills(registry);
   registry.add({
     name: 'suggest_memory',

@@ -299,3 +299,11 @@ Index-status inspection uses a read-only worker and shares concurrent identical 
 LightRAG host reconciliation snapshots eligible documents once and reads ordered chunk IDs through a covering index instead of looking up each document per chunk. Completed memory-graph work is excluded before loading source evidence; pending approval discovery explicitly selects its partial index. These are status/read-path changes, not graph re-extraction or authorization changes.
 
 Chat-memory source reads use a conversation/type index. Modern attributed receipts bypass legacy prompt envelopes; legacy origins look up only their own run messages and recheck conversation identity.
+
+## Personal companion surfaces
+
+The desktop companion is an optional, always-on-top window bound to the selected personal conversation. It loads a separate UI chunk and a bounded eight-message endpoint instead of the full workspace. Polls do not overlap, abort on unmount, and slow while hidden. Text uses the existing conversation dispatcher; goals use the durable scheduler and its execution windows and approvals. Closing the companion does not stop the service.
+
+Voice is explicit alternating browser audio, with microphone confirmation and run ownership checks. It is not a native QQ/telephone call. Screen context is a user-selected one-time capture, previewed before upload and submission. No continuous screen or microphone monitoring is enabled. Paired mobile devices use revocable scoped tokens and a separate opt-in gateway; mobile packaging and real-device audio remain separate validation steps.
+
+Validation covers scoped device access, goal deduplication, voice run ownership, isolated desktop attachment, lightweight UI loading, and screenshot preview before submission. This does not establish parity with any proprietary companion product or prove QQ login lifetime stability.

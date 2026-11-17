@@ -277,3 +277,72 @@
     display: none;
   }
 }
+.personal-dot {
+  height: 100vh;
+  padding: 12px;
+  box-sizing: border-box;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg);
+  color: var(--text);
+}
+.personal-dot span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.personal-dot-orb {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(140deg, #b09aff, #6141ab);
+  color: white;
+  box-shadow: 0 0 24px #a78bfa55;
+  animation: dot-breathe 4s ease-in-out infinite;
+}
+@keyframes dot-breathe {
+  50% {
+    transform: translateY(-4px);
+    box-shadow: 0 0 34px #a78bfa88;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .personal-dot-orb {
+    animation: none;
+  }
+}
+
+.personal-dot-messages {
+  flex: 1;
+  min-height: 0;
+  max-height: 220px;
+  overflow: auto;
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.personal-dot-messages p {
+  margin: 8px 0;
+}
+.personal-dot form {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+.personal-dot input {
+  flex: 1;
+  min-width: 0;
+}
+
+.personal-dot-voice {
+  display: block;
+}
+.personal-dot-voice > button {
+  margin-top: 12px;
+}

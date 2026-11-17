@@ -3,6 +3,39 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync, openSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 
+/** Attaches a desktop window to a service the user already runs; never owns its lifetime. */
+export class AttachedDesktopBackend extends EventEmitter {
+  constructor(address) {
+    super();
+    const url = new URL(address);
+    if (
+      url.protocol !== 'http:' ||
+      !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ||
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash
+    )
+      throw new Error('The existing service must be a local HTTP origin.');
+    this.address = url.origin;
+  }
+  async start() {
+    const response = await fetch(this.address + '/api/health', {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    });
+    const health = await response.json();
+    if (!response.ok || health.application !== 'Amadeus' || !health.ready)
+      throw new Error('The existing Amadeus service is not ready.');
+    this.url = this.address;
+    return this.url;
+  }
+  async stop() {
+    this.url = undefined;
+  }
+}
+
 /** Owns exactly one standalone Node service. Window visibility is not a lifecycle signal. */
 export class DesktopBackend extends EventEmitter {
   constructor({ node, root, directory, readyTimeout = 90000, shutdownTimeout = 60000 }) {
