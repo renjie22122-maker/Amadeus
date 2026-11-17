@@ -15,6 +15,8 @@ export function PersonalPage({
   const [data, setData] = useState<any>(),
     [name, setName] = useState('Amadeus'),
     [chat, setChat] = useState('');
+  const [editing, setEditing] = useState<any>(null);
+  const [executionWindow, setExecutionWindow] = useState<any>(null);
   const [objective, setObjective] = useState(''),
     [success, setSuccess] = useState(''),
     [minutes, setMinutes] = useState(30),
@@ -29,17 +31,26 @@ export function PersonalPage({
   const t = (en: string, cn: string) => (zh ? cn : en);
   const refresh = () => api('/personal').then(setData);
   useEffect(() => {
-    let live = true;
-    const load = () =>
-      api('/personal')
+    let live = true,
+      loading = false;
+    const load = () => {
+      if (loading) return;
+      loading = true;
+      return api('/personal')
         .then((d) => {
           if (live) setData(d);
         })
         .catch((e) => {
           if (live) notify(e.message);
+        })
+        .finally(() => {
+          loading = false;
         });
+    };
     void load();
-    const timer = setInterval(load, 5000);
+    const timer = setInterval(() => {
+      if (!document.hidden) void load();
+    }, 15000);
     return () => {
       live = false;
       clearInterval(timer);
@@ -157,34 +168,182 @@ export function PersonalPage({
                   />
                 </label>
               </div>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={Boolean(executionWindow)}
+                  onChange={(e) =>
+                    setExecutionWindow(
+                      e.target.checked
+                        ? {
+                            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                            start: '08:00',
+                            end: '23:00',
+                            weekdays: [0, 1, 2, 3, 4, 5, 6],
+                          }
+                        : null,
+                    )
+                  }
+                />
+                {t('Only run in an allowed time window', '只在允许时段执行')}
+              </label>
+              {executionWindow && (
+                <div className="form-grid">
+                  <label>
+                    {t('Time zone', '时区')}
+                    <input
+                      value={executionWindow.timeZone}
+                      onChange={(e) =>
+                        setExecutionWindow({ ...executionWindow, timeZone: e.target.value })
+                      }
+                    />
+                  </label>
+                  <label>
+                    {t('Start', '开始')}
+                    <input
+                      type="time"
+                      value={executionWindow.start}
+                      onChange={(e) =>
+                        setExecutionWindow({ ...executionWindow, start: e.target.value })
+                      }
+                    />
+                  </label>
+                  <label>
+                    {t('End', '结束')}
+                    <input
+                      type="time"
+                      value={executionWindow.end}
+                      onChange={(e) =>
+                        setExecutionWindow({ ...executionWindow, end: e.target.value })
+                      }
+                    />
+                  </label>
+                  <div>
+                    {[0, 1, 2, 3, 4, 5, 6].map((day) => (
+                      <label key={day}>
+                        <input
+                          type="checkbox"
+                          checked={executionWindow.weekdays.includes(day)}
+                          onChange={(e) =>
+                            setExecutionWindow({
+                              ...executionWindow,
+                              weekdays: e.target.checked
+                                ? [...executionWindow.weekdays, day]
+                                : executionWindow.weekdays.filter((d: number) => d !== day),
+                            })
+                          }
+                        />
+                        {t(
+                          ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day],
+                          ['日', '一', '二', '三', '四', '五', '六'][day],
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
               <button
                 disabled={!objective.trim() || !success.trim()}
                 onClick={() =>
                   void act(async () => {
-                    await api('/personal/goals', {
-                      title: objective.slice(0, 100),
-                      objective,
-                      success,
-                      intervalMs: minutes * 60000,
-                      maxRuns: runs,
-                      endAt: Date.now() + hours * 3600000,
-                    });
+                    await api(
+                      editing ? '/personal/goals/' + editing.id : '/personal/goals',
+                      {
+                        executionWindow,
+                        ...(editing ? { revision: editing.revision || 0 } : {}),
+                        title: objective.slice(0, 100),
+                        objective,
+                        success,
+                        intervalMs: minutes * 60000,
+                        maxRuns: runs,
+                        endAt: Math.round(Date.now() + hours * 3600000),
+                      },
+                      editing ? 'PATCH' : 'POST',
+                    );
+                    setEditing(null);
+                    setExecutionWindow(null);
                     setObjective('');
                     setSuccess('');
                   })
                 }
               >
-                {t('Start goal', '启动目标')}
+                {editing ? t('Save changes', '保存目标修改') : t('Start goal', '启动目标')}
               </button>
             </section>
+            {editing && (
+              <button
+                onClick={() => {
+                  setEditing(null);
+                  setObjective('');
+                  setSuccess('');
+                }}
+              >
+                {t('Cancel editing', '取消编辑')}
+              </button>
+            )}
             {data.goals.map((g: any) => (
               <section className="panel" key={g.id}>
                 <h2>{g.title}</h2>
-                <p>{g.success}</p>
+                <p>{g.objective}</p>
+                <p>
+                  {t('Completion criteria: ', '完成标准：')}
+                  {g.success}
+                </p>
+                {g.progress && (
+                  <details>
+                    <summary>
+                      {t('Milestones and checkpoint', '里程碑与进展记录')} ·{' '}
+                      {t('Agent-reported', '助手报告')}
+                    </summary>
+                    <p>{g.progress.summary}</p>
+                    <p>
+                      {t('Next: ', '下一步：')}
+                      {g.progress.nextAction}
+                    </p>
+                    {g.progress.blockers?.map((b: string, i: number) => (
+                      <p key={i}>
+                        {t('Blocked: ', '阻塞：')}
+                        {b}
+                      </p>
+                    ))}
+                    <ol>
+                      {g.progress.milestones?.map((m: any, i: number) => (
+                        <li key={i}>
+                          {m.title} · {m.status}
+                          <p>{m.evidence}</p>
+                        </li>
+                      ))}
+                    </ol>
+                    <small>
+                      {t('Revision ', '修订 ')}
+                      {g.progress.revision} · {new Date(g.progress.updatedAt).toLocaleString()}
+                    </small>
+                  </details>
+                )}
+                <button
+                  disabled={Boolean(g.task?.runId)}
+                  onClick={() => {
+                    setEditing(g);
+                    setExecutionWindow(g.executionWindow || null);
+                    setObjective(g.objective);
+                    setSuccess(g.success);
+                    setMinutes(g.intervalMs / 60000);
+                    setRuns(g.maxRuns);
+                    setHours(Math.max(1, Math.ceil((g.endAt - Date.now()) / 3600000)));
+                  }}
+                >
+                  {t('Edit this goal', '修改此目标')}
+                </button>
                 <p>
                   {g.task?.status} · {g.task?.dispatchCount || 0}/{g.maxRuns} ·{' '}
                   {new Date(g.endAt).toLocaleString()}
                 </p>
+                {g.task?.enabled && (
+                  <p>
+                    {t('Next check: ', '下次检查：')}
+                    {new Date(g.task.deferredUntil || g.task.dueAt).toLocaleString()}
+                  </p>
+                )}
                 {g.task?.error && <p role="alert">{g.task.error}</p>}
                 {(['pause', 'resume', 'wake'] as const).map((action) => (
                   <button

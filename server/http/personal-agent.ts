@@ -437,6 +437,9 @@ export function personalAgentRoutes(
     return service.configure(b.name, b.conversationId);
   });
   app.post('/api/personal/goals', async (req) => service.createGoal(req.body));
+  app.patch<{ Params: { id: string } }>('/api/personal/goals/:id', async (req) =>
+    service.updateGoal(req.params.id, req.body),
+  );
   app.post<{ Params: { id: string } }>('/api/personal/goals/:id/action', async (req) => {
     const b = z
       .object({

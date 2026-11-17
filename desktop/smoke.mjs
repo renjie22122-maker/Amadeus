@@ -125,11 +125,17 @@ try {
   assert.equal(await page.locator('.sidebar-tools > button').count(), 6);
   assert.equal(await page.locator('.chat-navigation .workspace-navigation button svg').count(), 8);
   assert.deepEqual(await page.evaluate(() => Object.keys(window.amadeusDesktop).sort()), [
+    'captureContext',
     'onCommand',
     'openAgent',
     'openMenu',
     'platform',
   ]);
+  assert.equal(
+    await page.evaluate(() => window.amadeusDesktop.captureContext()),
+    null,
+    'Main window cannot invoke dot-only screen capture',
+  );
   assert.deepEqual(
     await desktop.evaluate(({ Menu }) => Menu.getApplicationMenu().items.map((item) => item.label)),
     ['File', 'Edit', 'View', 'Go', 'Help'],
@@ -185,7 +191,7 @@ try {
     desktop.windows().find((candidate) => candidate !== page) ||
     (await desktop.waitForEvent('window'));
   await dotPage.locator('.personal-dot').waitFor();
-  await dotPage.locator('button').click();
+  await dotPage.getByRole('button', { name: '打开助手与后台任务' }).click();
   await page.locator('.personal-agent').waitFor();
   await page.screenshot({ path: '.diagnostics/personal-agent.png' });
   await dotPage.screenshot({ path: '.diagnostics/personal-dot.png' });

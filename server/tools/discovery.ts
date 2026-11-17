@@ -2,6 +2,8 @@ import type { ToolSpec } from '../../shared/types.js';
 export const coreTools = new Set([
   'read_clock',
   'paired_devices',
+  'inspect_personal_goals',
+  'update_personal_goal_progress',
   'inspect_work_capabilities',
   'schedule_followup',
   'inspect_schedules',

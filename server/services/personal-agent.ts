@@ -150,7 +150,11 @@ export class PersonalAgent {
       hostRequired: true,
       goals: this.store
         .list<any>('personal-goal')
-        .map((g) => ({ ...g, task: this.store.maybe('scheduled-work', g.scheduleId) })),
+        .map((g) => ({
+          ...g,
+          task: this.store.maybe('scheduled-work', g.scheduleId),
+          progress: this.store.maybe('personal-goal-progress', g.id),
+        })),
       devices: this.devices(),
     };
   }
@@ -170,6 +174,7 @@ export class PersonalAgent {
     return this.store.transaction(() => {
       this.store.put('scheduled-work', {
         id: scheduleId,
+        personalGoalId: key,
         conversationId: c.id,
         name: d.title,
         enabled: true,
@@ -190,7 +195,61 @@ export class PersonalAgent {
         scheduleId,
         conversationId: c.id,
         createdAt: Date.now(),
+        revision: 1,
       });
+    });
+  }
+  updateGoal(key: string, input: unknown) {
+    const request = goalFields
+      .partial()
+      .extend({ revision: z.number().int().nonnegative() })
+      .strict()
+      .parse(input);
+    const goal = this.store.get<any>('personal-goal', key),
+      task = this.store.get<ScheduledWork>('scheduled-work', goal.scheduleId);
+    this.available(goal.conversationId);
+    assert(
+      !task.runId,
+      'BUSY',
+      'Wait for the active goal turn before changing its instructions.',
+      409,
+    );
+    assert(
+      (goal.revision || 0) === request.revision,
+      'CONFLICT',
+      'Goal changed; refresh before saving.',
+      409,
+    );
+    const d = goalFields.parse({ ...goal, ...request });
+    assert(
+      d.endAt > Date.now() && d.endAt <= Date.now() + 366 * 86400000,
+      'DEADLINE',
+      'Choose a future deadline within one year.',
+    );
+    assert(
+      d.maxRuns >= (task.dispatchCount || 0),
+      'LIMIT',
+      'The total run budget cannot be below runs already used.',
+    );
+    return this.store.transaction(() => {
+      this.store.put('personal-goal-revision', { ...goal, id: key + ':' + (goal.revision || 0) });
+      const next = this.store.put('personal-goal', {
+        ...goal,
+        ...d,
+        revision: (goal.revision || 0) + 1,
+        updatedAt: Date.now(),
+      });
+      this.store.put('scheduled-work', {
+        ...task,
+        personalGoalId: key,
+        name: d.title,
+        intervalMs: d.intervalMs,
+        maxRuns: d.maxRuns,
+        endAt: d.endAt,
+        executionWindow: d.executionWindow,
+        prompt: `Continue this authorized goal.\nGoal: ${d.objective}\nCompletion criteria: ${d.success}\nInspect previous results and checkpoint evidence before acting. Do not replay uncertain side effects. Report complete only when all completion criteria are met. Existing permissions apply.`,
+      });
+      return next;
     });
   }
   goalAction(key: string, action: 'pause' | 'resume' | 'wake', eventId?: string) {
@@ -207,9 +266,15 @@ export class PersonalAgent {
     this.available(goal.conversationId);
     assert(!task.runId, 'BUSY', 'Wait for the current turn to settle.', 409);
     assert(
-      !['needs_attention', 'completed', 'limit_reached'].includes(task.status),
+      task.status !== 'completed',
       'REVIEW',
-      'Review finished, interrupted or exhausted work and create a new goal; it will not be replayed.',
+      'Completed goals stay completed; create a new goal for new work.',
+    );
+    assert(
+      this.store.unknownEffects(goal.conversationId).length === 0,
+      'UNKNOWN_EFFECT',
+      'Inspect uncertain effects before resuming; they will not be replayed.',
+      409,
     );
     assert(
       (task.dispatchCount || 0) < (task.maxRuns || 0) && (task.endAt || 0) > Date.now(),

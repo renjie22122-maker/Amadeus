@@ -1,3 +1,4 @@
+import { goalContinuation } from './personal-goal-progress.js';
 import { executionWindowSchema, nextWindowTime, type ExecutionWindow } from './schedule-window.js';
 import { chatFollowupPolicy } from './chat-reply-policy.js';
 import { currentChat } from './chat-interaction.js';
@@ -25,6 +26,7 @@ export const scheduleFields = z.object({
   notifications: z.enum(['all', 'meaningful', 'failures', 'off']).optional(),
 });
 export interface ScheduledWork {
+  personalGoalId?: string;
   executionWindow?: ExecutionWindow | null;
   deferredUntil?: number;
   hostDeferredAt?: number;
@@ -260,6 +262,7 @@ export class ScheduledWorkService {
         this.runtime.start(
           chatId,
           task.prompt +
+            goalContinuation(this.store, task.personalGoalId) +
             '\n\n[Scheduled task] Before finishing, use report_scheduled_result to report unchanged, update, or complete with a short summary. Choose complete only when the requested monitoring/follow-up is finished; it stops future runs. Missing reports still notify. Existing permissions apply.',
           0,
           {

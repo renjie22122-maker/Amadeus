@@ -1,3 +1,4 @@
+import { goalProgress, goalProgressFields } from '../services/personal-goal-progress.js';
 import { z } from 'zod';
 import type { ToolRegistry } from './registry.js';
 import { DeviceCommands } from '../services/device-commands.js';
@@ -5,6 +6,32 @@ import { assert } from '../core/errors.js';
 import type { PairedDevice } from '../services/personal-agent.js';
 const text = (v: unknown) => ({ content: JSON.stringify(v) });
 export function installDeviceTools(registry: ToolRegistry) {
+  registry.add({
+    name: 'inspect_personal_goals',
+    effect: 'read',
+    description:
+      'Read persistent goals and their latest checkpoints in this conversation only. Checkpoints are prior reports, not independent verification.',
+    schema: z.object({}),
+    run: async (_a, c) =>
+      text(
+        c.store
+          .list<any>('personal-goal')
+          .filter((g) => g.conversationId === c.conversation.id)
+          .map((g) => ({
+            ...g,
+            task: c.store.maybe('scheduled-work', g.scheduleId),
+            progress: c.store.maybe('personal-goal-progress', g.id),
+          })),
+      ),
+  });
+  registry.add({
+    name: 'update_personal_goal_progress',
+    effect: 'write',
+    description:
+      'Save a persistent checkpoint for an existing authorized goal in this conversation. Read its current progress revision first (0 if none). Record milestones, evidence, blockers and next action; do not claim unsupported completion. This does not alter permissions, schedule, budget or goal completion.',
+    schema: goalProgressFields,
+    run: async (a, c) => text(goalProgress(c.store, c.conversation.id, a, c.run.id)),
+  });
   registry.add({
     name: 'paired_devices',
     effect: 'read',

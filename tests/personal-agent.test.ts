@@ -1,3 +1,4 @@
+import { goalProgress, goalContinuation } from '../server/services/personal-goal-progress.js';
 import Fastify from 'fastify';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -314,4 +315,74 @@ test('desktop dot reads only its bound conversation and voice cannot stop anothe
   assert.equal(f.calls.length, 1);
   f.store.put('conversation', { ...f.store.get<any>('conversation', 'c'), archived: true });
   assert.notEqual((await app.inject('/api/personal/dot')).statusCode, 200);
+});
+
+test('goal checkpoints survive reconstruction, require evidence and never complete schedules', (t) => {
+  const f = fixture(t),
+    goal = f.service.createGoal({
+      title: 'Plan',
+      objective: 'Build',
+      success: 'Verified artifact',
+      intervalMs: 60000,
+      maxRuns: 5,
+      endAt: Date.now() + 86400000,
+    });
+  f.store.put('run', { id: 'source', conversationId: 'c', status: 'running' });
+  const input = {
+    goalId: goal.id,
+    revision: 0,
+    summary: 'Draft made',
+    nextAction: 'Verify',
+    blockers: [],
+    milestones: [{ title: 'Draft', status: 'done', evidence: 'artifact: report.md' }],
+  };
+  assert.throws(() => goalProgress(f.store, 'other', input, 'source'));
+  assert.throws(() =>
+    goalProgress(
+      f.store,
+      'c',
+      { ...input, milestones: [{ title: 'Draft', status: 'done', evidence: '' }] },
+      'source',
+    ),
+  );
+  goalProgress(f.store, 'c', input, 'source');
+  assert.throws(() => goalProgress(f.store, 'c', input, 'source'));
+  assert.match(goalContinuation(f.store, goal.id), /report.md/);
+  assert.equal(new PersonalAgent(f.store, f.runtime).snapshot().goals[0].progress.revision, 1);
+  assert.equal(f.store.get<any>('scheduled-work', goal.scheduleId).status, 'waiting');
+  goalProgress(f.store, 'c', { ...input, revision: 1, summary: 'Revised' }, 'source');
+  assert.equal(f.store.list('personal-goal-progress-revision').length, 2);
+});
+test('editing and resuming an exhausted goal keeps identity, progress and used budget', (t) => {
+  const f = fixture(t),
+    goal = f.service.createGoal({
+      title: 'Plan',
+      objective: 'Build',
+      success: 'Verified',
+      intervalMs: 60000,
+      maxRuns: 2,
+      endAt: Date.now() + 86400000,
+    });
+  const task = f.store.get<any>('scheduled-work', goal.scheduleId);
+  f.store.put('scheduled-work', {
+    ...task,
+    dispatchCount: 2,
+    status: 'limit_reached',
+    enabled: false,
+  });
+  assert.throws(() => f.service.goalAction(goal.id, 'resume'));
+  const updated = f.service.updateGoal(goal.id, { revision: 1, maxRuns: 4 });
+  assert.equal(updated.id, goal.id);
+  assert.equal(updated.scheduleId, goal.scheduleId);
+  assert.equal(f.store.get<any>('scheduled-work', goal.scheduleId).dispatchCount, 2);
+  assert.throws(() => f.service.updateGoal(goal.id, { revision: 1, maxRuns: 8 }));
+  f.service.goalAction(goal.id, 'resume');
+  assert.equal(f.store.get<any>('scheduled-work', goal.scheduleId).status, 'waiting');
+  f.store.put('scheduled-work', {
+    ...f.store.get<any>('scheduled-work', goal.scheduleId),
+    runId: 'active',
+  });
+  assert.throws(() =>
+    f.service.updateGoal(goal.id, { revision: 2, objective: 'Changed while running' }),
+  );
 });
