@@ -82,3 +82,48 @@ test('proactive chat can inspect existing Office data but cannot edit, export or
     'tool-not-in-allowed-set',
   );
 });
+
+test('proactive public web reads retain network, conversation and explicit tool grants', () => {
+  const proactive: any = {
+    ...ctx,
+    conversation: { permission: 'ask', remoteChatOnly: true, webSearch: true },
+    store: { maybe: (kind: string) => (kind === 'chat-proactive-run' ? {} : undefined) },
+  };
+  for (const name of ['web_search', 'fetch_url']) {
+    assert.equal(capabilityDecision(proactive, name, 'network').allowed, true);
+    assert.equal(
+      capabilityDecision(
+        { ...proactive, config: { get: () => ({ web: { enabled: false } }) } },
+        name,
+        'network',
+      ).reason,
+      'network-disabled',
+    );
+    assert.equal(
+      capabilityDecision(
+        {
+          ...proactive,
+          conversation: { ...proactive.conversation, allowedTools: ['inspect_chat'] },
+        },
+        name,
+        'network',
+      ).reason,
+      'tool-not-in-allowed-set',
+    );
+  }
+  assert.equal(
+    capabilityDecision(
+      { ...proactive, conversation: { ...proactive.conversation, webSearch: false } },
+      'web_search',
+      'network',
+    ).reason,
+    'web-search-disabled',
+  );
+  for (const [name, effect] of [
+    ['run_command', 'execute'],
+    ['write_file', 'write'],
+    ['device_action', 'write'],
+    ['mcp_remote_post', 'network'],
+  ])
+    assert.equal(capabilityDecision(proactive, name, effect as any).reason, 'proactive-read-only');
+});

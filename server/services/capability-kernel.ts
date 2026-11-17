@@ -26,6 +26,8 @@ export function capabilityDecision(ctx: ToolContext, name: string, effect: ToolS
           'prepare_chat_reply',
           'retract_chat_message',
           'search_tools',
+          'web_search',
+          'fetch_url',
           'search_knowledge',
           'list_knowledge_documents',
           'read_knowledge_document',
@@ -64,6 +66,7 @@ export function capabilityDecision(ctx: ToolContext, name: string, effect: ToolS
     ],
     [effect === 'execute' && ctx.run.executionBlock?.signature === signature, 'execution-blocked'],
     [effect === 'network' && ctx.config.get().web?.enabled === false, 'network-disabled'],
+    [name === 'web_search' && ctx.conversation.webSearch === false, 'web-search-disabled'],
     [
       !!ctx.run.recoveryOnly &&
         !['read', 'network'].includes(effect) &&
