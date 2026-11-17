@@ -467,15 +467,27 @@ test('proactive turn cannot generate media, execute or schedule even with permis
     conversation: { permission: 'auto', projectId: 'p' },
     config: { get: () => ({ web: { enabled: true } }) },
   };
-  for (const tool of [
-    'generate_media',
-    'run_command',
-    'create_scheduled_task',
-    'spawn_agent',
-    'fetch_url',
-  ])
+  for (const tool of ['generate_media', 'run_command', 'create_scheduled_task', 'spawn_agent'])
     assert.equal(capabilityDecision(ctx, tool, 'read').allowed, false);
   assert.equal(capabilityDecision(ctx, 'search_knowledge', 'read').allowed, true);
+  for (const tool of ['web_search', 'fetch_url']) {
+    assert.equal(capabilityDecision(ctx, tool, 'network').allowed, true);
+    const disabled = { ...ctx, config: { get: () => ({ web: { enabled: false } }) } };
+    assert.equal(capabilityDecision(disabled, tool, 'network').reason, 'network-disabled');
+    const scoped = {
+      ...ctx,
+      conversation: { ...ctx.conversation, allowedTools: ['search_knowledge'] },
+    };
+    assert.equal(capabilityDecision(scoped, tool, 'network').reason, 'tool-not-in-allowed-set');
+  }
+  assert.equal(
+    capabilityDecision(
+      { ...ctx, conversation: { ...ctx.conversation, webSearch: false } },
+      'web_search',
+      'network',
+    ).reason,
+    'web-search-disabled',
+  );
 });
 test('own bot messages ignored; only real mention segment addresses a group', (t) => {
   const { channels, c } = setup(t);
