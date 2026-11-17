@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type { UiState } from '../types';
 import { workspaceNavigation } from '../workspace-navigation';
 
@@ -18,6 +19,14 @@ export function WorkspacePage({
   openProject: (id: string) => void;
   review: (id: string) => void;
 }) {
+  const conversationCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const conversation of state.conversations) {
+      if (conversation.projectId)
+        counts.set(conversation.projectId, (counts.get(conversation.projectId) || 0) + 1);
+    }
+    return counts;
+  }, [state.conversations]);
   const entry = workspaceNavigation.find((item) => item.id === page);
   const text = (en: string, cn: string) => (zh ? cn : en);
   const link = (id: string, en: string, cn: string) => (
@@ -61,8 +70,7 @@ export function WorkspacePage({
                 <article className="panel" key={project.id}>
                   <h2>{project.name}</h2>
                   <p>
-                    {state.conversations.filter((c) => c.projectId === project.id).length}{' '}
-                    {text('conversations', '个会话')}
+                    {conversationCounts.get(project.id) || 0} {text('conversations', '个会话')}
                   </p>
                   <button
                     onClick={() =>

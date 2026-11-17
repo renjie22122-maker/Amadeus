@@ -1,4 +1,6 @@
-import { WorkspacePage } from './pages/Workspace';
+const WorkspacePage = lazy(() =>
+  import('./pages/Workspace').then((m) => ({ default: m.WorkspacePage })),
+);
 import { workspacePages, workspaceNavigation } from './workspace-navigation';
 import { runDescendants } from './run-descendants';
 import brandMark from '../desktop/brand.svg';
@@ -962,13 +964,9 @@ export function App() {
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
   });
+  const desktopCommand = useRef<(id: string) => void>(() => {});
   useEffect(() => {
-    const desktop = (
-      window as Window & {
-        amadeusDesktop?: { onCommand?: (callback: (id: string) => void) => () => void };
-      }
-    ).amadeusDesktop;
-    return desktop?.onCommand?.((id) => {
+    desktopCommand.current = (id) => {
       if (id === 'sidebar') setSidebar((value) => !value);
       else if (id === 'search') {
         setSidebar(true);
@@ -988,8 +986,17 @@ export function App() {
         ].includes(id)
       )
         setPage(id);
-    });
+    };
   });
+  useEffect(() => {
+    const desktop = (
+      window as Window & {
+        amadeusDesktop?: { onCommand?: (callback: (id: string) => void) => () => void };
+      }
+    ).amadeusDesktop;
+    return desktop?.onCommand?.((id) => desktopCommand.current(id));
+  }, []);
+
   if (!state)
     return (
       <div className="loading" role="status">
@@ -1174,25 +1181,29 @@ export function App() {
         )}
         {workspacePages.has(page) ? (
           <div className="page-scroll">
-            <WorkspacePage
-              page={page}
-              state={state}
-              zh={language === 'zh'}
-              navigate={setPage}
-              createProject={() => setProjectDialog(true)}
-              openProject={(id) => void action(() => newChat(id))}
-              review={(id) =>
-                void action(async () => {
-                  const chat = await newChat(id);
-                  const prompt =
-                    language === 'zh'
-                      ? '请审查当前项目的未提交改动。先确认工作区与差异范围，再检查正确性、回归和安全问题。给出有证据的发现、文件位置、影响与验证建议；如果没有发现也明确说明。不要修改文件或提交代码。'
-                      : 'Review the uncommitted changes in this project. Confirm the workspace and diff scope first. Check correctness, regressions and security. Report evidence, file locations, impact and verification suggestions. Explicitly state if no issues are found. Do not edit files or commit code.';
-                  localStorage.setItem('agentdemo.draft.' + chat, prompt);
-                  setDraft(prompt);
-                })
-              }
-            />
+            <Suspense
+              fallback={<p role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</p>}
+            >
+              <WorkspacePage
+                page={page}
+                state={state}
+                zh={language === 'zh'}
+                navigate={setPage}
+                createProject={() => setProjectDialog(true)}
+                openProject={(id) => void action(() => newChat(id))}
+                review={(id) =>
+                  void action(async () => {
+                    const chat = await newChat(id);
+                    const prompt =
+                      language === 'zh'
+                        ? '请审查当前项目的未提交改动。先确认工作区与差异范围，再检查正确性、回归和安全问题。给出有证据的发现、文件位置、影响与验证建议；如果没有发现也明确说明。不要修改文件或提交代码。'
+                        : 'Review the uncommitted changes in this project. Confirm the workspace and diff scope first. Check correctness, regressions and security. Report evidence, file locations, impact and verification suggestions. Explicitly state if no issues are found. Do not edit files or commit code.';
+                    localStorage.setItem('agentdemo.draft.' + chat, prompt);
+                    setDraft(prompt);
+                  })
+                }
+              />
+            </Suspense>
           </div>
         ) : page === 'background' ? (
           <div className="page-scroll">
