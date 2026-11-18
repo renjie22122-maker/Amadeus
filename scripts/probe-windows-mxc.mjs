@@ -5,6 +5,7 @@ import {
   linkSync,
   lstatSync,
   readdirSync,
+  renameSync,
   writeFileSync,
   readFileSync,
   existsSync,
@@ -13,6 +14,9 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:net';
+import { spawn, execFileSync } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 
 if (process.platform !== 'win32') throw Error('Windows is required');
 const entry = process.argv[2];
@@ -93,7 +97,12 @@ const policy = {
   containment: {
     type: 'processcontainer',
     config: {
-      ui: { isolation: 'desktop', desktopSystemControl: false, systemSettings: 'none', ime: false },
+      ui: {
+        isolation: 'container',
+        desktopSystemControl: false,
+        systemSettings: 'none',
+        ime: false,
+      },
     },
   },
   workingDirectory: work,
@@ -247,10 +256,161 @@ try {
   if (!reaped) throw Error('Descendant survived timeout');
   results.push({ name: 'descendant-timeout', reaped });
 
+  // A replacement directory is synthetic and starts outside the granted root.
+  const granted = join(root, 'granted');
+  const replacement = join(root, 'replacement');
+  mkdirSync(granted);
+  mkdirSync(replacement);
+  writeFileSync(join(granted, 'identity'), 'original');
+  writeFileSync(join(replacement, 'identity'), 'replacement');
+  const target = quote(join(granted, 'identity'));
+  const readyFile = join(work, 'path-ready');
+  const proceed = join(work, 'path-continue');
+  const psSwap =
+    "$ErrorActionPreference='Stop';if((Get-Content " +
+    target +
+    ") -ne 'original'){exit 5};Set-Content " +
+    quote(readyFile) +
+    ' ready;while(!(Test-Path ' +
+    quote(proceed) +
+    ')){Start-Sleep -Milliseconds 30};try{Get-Content ' +
+    target +
+    "}catch [System.UnauthorizedAccessException]{'denied'}";
+  const pendingSwap = run({
+    ...policy,
+    filesystem: {
+      ...policy.filesystem,
+      readonlyPaths: [...policy.filesystem.readonlyPaths, granted],
+    },
+    command:
+      '"' +
+      windows +
+      '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -EncodedCommand ' +
+      Buffer.from(psSwap, 'utf16le').toString('base64'),
+  });
+  let renameDenied = false;
+  try {
+    for (let i = 0; i < 100 && !existsSync(readyFile); i++) await delay(50);
+    if (!existsSync(readyFile)) throw Error('Replacement fixture not ready');
+    try {
+      renameSync(granted, join(root, 'previous'));
+    } catch (error) {
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+      renameDenied = true;
+    }
+    if (!renameDenied) renameSync(replacement, granted);
+  } finally {
+    writeFileSync(proceed, 'done');
+  }
+  const swap = await pendingSwap;
+  results.push({
+    name: 'directory-replacement',
+    passed: swap.exitCode === 0 && swap.stdout.trim() === (renameDenied ? 'original' : 'denied'),
+    observed: swap.stdout.trim(),
+  });
+  // Look up only a fresh test window by its random title, first from the host.
+  const desktopSource = join(work, 'WindowFixture.cs');
+  const desktopExe = join(work, 'WindowFixture.exe');
+  writeFileSync(
+    desktopSource,
+    `using System;
+using System.Runtime.InteropServices;
+class WindowFixture {
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr FindWindow(string cls,string title);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr CreateWindowEx(int ex,string cls,string title,uint style,int x,int y,int w,int h,IntPtr parent,IntPtr menu,IntPtr instance,IntPtr param);
+ static int Main(string[] args) {
+   if(args[0]=="host"){
+     var window=CreateWindowEx(0,"STATIC",args[1],0,0,0,1,1,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero);
+     if(window==IntPtr.Zero)return 2;
+     Console.WriteLine("ready"); Console.ReadLine(); return 0;
+   }
+   Console.WriteLine(FindWindow("STATIC",args[1])==IntPtr.Zero?"hidden":"found"); return 0;
+ }
+}`,
+  );
+  execFileSync(
+    join(windows, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'),
+    ['/nologo', '/target:exe', '/out:' + desktopExe, desktopSource],
+    { windowsHide: true },
+  );
+  const title = 'amadeus-fixture-' + (await import('node:crypto')).randomUUID();
+  const owner = spawn(desktopExe, ['host', title], {
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'ignore'],
+  });
+  try {
+    const ready = await Promise.race([
+      once(owner.stdout, 'data').then(([v]) => v.toString().trim()),
+      delay(4000, 'timeout'),
+    ]);
+    if (
+      ready !== 'ready' ||
+      execFileSync(desktopExe, ['check', title], { windowsHide: true, encoding: 'utf8' }).trim() !==
+        'found'
+    )
+      throw Error('Host window control failed');
+    const check = await run({ ...policy, command: '"' + desktopExe + '" check ' + title });
+    results.push({
+      name: 'host-window-visibility',
+      passed: check.exitCode === 0 && check.stdout.trim() === 'hidden',
+    });
+  } finally {
+    owner.stdin.end('\n');
+  }
+  // Terminate only a disposable broker after its payload reports that it is running.
+  const crashMarker = join(work, 'crash.pid');
+  const crashPayload =
+    "require('node:fs').writeFileSync('crash.pid',String(process.pid));setTimeout(()=>{},20000)";
+  const crashRequest = {
+    ...policy,
+    timeoutMs: 25000,
+    command: '"' + process.execPath + '" -e "' + crashPayload + '"',
+  };
+  const broker = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      'import {run} from ' +
+        JSON.stringify(pathToFileURL(entry).href) +
+        '; await run(JSON.parse(process.argv[1]));',
+      JSON.stringify(crashRequest),
+    ],
+    { stdio: 'ignore', windowsHide: true },
+  );
+  const brokerExit = once(broker, 'exit');
+  try {
+    for (let i = 0; i < 50 && !existsSync(crashMarker); i++) await delay(100);
+    if (!existsSync(crashMarker)) throw Error('Crash fixture did not start');
+    const pid = Number(readFileSync(crashMarker, 'utf8'));
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw Error('Invalid crash fixture PID');
+    broker.kill();
+    await brokerExit;
+    let exited = false;
+    for (let i = 0; i < 30; i++) {
+      try {
+        process.kill(pid, 0);
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error;
+        exited = true;
+        break;
+      }
+      await delay(100);
+    }
+    results.push({ name: 'broker-crash', passed: exited });
+    if (!exited)
+      throw Error(
+        'MXC_BROKER_CRASH_ORPHAN: fixed payload still running three seconds after broker exit',
+      );
+  } finally {
+    if (broker.exitCode === null && !broker.killed) broker.kill();
+  }
+
+  if (results.some((item) => item.passed === false)) process.exitCode = 1;
   console.log(
     JSON.stringify(
       {
-        status: 'targeted-probe-passed',
+        status: results.some((item) => item.passed === false) ? 'blocked' : 'targeted-probe-passed',
         sdk: manifest.version,
         root,
         results,

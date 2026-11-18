@@ -90,3 +90,9 @@ Use opt-in preview, then capability-gated rollout. Unknown capability or policy 
 A child Node process wrote its PID before a three-second parent timeout. The host confirmed the child exited. Loading a .cjs entry point hit a drive-root lstat permission error during Node path resolution. Inline execution passed. Project script compatibility remains open.
 
 The fixed fixture now loads a CommonJS entry point and a relative dependency from a Unicode path with spaces using Node’s explicit preserve-symlinks and preserve-symlinks-main options. These change module identity semantics for linked dependencies. Two concurrent containers each read their own marker and received an access-denied error for the other. The probe rejects a pre-existing hard link before launch. This preflight does not cover races during execution or establish OS-level alias protection.
+
+### Release blockers measured on 2026-11-18
+
+SDK 1.1.0 returned blocked. After the disposable broker terminated, its known-running payload exited within three seconds. A running process read replacement content when the host swapped an ordinary directory into the granted path. Ambient Windows ACLs may contribute. This fails the requirement to bind access to the original directory identity.
+
+Both desktop and container UI configurations allowed lookup of the randomly titled synthetic host window. The test only measures discovery. No real window, input or clipboard data was accessed. The earlier description of desktop mode as a separate desktop was inaccurate. The probe reports the failed checks and exits nonzero. Production integration is gated on these checks.
