@@ -25,6 +25,7 @@ This is the maintained English/Chinese documentation set, reviewed on 2026-10-05
 - [Conversations, progress and recovery](INTERACTION.md)
 - [Automatic approval](AUTO-REVIEW.md)
 - [Security model](SECURITY.md)
+- [Windows Sandbox design and prototype](WINDOWS-SANDBOX.md)
 - [Memory, knowledge and retrieval](MEMORY.md)
 - [Installation, upgrades and execution backends](MIGRATION.md)
 - [Testing and evidence](VERIFICATION.md)

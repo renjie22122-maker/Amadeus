@@ -69,3 +69,4 @@ build/
 /.personal-preview/
 
 /.desktop-connected/
+!/scripts/probe-windows-mxc.mjs
