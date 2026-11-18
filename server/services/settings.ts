@@ -56,7 +56,7 @@ const schema = z.object({
         projectId: z.string().optional(),
         pathGlob: z.string().max(300).optional(),
         commandEquals: z.string().max(20000).optional(),
-        backend: z.enum(['approval-host', 'docker', 'native-windows']).optional(),
+        backend: z.enum(['approval-host', 'docker', 'native-windows', 'mxc']).optional(),
         reason: z.string().min(1).max(1000),
       }),
     )
@@ -207,7 +207,7 @@ const schema = z.object({
   compactionRatio: z.number().min(0.3).max(0.9).default(0.75),
   dockerImage: z.string().default('node:24-bookworm-slim'),
   commandBackend: z
-    .enum(['approval-host', 'docker', 'native-windows'])
+    .enum(['approval-host', 'docker', 'native-windows', 'mxc'])
     .default(process.platform === 'win32' ? 'native-windows' : 'docker'),
   dockerUser: z
     .string()

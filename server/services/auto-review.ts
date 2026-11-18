@@ -128,7 +128,7 @@ export class AutoReview {
       if (
         risk.automatic &&
         typeof payload.cwd === 'string' &&
-        ['approval-host', 'native-windows', 'docker'].includes(payload.backend)
+        ['approval-host', 'native-windows', 'docker', 'mxc'].includes(payload.backend)
       ) {
         record.decision = 'allow';
         record.reason = 'Bounded built-in environment query; no arguments or shell composition.';
@@ -157,7 +157,7 @@ export class AutoReview {
           network:
             settings.commandBackend === 'approval-host'
               ? 'host'
-              : settings.commandBackend === 'docker'
+              : settings.commandBackend === 'docker' || settings.commandBackend === 'mxc'
                 ? 'deny'
                 : settings.nativeNetwork,
           cwdIsSecurityBoundary: false,

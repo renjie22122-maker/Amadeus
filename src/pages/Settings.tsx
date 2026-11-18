@@ -504,6 +504,16 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
               note: '文件隔离并检查断网能力；预检失败则拒绝执行。',
             },
             {
+              key: 'mxc',
+              backend: 'mxc',
+              network: 'deny',
+              en: 'Windows MXC · Scratch workspace',
+              cn: 'Windows MXC · 临时工作区',
+              detail:
+                'Offline command execution in a fresh workspace. Project files are not mounted.',
+              note: '在新的离线临时目录执行命令，不挂载项目文件。',
+            },
+            {
               key: 'docker',
               backend: 'docker',
               network: 'deny',
@@ -564,13 +574,17 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
             ? t('settings') !== 'Settings'
               ? '宿主执行 · 无 OS 文件隔离。批准后命令可访问当前 Windows 账号可访问的文件与网络；工作目录不是安全边界。可信模式可跳过审批。'
               : 'Host execution · No OS file isolation. Approved commands can access files and network available to your account. The working directory is not a boundary. Trusted mode may bypass approval.'
-            : value.commandBackend === 'native-windows'
+            : value.commandBackend === 'mxc'
               ? t('settings') !== 'Settings'
-                ? 'AppContainer 文件隔离。运行时与系统公共资源可能可读；网络策略单独设置，预检失败不会退回宿主执行。'
-                : 'AppContainer file isolation. Runtime and public system resources may remain readable. Network policy is separate; failed preflight never falls back to host execution.'
-              : t('settings') !== 'Settings'
-                ? 'Docker：仅挂载当前执行目录，禁用网络；容器不可用时不会退回宿主。'
-                : 'Docker: mounts the execution folder with networking disabled; no host fallback.'}
+                ? 'MXC 只挂载本次临时工作区，限制网络并使用独立桌面。'
+                : 'MXC uses a disposable workspace, offline networking and a private desktop.'
+              : value.commandBackend === 'native-windows'
+                ? t('settings') !== 'Settings'
+                  ? 'AppContainer 文件隔离。运行时与系统公共资源可能可读；网络策略单独设置，预检失败不会退回宿主执行。'
+                  : 'AppContainer file isolation. Runtime and public system resources may remain readable. Network policy is separate; failed preflight never falls back to host execution.'
+                : t('settings') !== 'Settings'
+                  ? 'Docker：仅挂载当前执行目录，禁用网络；容器不可用时不会退回宿主。'
+                  : 'Docker: mounts the execution folder with networking disabled; no host fallback.'}
         </p>
         <div className="form-grid">
           <label>

@@ -35,7 +35,7 @@ def grant(name, pid):
     sd.SetSecurityDescriptorDacl(True,acl,False)
     security.SetUserObjectSecurity(desk,security.DACL_SECURITY_INFORMATION,sd)
 
-def main(node,entry,request,title,output):
+def main(node,entry,request,title,output, *, runtime=False):
     name='Amadeus'+uuid.uuid4().hex
     token=security.OpenProcessToken(win32api.GetCurrentProcess(),win32con.TOKEN_QUERY)
     user=security.ConvertSidToStringSid(security.GetTokenInformation(token,security.TokenUser)[0])
@@ -44,17 +44,31 @@ def main(node,entry,request,title,output):
     desk=win32service.CreateDesktop(name,0,win32con.GENERIC_ALL,sa)
     si=win32process.STARTUPINFO()
     si.lpDesktop=name
-    args=[node,str(pathlib.Path(__file__).with_name('mxc-desktop-test-broker.mjs')),entry,request,name,title,output,sys.executable]
-    proc,thread,_,_=win32process.CreateProcess(node,subprocess.list2cmdline(args),None,None,False,win32con.CREATE_NO_WINDOW,None,None,si)
+    args=[node,str(pathlib.Path(__file__).with_name('mxc-command-broker.mjs' if runtime else 'mxc-desktop-test-broker.mjs')),entry,request,name,title,output,sys.executable]
+    import win32job
+    job=win32job.CreateJobObject(None,"Amadeus-"+uuid.uuid4().hex)
+    limits=win32job.QueryInformationJobObject(job,win32job.JobObjectExtendedLimitInformation)
+    limits['BasicLimitInformation']['LimitFlags'] |= win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    win32job.SetInformationJobObject(job,win32job.JobObjectExtendedLimitInformation,limits)
+    proc,thread,_,_=win32process.CreateProcess(node,subprocess.list2cmdline(args),None,None,False,win32con.CREATE_NO_WINDOW|win32con.CREATE_SUSPENDED,None,None,si)
     try:
-        if win32event.WaitForSingleObject(proc,22000)!=0:
+        try:
+            win32job.AssignProcessToJobObject(job,proc)
+            win32process.ResumeThread(thread)
+        except BaseException:
+            win32process.TerminateProcess(proc,1)
+            raise
+        timeout=json.loads(pathlib.Path(request).read_text(encoding='utf-8-sig')).get('timeoutMs',15000)
+        if win32event.WaitForSingleObject(proc,timeout+15000)!=0:
             win32process.TerminateProcess(proc,1)
             raise RuntimeError('broker timed out')
         if win32process.GetExitCodeProcess(proc)!=0: raise RuntimeError('broker failed')
     finally:
+        job.Close()
         desk.CloseDesktop()
 
 if __name__=='__main__':
     if sys.argv[1]=='grant': grant(sys.argv[2],int(sys.argv[3]))
+    elif sys.argv[1]=='execute': main(*sys.argv[2:],runtime=True)
     else: main(*sys.argv[1:])
 

@@ -77,6 +77,49 @@ export function Composer({
   useEffect(() => {
     if (!draft) setPreview(false);
   }, [draft]);
+  const [suggestEnabled, setSuggestEnabled] = useState(
+    () => localStorage.getItem('amadeus-next-prompt') === 'on',
+  );
+  const [composing, setComposing] = useState(false);
+  const [candidate, setCandidate] = useState<{ key: string; text: string } | null>(null);
+  const skipped = useRef('');
+  const suggestionKey = JSON.stringify([conversation?.id, run?.id, run?.status, draft]);
+  const eligible =
+    !!conversation &&
+    !conversation.remoteChatOnly &&
+    !conversation.remoteMemoryOnly &&
+    !running &&
+    !sending &&
+    !preview &&
+    !composing &&
+    !pasting &&
+    run?.status === 'completed';
+  const visibleCandidate =
+    suggestEnabled && eligible && candidate?.key === suggestionKey ? candidate.text : '';
+  useEffect(() => {
+    if (!suggestEnabled || !eligible || skipped.current === suggestionKey || !conversation?.id)
+      return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const result = await api(
+          '/composer/next-prompt',
+          { conversationId: conversation.id, draft: draft.slice(-2000), mode: 'followup' },
+          'POST',
+          {},
+          controller.signal,
+        );
+        if (!controller.signal.aborted)
+          setCandidate({ key: suggestionKey, text: result.suggestion });
+      } catch {
+        /* Suggestions are optional. The draft stays editable on failure. */
+      }
+    }, 1200);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [suggestEnabled, eligible, suggestionKey, conversation?.id, draft]);
   const pasteBusy = useRef(false);
   const [pasteFailure, setPasteFailure] = useState('');
   const [pasteError, setPasteError] = useState('');
@@ -227,6 +270,11 @@ export function Composer({
               </details>
             </div>
           )}
+          {visibleCandidate && (
+            <small className="composer-suggestion" aria-live="polite">
+              {visibleCandidate} <kbd>Tab</kbd>
+            </small>
+          )}
           {preview && <DraftPreview text={draft} />}
           <textarea
             hidden={preview}
@@ -263,7 +311,27 @@ export function Composer({
                 setPreview(true);
               }
             }}
+            onCompositionStart={() => setComposing(true)}
+            onCompositionEnd={() => setComposing(false)}
             onKeyDown={(e) => {
+              if (
+                !e.nativeEvent.isComposing &&
+                visibleCandidate &&
+                (e.key === 'Escape' ||
+                  (e.key === 'Tab' &&
+                    !e.shiftKey &&
+                    e.currentTarget.selectionStart === draft.length &&
+                    e.currentTarget.selectionEnd === draft.length))
+              ) {
+                e.preventDefault();
+                if (e.key === 'Tab') {
+                  const next = draft + visibleCandidate;
+                  skipped.current = JSON.stringify([conversation?.id, run?.id, run?.status, next]);
+                  setDraft(next);
+                } else skipped.current = suggestionKey;
+                setCandidate(null);
+                return;
+              }
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 sendReady();
@@ -290,6 +358,22 @@ export function Composer({
                 }}
               />
 
+              <button
+                type="button"
+                aria-pressed={suggestEnabled}
+                title={
+                  zh
+                    ? '用本会话模型根据最近消息和草稿预测下一句，可能产生费用'
+                    : 'Use the chat model on recent messages and the draft to suggest a follow-up; model charges may apply'
+                }
+                onClick={() => {
+                  localStorage.setItem('amadeus-next-prompt', suggestEnabled ? 'off' : 'on');
+                  setSuggestEnabled(!suggestEnabled);
+                  setCandidate(null);
+                }}
+              >
+                {zh ? '输入建议' : 'Suggestions'}
+              </button>
               <ModelControl
                 key={conversation?.id || 'new'}
                 profiles={state.settings.profiles}

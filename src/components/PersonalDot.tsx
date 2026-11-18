@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 const BrowserVoiceChat = lazy(() =>
   import('./BrowserVoiceChat').then((m) => ({ default: m.BrowserVoiceChat })),
 );
@@ -6,12 +6,119 @@ import { api, bootstrap } from '../api';
 export function PersonalDot() {
   const [snapshot, setSnapshot] = useState<any>(),
     [error, setError] = useState('');
+  const [compact, setCompact] = useState(true);
+  const [projectId, setProjectId] = useState('');
+  const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
+  const [mode, setMode] = useState('聊天');
+  const prompts: Record<string, string> = {
+    写作评估:
+      'Assess clarity, structure and suitability for the intended reader. Support each observation with a passage and a concrete edit.',
+    读者反馈:
+      'Consider how the intended reader might interpret the text. Highlight confusion and likely questions, distinguishing inference from evidence.',
+    改写: 'Rewrite the supplied passage for the requested audience and purpose, preserving its facts and constraints.',
+    自然表达:
+      'Make the supplied text more idiomatic while preserving the author’s voice, terminology and claims.',
+    来源核对:
+      'Compare only the supplied text and references. Quote matching passages and flag claims that need attribution. If references are missing, request them. Do not report a plagiarism percentage or claim a web-wide scan.',
+    简历优化:
+      'Improve the supplied resume against the supplied role. Keep experience and metrics factual, and flag gaps for the user to fill.',
+    摘要: 'Summarize the supplied material.',
+    润色: 'Polish the supplied text while preserving meaning and voice.',
+    语气: 'Describe the tone and suggest a revision for the intended audience.',
+    翻译: 'Translate the supplied material into the requested language. Ask which language if unclear.',
+    解释: 'Explain the supplied material in plain language.',
+  };
+  async function fold(value: boolean) {
+    const bridge = (
+      window as Window & { amadeusDesktop?: { setDotCollapsed: (v: boolean) => Promise<boolean> } }
+    ).amadeusDesktop;
+    if (await bridge?.setDotCollapsed?.(value)) setCompact(value);
+  }
+  const generation = useRef(0);
+  const [choices, setChoices] = useState<{ id: string; title: string }[] | null>(null);
+  const [binding, setBinding] = useState(false);
+  async function choose(id?: string) {
+    setBinding(true);
+    generation.current++;
+    try {
+      if (id === undefined) {
+        const [chats, spaces] = await Promise.all([
+          api('/personal/dot/conversations'),
+          api('/personal/dot/projects'),
+        ]);
+        setChoices(chats);
+        setProjects(spaces);
+        return;
+      }
+      const target =
+        id ||
+        (await api('/conversations', { projectId: projectId || null, title: 'Dot · 新对话' })).id;
+      await api('/personal/dot/binding', { conversationId: target });
+      const next = await api('/personal/dot');
+      generation.current++;
+      setSnapshot(next);
+      setAssist('off');
+      setChoices(null);
+      setScreen(null);
+      setText('');
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '切换失败');
+    } finally {
+      setBinding(false);
+    }
+  }
   const [voice, setVoice] = useState(false);
   const [screen, setScreen] = useState<string | null>(null),
     [capturing, setCapturing] = useState(false);
   const [text, setText] = useState(''),
     [sending, setSending] = useState(false);
+  const [assist, setAssist] = useState('off');
+  const [composing, setComposing] = useState(false);
+  const [suggestion, setSuggestion] = useState<{ draft: string; value: string } | null>(null);
+  const [assistError, setAssistError] = useState('');
+  const dismissed = useRef('');
+  const conversationId = snapshot?.identity?.conversationId;
   useEffect(() => {
+    setSuggestion(null);
+    setAssistError('');
+    if (
+      assist === 'off' ||
+      compact ||
+      voice ||
+      sending ||
+      composing ||
+      binding ||
+      choices ||
+      !conversationId ||
+      text.trim().length < 4 ||
+      dismissed.current === text
+    )
+      return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const draft = text.slice(-2000);
+        const { suggestion: value } = await api(
+          '/personal/dot/draft-suggestion',
+          { conversationId, draft, mode: assist },
+          'POST',
+          {},
+          controller.signal,
+        );
+        if (!controller.signal.aborted && value && (assist !== 'grammar' || value !== draft))
+          setSuggestion({ draft: text, value });
+      } catch {
+        if (!controller.signal.aborted) setAssistError('本次建议未能生成，可继续输入');
+      }
+    }, 1100);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [assist, compact, voice, sending, composing, binding, choices, conversationId, text]);
+  useEffect(() => {
+    if (compact) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     let authenticated = false;
@@ -22,8 +129,9 @@ export function PersonalDot() {
           authenticated = true;
         }
         if (controller.signal.aborted) return;
+        const current = generation.current;
         const value = await api('/personal/dot', undefined, 'GET', {}, controller.signal);
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && current === generation.current) {
           setSnapshot(value);
           setError('');
         }
@@ -38,7 +146,7 @@ export function PersonalDot() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, []);
+  }, [compact]);
   const open = () =>
     (
       window as Window & { amadeusDesktop?: { openAgent?: () => void } }
@@ -73,7 +181,7 @@ export function PersonalDot() {
       }
       await api(
         '/conversations/' + encodeURIComponent(snapshot.identity.conversationId) + '/message',
-        { text },
+        { text: prompts[mode] ? prompts[mode] + '\n\n' + text : text },
       );
       setText('');
     } catch (e) {
@@ -82,6 +190,12 @@ export function PersonalDot() {
       setSending(false);
     }
   }
+  if (compact)
+    return (
+      <button className="dot-tab" aria-label="展开 Amadeus Dot" onClick={() => void fold(false)}>
+        <span aria-hidden="true">•••</span>
+      </button>
+    );
   if (voice && snapshot?.identity)
     return (
       <div className="personal-dot personal-dot-voice">
@@ -106,54 +220,184 @@ export function PersonalDot() {
     );
   return (
     <div className="personal-dot">
-      <strong>{snapshot?.identity?.name || 'Amadeus'}</strong>
-      <span role="status">
-        {error ||
-          (snapshot?.active
-            ? '正在处理'
-            : snapshot?.identity
-              ? '随时可以聊'
-              : '请先选择常驻助手会话')}
-      </span>
-      <div className="personal-dot-messages" aria-label="最近消息">
-        {snapshot?.events.map((e: any) => (
-          <p key={e.id}>
-            <b>{e.type === 'user.message' ? '你' : '助手'}：</b>
-            {e.text}
-          </p>
-        ))}
-      </div>
-      {screen && (
+      <header className="dot-heading">
+        <span className="personal-dot-orb" aria-hidden="true">
+          ✦
+        </span>
         <div>
-          <img src={screen} alt="待发送的屏幕截图" style={{ maxWidth: '100%', maxHeight: 120 }} />
-          <button onClick={() => setScreen(null)}>移除截图</button>
+          <strong>{snapshot?.identity?.name || 'Amadeus'}</strong>
+          <small>{snapshot?.title || '尚未绑定会话'}</small>
+        </div>
+        <button title="收起到屏幕边缘" aria-label="收起到屏幕边缘" onClick={() => void fold(true)}>
+          ›
+        </button>
+        <button
+          disabled={sending || binding || capturing || !!text || !!screen}
+          onClick={() => (choices ? setChoices(null) : void choose())}
+        >
+          {choices ? '收起' : '会话'}
+        </button>
+      </header>
+      {choices && (
+        <div className="dot-choices">
+          <select
+            aria-label="切换会话"
+            value={snapshot?.identity?.conversationId || ''}
+            disabled={binding}
+            onChange={(e) => void choose(e.target.value)}
+          >
+            <option value="" disabled>
+              选择会话
+            </option>
+            {choices.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.title}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="新会话所属项目"
+            value={projectId}
+            disabled={binding}
+            onChange={(e) => setProjectId(e.target.value)}
+          >
+            <option value="">普通对话</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <button disabled={binding} onClick={() => void choose('')}>
+            新建会话
+          </button>
         </div>
       )}
-      <button disabled={!snapshot?.identity || capturing || sending} onClick={() => void capture()}>
-        {capturing ? '选择中…' : '选择屏幕或窗口截图'}
-      </button>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-      >
-        <input
-          aria-label="发送消息"
-          value={text}
-          maxLength={10000}
-          disabled={!snapshot?.identity || sending}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="说点什么…"
-        />
-        <button disabled={sending || !text.trim() || !snapshot?.identity}>
-          {sending ? '发送中' : '发送'}
-        </button>
-      </form>
-      <button disabled={!snapshot?.identity} onClick={() => setVoice(true)}>
-        语音对话
-      </button>
-      <button onClick={open}>打开助手与后台任务</button>
+      <div className="dot-body">
+        <nav className="dot-tools" aria-label="写作工具">
+          {['聊天', ...Object.keys(prompts)].map((name) => (
+            <button key={name} aria-pressed={mode === name} onClick={() => setMode(name)}>
+              {name}
+            </button>
+          ))}
+        </nav>
+        <section className="dot-content">
+          <span role="status">
+            {error ||
+              (snapshot?.active
+                ? '正在处理'
+                : snapshot?.identity
+                  ? '随时可以聊'
+                  : '请先选择常驻助手会话')}
+          </span>
+          <div className="personal-dot-messages" aria-label="最近消息">
+            {snapshot?.events.map((e: any) => (
+              <p key={e.id}>
+                <b>{e.type === 'user.message' ? '你' : '助手'}：</b>
+                {e.text}
+              </p>
+            ))}
+          </div>
+          {screen && (
+            <div>
+              <img
+                src={screen}
+                alt="待发送的屏幕截图"
+                style={{ maxWidth: '100%', maxHeight: 120 }}
+              />
+              <button onClick={() => setScreen(null)}>移除截图</button>
+            </div>
+          )}
+          <button
+            disabled={!snapshot?.identity || capturing || sending || binding || !!choices}
+            onClick={() => void capture()}
+          >
+            {capturing ? '选择中…' : '选择屏幕或窗口截图'}
+          </button>
+          <label>
+            输入辅助{' '}
+            <select
+              value={assist}
+              onChange={(e) => {
+                dismissed.current = '';
+                setAssist(e.target.value);
+              }}
+            >
+              <option value="off">关闭</option>
+              <option value="grammar">语法建议</option>
+              <option value="sentence">补完当前句</option>
+              <option value="paragraph">续写下一段</option>
+            </select>
+          </label>
+          {assist !== 'off' && (
+            <small>停顿后将最近 2,000 个字符发送给当前会话模型，可能产生费用。</small>
+          )}
+          {assistError && <small role="status">{assistError}</small>}
+          {suggestion?.draft === text && suggestion && (
+            <aside className="dot-suggestion">
+              {suggestion.value}
+              <small>Tab 采纳 · Esc 忽略</small>
+            </aside>
+          )}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void send();
+            }}
+          >
+            <textarea
+              rows={3}
+              aria-label="发送消息"
+              value={text}
+              maxLength={10000}
+              disabled={!snapshot?.identity || sending || binding || !!choices}
+              onChange={(e) => setText(e.target.value)}
+              spellCheck
+              onCompositionStart={() => setComposing(true)}
+              onCompositionEnd={() => setComposing(false)}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || composing) return;
+                if (
+                  suggestion &&
+                  suggestion.draft === text &&
+                  (e.key === 'Escape' ||
+                    (e.key === 'Tab' &&
+                      !e.shiftKey &&
+                      e.currentTarget.selectionStart === text.length &&
+                      e.currentTarget.selectionEnd === text.length))
+                ) {
+                  e.preventDefault();
+                  const next =
+                    e.key === 'Escape'
+                      ? text
+                      : assist === 'grammar'
+                        ? text.slice(0, Math.max(0, text.length - 2000)) + suggestion.value
+                        : text + (assist === 'paragraph' ? '\n\n' : '') + suggestion.value;
+                  dismissed.current = next;
+                  setText(next);
+                  setSuggestion(null);
+                  return;
+                }
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder={mode === '聊天' ? '说点什么…' : '粘贴材料或输入要求…'}
+            />
+            <button disabled={sending || !text.trim() || !snapshot?.identity}>
+              {sending ? '发送中' : '发送'}
+            </button>
+          </form>
+          <button
+            disabled={!snapshot?.identity || binding || !!choices}
+            onClick={() => setVoice(true)}
+          >
+            语音对话
+          </button>
+          <button onClick={open}>打开助手与后台任务</button>
+        </section>
+      </div>
     </div>
   );
 }

@@ -346,3 +346,173 @@
 .personal-dot-voice > button {
   margin-top: 12px;
 }
+
+.dot-heading,
+.dot-choices {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.dot-heading div {
+  min-width: 0;
+  flex: 1;
+}
+.dot-heading small {
+  display: block;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dot-heading .personal-dot-orb {
+  width: 32px;
+  height: 32px;
+  color: white;
+  animation: none;
+}
+.dot-choices select {
+  flex: 1;
+  min-width: 0;
+}
+.personal-dot-messages p {
+  padding: 6px 9px;
+  border-left: 2px solid var(--border);
+}
+.sidebar-resize {
+  display: none;
+}
+@media (min-width: 900px) {
+  .sidebar:has(.sidebar-resize) {
+    position: relative;
+  }
+  .sidebar[style*='--sidebar-user-width'],
+  [data-desktop] .sidebar[style*='--sidebar-user-width'] {
+    width: min(var(--sidebar-user-width), 45vw);
+    flex-basis: min(var(--sidebar-user-width), 45vw);
+  }
+  .sidebar-resize {
+    display: block;
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: col-resize;
+    touch-action: none;
+  }
+  .sidebar-resize:hover,
+  .sidebar-resize:focus-visible {
+    background: var(--border);
+  }
+}
+
+.dot-tab {
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  border-radius: 14px 0 0 14px;
+  background: #473c78;
+  color: white;
+  font-size: 26px;
+  cursor: pointer;
+}
+.personal-dot {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 16px;
+  background: var(--bg);
+}
+.personal-dot-messages {
+  max-height: none;
+}
+.dot-tools {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.dot-tools button {
+  border-radius: 14px;
+  padding: 4px 9px;
+}
+.dot-tools button[aria-pressed='true'] {
+  background: #514180;
+  color: white;
+}
+.dot-choices {
+  flex-wrap: wrap;
+}
+.dot-heading strong {
+  letter-spacing: 0.02em;
+}
+
+.dot-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  gap: 10px;
+}
+.dot-content {
+  order: 0;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  overflow: auto;
+  gap: 8px;
+}
+.dot-tools {
+  order: 1;
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  padding-left: 7px;
+}
+.dot-tools button {
+  font-size: 12px;
+  min-height: 32px;
+}
+.personal-dot textarea {
+  resize: vertical;
+  min-width: 0;
+  flex: 1;
+  font: inherit;
+}
+
+.dot-tab {
+  display: grid;
+  place-items: center;
+  background: #23242b;
+  border: 1px solid #565962;
+  border-right: 0;
+  color: white;
+  padding: 0;
+}
+.dot-tab span {
+  background: #007a70;
+  color: white;
+  border-radius: 9px 9px 9px 2px;
+  font: 700 8px/16px system-ui;
+  width: 16px;
+  text-align: center;
+}
+.dot-tab:focus-visible {
+  outline: 2px solid #71d8ca;
+  outline-offset: -3px;
+}
+
+.dot-suggestion {
+  border-inline-start: 2px solid #68b5a8;
+  padding: 4px 8px;
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 9em;
+}
+.dot-suggestion small {
+  display: block;
+  color: var(--muted);
+}

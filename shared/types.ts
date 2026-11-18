@@ -134,7 +134,7 @@ export interface Settings {
   dockerImage: string;
   dockerUser?: string;
   approveFileWrites?: boolean;
-  commandBackend: 'approval-host' | 'docker' | 'native-windows';
+  commandBackend: 'approval-host' | 'docker' | 'native-windows' | 'mxc';
   nativePython?: string;
   nativeNetwork?: 'deny' | 'host';
   retrieval?: import('./retrieval.js').RetrievalSettings;

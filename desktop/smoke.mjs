@@ -131,12 +131,14 @@ try {
     'openAgent',
     'openMenu',
     'platform',
+    'setDotCollapsed',
   ]);
   assert.equal(
     await page.evaluate(() => window.amadeusDesktop.captureContext()),
     null,
     'Main window cannot invoke dot-only screen capture',
   );
+  assert.equal(await page.evaluate(() => window.amadeusDesktop.setDotCollapsed(true)), false);
   assert.deepEqual(
     await desktop.evaluate(({ Menu }) => Menu.getApplicationMenu().items.map((item) => item.label)),
     ['File', 'Edit', 'View', 'Go', 'Help'],
@@ -191,6 +193,10 @@ try {
   const dotPage =
     desktop.windows().find((candidate) => candidate !== page) ||
     (await desktop.waitForEvent('window', { timeout: 30000 }));
+  const tab = dotPage.getByRole('button', { name: '展开 Amadeus Dot' });
+  await tab.click();
+  await dotPage.getByRole('button', { name: '收起到屏幕边缘' }).click();
+  await tab.click();
   await dotPage.locator('.personal-dot').waitFor();
   await dotPage.getByRole('button', { name: '打开助手与后台任务' }).click();
   await page.locator('.personal-agent').waitFor();

@@ -77,6 +77,15 @@ export function Sidebar({
   theme,
   setTheme,
 }: SidebarProps) {
+  const [width, setWidth] = useState<number | undefined>(() => {
+    const n = Number(localStorage.getItem('amadeus.sidebar.width'));
+    return n >= 200 && n <= 520 ? n : undefined;
+  });
+  const resize = (value: number) => {
+    const n = Math.max(200, Math.min(520, Math.round(value)));
+    setWidth(n);
+    return n;
+  };
   const navRef = useRef<HTMLElement>(null);
   const [initialCount, setInitialCount] = useState(2);
   useEffect(() => {
@@ -104,7 +113,54 @@ export function Sidebar({
   const selectedProject =
     state.conversations.find((c) => c.id === selected)?.projectId || undefined;
   return (
-    <aside className="sidebar">
+    <aside
+      className="sidebar"
+      style={width ? ({ '--sidebar-user-width': width + 'px' } as React.CSSProperties) : undefined}
+    >
+      <div
+        className="sidebar-resize"
+        role="separator"
+        aria-label={language === 'zh' ? '侧边栏宽度' : 'Sidebar width'}
+        aria-orientation="vertical"
+        aria-valuemin={200}
+        aria-valuemax={520}
+        aria-valuenow={width || 260}
+        tabIndex={0}
+        onPointerDown={(e) => {
+          if (e.button === 0) {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            e.preventDefault();
+          }
+        }}
+        onPointerMove={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId))
+            resize(e.clientX - (e.currentTarget.parentElement?.getBoundingClientRect().left || 0));
+        }}
+        onPointerUp={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+            if (width) localStorage.setItem('amadeus.sidebar.width', String(width));
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            localStorage.setItem(
+              'amadeus.sidebar.width',
+              String(
+                resize(
+                  (width || e.currentTarget.parentElement!.clientWidth) +
+                    (e.key === 'ArrowLeft' ? -16 : 16),
+                ),
+              ),
+            );
+          }
+        }}
+        onDoubleClick={() => {
+          setWidth(undefined);
+          localStorage.removeItem('amadeus.sidebar.width');
+        }}
+      />
       <div className="brand">
         <div className="brand-icon">
           <img src={brandMark} width="34" height="34" alt="" />

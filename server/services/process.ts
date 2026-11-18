@@ -1,3 +1,4 @@
+import { executeMxc } from './mxc-process.js';
 import { isAbsolute } from 'node:path';
 import { dockerMetadataMasks } from './protected-metadata.js';
 import { executeNative } from './native-process.js';
@@ -23,6 +24,8 @@ export function execute(
   onOutput?: (stream: string, text: string) => void,
 ): Promise<CommandResult> {
   if (signal.aborted) return Promise.reject(new AppError('CANCELLED', 'Cancelled'));
+  if (settings.commandBackend === 'mxc')
+    return executeMxc(command, cwd, signal, timeoutMs, settings);
   if (settings.commandBackend === 'native-windows')
     return executeNative(command, cwd, signal, timeoutMs, settings);
   if (!['approval-host', 'docker'].includes(settings.commandBackend))

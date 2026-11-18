@@ -164,7 +164,15 @@ export function BrowserVoiceChat({
   }
   async function respond(text: string, signal: AbortSignal) {
     setPhase('thinking');
-    const started = await api(base, { text }, undefined, {}, signal);
+    const started = await api(
+      base,
+      voiceBase === '/personal/voice-turn'
+        ? { text, conversationId: connection.conversationId }
+        : { text },
+      undefined,
+      {},
+      signal,
+    );
     ownedRun.current = started.runId;
     const until = Date.now() + 600000;
     let reply = '';

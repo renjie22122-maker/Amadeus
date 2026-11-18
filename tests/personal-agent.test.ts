@@ -386,3 +386,27 @@ test('editing and resuming an exhausted goal keeps identity, progress and used b
     f.service.updateGoal(goal.id, { revision: 2, objective: 'Changed while running' }),
   );
 });
+
+test('local Dot can switch to a project without rebinding the primary identity or exposing remote chats', async (t) => {
+  const f = fixture(t),
+    app = Fastify();
+  personalAgentRoutes(app, f.service);
+  t.after(() => app.close());
+  const id = '037de182-fad3-4713-927c-25fa8621aabb';
+  const remote = '308c817c-4f69-41b5-bc84-49db6cc1d489';
+  f.store.put('project', { id: 'example', name: 'Project' });
+  f.store.put('conversation', { id, projectId: 'example', title: 'Project chat' });
+  f.store.put('conversation', { id: remote, remoteChatOnly: true, title: 'Private bot' });
+  assert.deepEqual((await app.inject('/api/personal/dot/projects')).json(), [
+    { id: 'example', name: 'Project' },
+  ]);
+  assert.ok(
+    !(await app.inject('/api/personal/dot/conversations')).json().some((c: any) => c.id === remote),
+  );
+  const bind = (conversationId: string) =>
+    app.inject({ method: 'POST', url: '/api/personal/dot/binding', payload: { conversationId } });
+  assert.equal((await bind(id)).statusCode, 200);
+  assert.notEqual((await bind(remote)).statusCode, 200);
+  assert.equal((await app.inject('/api/personal/dot')).json().identity.conversationId, id);
+  assert.equal(f.service.identity()?.conversationId, 'c');
+});

@@ -374,7 +374,7 @@ export async function createApp(options: { directory: string; dist?: string; run
         permission: z.enum(['read-only', 'ask', 'auto', 'trusted']).optional(),
         execution: z
           .object({
-            backend: z.enum(['approval-host', 'native-windows', 'docker']),
+            backend: z.enum(['approval-host', 'native-windows', 'docker', 'mxc']),
             network: z.enum(['host', 'deny']),
           })
           .nullable()
@@ -1193,7 +1193,7 @@ export async function createApp(options: { directory: string; dist?: string; run
       return {
         backend: settings.commandBackend,
         network:
-          settings.commandBackend === 'docker'
+          settings.commandBackend === 'docker' || settings.commandBackend === 'mxc'
             ? 'deny'
             : settings.commandBackend === 'native-windows'
               ? settings.nativeNetwork

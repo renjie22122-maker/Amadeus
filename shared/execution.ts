@@ -9,7 +9,7 @@ export function executionSettings(
         ...settings,
         commandBackend: choice.backend,
         nativeNetwork:
-          choice.backend === 'docker'
+          choice.backend === 'docker' || choice.backend === 'mxc'
             ? 'deny'
             : choice.backend === 'approval-host'
               ? 'host'

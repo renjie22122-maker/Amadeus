@@ -108,3 +108,13 @@ The payload successfully queried its current job and read a UI restriction mask 
 The fixed verifier requires Windows, Python with pywin32, MXC SDK 1.1.0 and Node 24.21+ within the 24.x line for native pipes. Pass `--save-report` after the SDK entry point to publish the measured timestamp, versions and per-check results in the execution settings panel. The record belongs to the local service data directory. Run the verifier from the repository root with the same AGENTDEMO_DATA_DIR as the service.
 
 A host-owned private desktop starts with a protected user-only DACL. A fixed cmd bootstrap can initialize there. The broker reads the live process token identified by the SDK, grants the resulting specific package SID access to this temporary desktop and then releases the waiting child. The synthetic host window remained discoverable in the default desktop control and was hidden from this payload. No shared application-package SID is granted. A new directory created during execution inherited directory delete restrictions in a disposable test tree. A normal rename failed and the original marker survived. This policy restricts legitimate renames too; do not apply the test ACL to a user's project. The verifier uses fixed commands; the settings report is diagnostic and does not select a command backend.
+
+### Select the MXC command backend
+
+Choose Windows MXC in execution settings or in a conversation's access menu. Each command gets a disposable offline directory. Project files are not mounted and directory renames are restricted. Other backends remain selectable for project work. Configure the absolute path to Python with pywin32 in settings. Install the broker dependencies for the service account:
+
+```powershell
+npm install --prefix "$env:LOCALAPPDATA/Amadeus/mxc" node-win-x64@24.21.0 @microsoft/mxc-sdk@1.1.0
+```
+
+The verification panel shows the last saved local probe. A missing execution receipt requires inspection before retrying.

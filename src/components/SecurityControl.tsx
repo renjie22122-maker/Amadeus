@@ -31,6 +31,7 @@ export function SecurityControl({
     ['approval-host', zh ? '宿主执行' : 'Host execution'],
     ['native-host', zh ? 'AppContainer · 文件隔离' : 'AppContainer · Files'],
     ['native-deny', zh ? 'AppContainer · 严格离线' : 'AppContainer · Offline'],
+    ['mxc', zh ? 'Windows MXC · 临时工作区' : 'Windows MXC · Scratch workspace'],
     ['docker', zh ? 'Docker · 离线容器' : 'Docker · Offline'],
   ];
   return (

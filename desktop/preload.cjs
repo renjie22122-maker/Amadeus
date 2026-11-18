@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld(
   'amadeusDesktop',
   Object.freeze({
     platform: process.platform,
+    setDotCollapsed(value) {
+      return ipcRenderer.invoke('amadeus:dot-collapse', value);
+    },
     captureContext() {
       return ipcRenderer.invoke('amadeus:capture-context');
     },

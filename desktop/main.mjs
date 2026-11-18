@@ -8,6 +8,7 @@ import {
   shell,
   ipcMain,
   desktopCapturer,
+  screen,
 } from 'electron';
 import { join, resolve } from 'node:path';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -94,6 +95,32 @@ else {
       });
       const icon = nativeImage.createFromPath(join(import.meta.dirname, 'icon.png'));
       const dotPreference = join(app.getPath('userData'), 'personal-dot.json');
+      let collapsed = false;
+      function dock(area) {
+        const width = Math.min(area.width, collapsed ? 32 : 390);
+        const height = Math.min(area.height, collapsed ? 68 : 760);
+        dot.setBounds({
+          width,
+          height,
+          x: area.x + area.width - width,
+          y: area.y + Math.floor((area.height - height) / 2),
+        });
+      }
+      ipcMain.handle('amadeus:dot-collapse', (event, compact) => {
+        if (
+          !dot ||
+          dot.isDestroyed() ||
+          event.sender !== dot.webContents ||
+          event.senderFrame !== dot.webContents.mainFrame ||
+          typeof compact !== 'boolean' ||
+          !backend.url ||
+          new URL(event.senderFrame.url).origin !== backend.url
+        )
+          return false;
+        collapsed = compact;
+        dock(screen.getDisplayMatching(dot.getBounds()).workArea);
+        return true;
+      });
       const toggleDot = () => {
         if (!backend.url) return;
         if (dot && !dot.isDestroyed()) {
@@ -104,8 +131,9 @@ else {
         dot = new BrowserWindow({
           width: 360,
           height: 440,
-          minWidth: 260,
-          minHeight: 180,
+          frame: false,
+          resizable: false,
+          show: false,
           title: 'Amadeus Dot',
           alwaysOnTop: true,
           skipTaskbar: true,
@@ -118,6 +146,9 @@ else {
             webviewTag: false,
           },
         });
+        collapsed = true;
+        dock(screen.getDisplayMatching(window.getBounds()).workArea);
+        dot.once('ready-to-show', () => dot?.showInactive());
         dot.setMenu(null);
         dot.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
         dot.webContents.on('will-navigate', (event) => event.preventDefault());

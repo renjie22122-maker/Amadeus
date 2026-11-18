@@ -168,11 +168,13 @@ export class RunEnvironment {
           : [],
         commandBackend: executionSettings(this.config.get(), ctx.conversation).commandBackend,
         commandShell:
-          executionSettings(this.config.get(), ctx.conversation).commandBackend === 'docker'
-            ? 'Linux sh inside container; cwd=/workspace; Windows paths and cmd.exe are unavailable'
-            : process.platform === 'win32'
-              ? 'Windows cmd.exe'
-              : 'POSIX sh',
+          executionSettings(this.config.get(), ctx.conversation).commandBackend === 'mxc'
+            ? 'Windows cmd.exe, disposable offline workspace; project files unavailable and changes discarded'
+            : executionSettings(this.config.get(), ctx.conversation).commandBackend === 'docker'
+              ? 'Linux sh inside container; cwd=/workspace; Windows paths and cmd.exe are unavailable'
+              : process.platform === 'win32'
+                ? 'Windows cmd.exe'
+                : 'POSIX sh',
         commandNetwork: executionSettings(this.config.get(), ctx.conversation).nativeNetwork,
         publicWebToolsEnabled: this.config.get().web?.enabled !== false,
         depth: run.depth,
