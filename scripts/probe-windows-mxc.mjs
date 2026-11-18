@@ -1,5 +1,14 @@
 // Opt-in design probe only: no saved backend changes, arbitrary commands or real credentials.
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  linkSync,
+  lstatSync,
+  readdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -20,6 +29,29 @@ const work = join(root, 'workspace'),
 for (const dir of [work, outside, temp, join(work, '.git')]) mkdirSync(dir, { recursive: true });
 writeFileSync(join(outside, 'canary.txt'), 'synthetic-canary');
 writeFileSync(join(work, '.git', 'config'), 'synthetic-metadata');
+// Check the actual file object before trusting a synthetic workspace path.
+function assertPlainTree(directory) {
+  const pending = [directory];
+  while (pending.length) {
+    const path = pending.pop();
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink !== 1))
+      throw Error('UNSUPPORTED_WORKSPACE_ALIAS');
+    if (stat.isDirectory()) for (const name of readdirSync(path)) pending.push(join(path, name));
+  }
+}
+const aliasFixture = join(root, 'alias-fixture');
+mkdirSync(aliasFixture);
+linkSync(join(outside, 'canary.txt'), join(aliasFixture, 'alias.txt'));
+let rejectedAlias = false;
+try {
+  assertPlainTree(aliasFixture);
+} catch (error) {
+  if (error.message !== 'UNSUPPORTED_WORKSPACE_ALIAS') throw error;
+  rejectedAlias = true;
+}
+if (!rejectedAlias) throw Error('Hard-linked workspace was accepted');
+assertPlainTree(work);
 const listener = createServer((socket) => socket.end());
 await new Promise((accept, reject) => {
   listener.once('error', reject);
@@ -88,9 +120,20 @@ const policy = {
 };
 const previous = process.env.AMADEUS_MXC_PROBE_SECRET;
 process.env.AMADEUS_MXC_PROBE_SECRET = 'synthetic-only';
-const results = [];
+const results = [{ name: 'pre-existing-hardlink-preflight', rejected: rejectedAlias }];
 try {
+  const project = join(work, '示例 project');
+  mkdirSync(project);
+  writeFileSync(join(project, 'dependency.cjs'), 'module.exports = 42;');
+  writeFileSync(join(project, 'main.cjs'), "console.log(require('./dependency.cjs'));");
   const commands = [
+    [
+      'node-project',
+      '"' +
+        process.execPath +
+        '" --preserve-symlinks-main --preserve-symlinks "示例 project/main.cjs"',
+      '42',
+    ],
     ['cmd', '"' + windows + '\\System32\\cmd.exe" /d /c echo MXC_CMD_OK', 'MXC_CMD_OK'],
     ['node', '"' + process.execPath + '" -e "console.log(123)"', '123'],
     [
@@ -129,6 +172,51 @@ try {
     existsSync(join(outside, 'bad.txt'))
   )
     throw Error('Host canary changed');
+  // Overlap two containers with different grants. Each must see only its own fixture.
+  const peers = ['alpha', 'beta'].map((name) => join(root, name));
+  for (const dir of peers) {
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'marker.txt'), dir === peers[0] ? 'alpha' : 'beta');
+  }
+  const concurrent = await Promise.all(
+    peers.map(async (dir, index) => {
+      const other = peers[1 - index];
+      const script = [
+        "$ErrorActionPreference='Stop'",
+        '$own=Get-Content -LiteralPath ' + quote(join(dir, 'marker.txt')),
+        'try {Get-Content -LiteralPath ' +
+          quote(join(other, 'marker.txt')) +
+          ' | Out-Null; exit 9} catch [System.UnauthorizedAccessException] {}',
+        'Start-Sleep -Milliseconds 350; Write-Output $own',
+      ].join('; ');
+      const result = await run({
+        ...policy,
+        workingDirectory: dir,
+        filesystem: { ...policy.filesystem, readwritePaths: [dir], deniedPaths: [other] },
+        environment: {
+          ...policy.environment,
+          TEMP: dir,
+          TMP: dir,
+          USERPROFILE: dir,
+          APPDATA: dir,
+          LOCALAPPDATA: dir,
+        },
+        command:
+          '"' +
+          windows +
+          '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -EncodedCommand ' +
+          Buffer.from(script, 'utf16le').toString('base64'),
+      });
+      if (
+        result.timedOut ||
+        result.exitCode !== 0 ||
+        result.stdout.trim() !== ['alpha', 'beta'][index]
+      )
+        throw Error('Concurrent workspace control failed: ' + result.exitCode);
+      return result.stdout.trim();
+    }),
+  );
+  results.push({ name: 'concurrent-workspaces', verified: concurrent });
   // The child records its PID before sleeping so a failed spawn cannot pass cleanup.
   const childCode =
     "require('node:fs').writeFileSync('child.pid', String(process.pid));setTimeout(() => {}, 30000)";

@@ -117,7 +117,8 @@ try {
   delete env.ELECTRON_RUN_AS_NODE;
   if (packaged) delete env.AMADEUS_NODE_BINARY;
   desktop = await electron.launch({ executablePath, args, env, timeout: 90000 });
-  const page = await desktop.firstWindow();
+  desktop.context().setDefaultTimeout(30000);
+  const page = await desktop.firstWindow({ timeout: 90000 });
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//, { timeout: 90000 });
   await page.waitForLoadState('domcontentloaded');
   await page.locator('.desktop-titlebar').waitFor();
@@ -189,7 +190,7 @@ try {
   );
   const dotPage =
     desktop.windows().find((candidate) => candidate !== page) ||
-    (await desktop.waitForEvent('window'));
+    (await desktop.waitForEvent('window', { timeout: 30000 }));
   await dotPage.locator('.personal-dot').waitFor();
   await dotPage.getByRole('button', { name: '打开助手与后台任务' }).click();
   await page.locator('.personal-agent').waitFor();

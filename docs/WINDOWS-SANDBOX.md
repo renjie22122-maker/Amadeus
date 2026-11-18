@@ -88,3 +88,5 @@ Required before enabling the backend:
 
 Use opt-in preview, then capability-gated rollout. Unknown capability or policy failure blocks execution with a useful diagnostic. Never fix startup by granting an entire drive, inheriting the host environment, enabling denial capture in allow mode, or silently running outside the sandbox.
 A child Node process wrote its PID before a three-second parent timeout. The host confirmed the child exited. Loading a .cjs entry point hit a drive-root lstat permission error during Node path resolution. Inline execution passed. Project script compatibility remains open.
+
+The fixed fixture now loads a CommonJS entry point and a relative dependency from a Unicode path with spaces using Node’s explicit preserve-symlinks and preserve-symlinks-main options. These change module identity semantics for linked dependencies. Two concurrent containers each read their own marker and received an access-denied error for the other. The probe rejects a pre-existing hard link before launch. This preflight does not cover races during execution or establish OS-level alias protection.
