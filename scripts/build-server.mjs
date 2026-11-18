@@ -23,4 +23,33 @@ async function assets(directory) {
 }
 await assets('server');
 await assets('native');
+if (process.platform === 'win32') {
+  const framework = join(process.env.SystemRoot, 'Microsoft.NET', 'Framework64', 'v4.0.30319');
+  const references = [
+    'System.dll',
+    'System.Core.dll',
+    'System.Drawing.dll',
+    'System.Windows.Forms.dll',
+    'System.Net.Http.dll',
+    'System.Web.Extensions.dll',
+    'WPF/WindowsBase.dll',
+    'WPF/UIAutomationClient.dll',
+    'WPF/UIAutomationTypes.dll',
+  ];
+  const helper = spawnSync(
+    join(framework, 'csc.exe'),
+    [
+      '/nologo',
+      '/codepage:65001',
+      '/target:winexe',
+      '/optimize+',
+      '/out:' + join(output, 'native', 'windows', 'AmadeusWriting.exe'),
+      ...references.map((r) => '/r:' + join(framework, r)),
+      join(root, 'desktop', 'windows-writing', 'Writing.cs'),
+    ],
+    { stdio: 'inherit', windowsHide: true },
+  );
+  if (helper.error) throw helper.error;
+  if (helper.status !== 0) process.exit(helper.status || 1);
+}
 console.log('Server JavaScript and runtime assets built in build/.');

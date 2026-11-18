@@ -126,28 +126,8 @@ else {
           });
           return;
         }
-        const shell = join(
-          process.env.SystemRoot,
-          'System32',
-          'WindowsPowerShell',
-          'v1.0',
-          'powershell.exe',
-        );
-        writingHelper = spawn(
-          shell,
-          [
-            '-NoProfile',
-            '-NonInteractive',
-            '-STA',
-            '-File',
-            join(root, 'desktop', 'windows-writing', 'start.ps1'),
-            '-Service',
-            backend.url,
-            '-ParentPid',
-            String(process.pid),
-          ],
-          { windowsHide: true, stdio: 'ignore' },
-        );
+        const helper = join(root, 'build', 'native', 'windows', 'AmadeusWriting.exe');
+        writingHelper = spawn(helper, [backend.url, String(process.pid)], { stdio: 'ignore' });
         writingHelper.once('error', () => {
           writingHelper = undefined;
           dialog.showErrorBox('Amadeus Dot', '无法启动 Windows 应用写作辅助。');
@@ -157,7 +137,7 @@ else {
           if (code && !quitPending)
             dialog.showErrorBox(
               'Amadeus Dot',
-              '应用写作辅助已退出，请检查 Windows PowerShell、.NET Framework 和脚本执行策略。',
+              '应用写作辅助已退出，请检查桌面构建和 .NET Framework 运行环境。',
             );
         });
       });

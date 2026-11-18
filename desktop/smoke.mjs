@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
 import { _electron as electron } from '@playwright/test';
@@ -199,6 +199,21 @@ try {
   await dotPage.getByRole('button', { name: '收起到屏幕边缘' }).click();
   await tab.click();
   await dotPage.locator('.personal-dot:not([hidden])').waitFor();
+  if (process.platform === 'win32') {
+    await dotPage.getByRole('button', { name: '应用辅助' }).click();
+    const parent = await desktop.evaluate(() => process.pid);
+    const probe = `$p=Get-CimInstance Win32_Process -Filter "Name='AmadeusWriting.exe' AND ParentProcessId=${parent}"; if ($p) {(Get-Process -Id $p.ProcessId).MainWindowTitle}`;
+    let visible = false;
+    for (let i = 0; i < 12 && !visible; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      visible = execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', probe],
+        { encoding: 'utf8', windowsHide: true, timeout: 8000 },
+      ).includes('Amadeus Dot');
+    }
+    assert.ok(visible, 'The real Windows writing settings window must open from Dot');
+  }
   await dotPage.getByRole('button', { name: '会话', exact: true }).click();
   await dotPage.getByRole('button', { name: '新建会话' }).click();
   await dotPage.getByText('随时可以聊').waitFor();

@@ -139,9 +139,17 @@ namespace AmadeusWriting
             {
                 // Only a short plain Edit with a target-bound setter can be updated safely.
 
-                if (cursor.CompareEndpoints(TextPatternRangeEndpoint.End, text.DocumentRange, TextPatternRangeEndpoint.End) != 0) return null;
-                string full = text.DocumentRange.GetText(2001);
+                var document = text.DocumentRange;
+                string full = document.GetText(2001);
                 if (full.Length > 2000 || !full.EndsWith(draft, StringComparison.Ordinal)) return null;
+                // A provider may expose a trailing caret stop beyond its final text character.
+                // Verify both sides of the caret and the value before treating it as appendable.
+                var left = document.Clone();
+                left.MoveEndpointByRange(TextPatternRangeEndpoint.End, cursor, TextPatternRangeEndpoint.End);
+                var right = document.Clone();
+                right.MoveEndpointByRange(TextPatternRangeEndpoint.Start, cursor, TextPatternRangeEndpoint.End);
+                if (left.GetText(2001) != full || right.GetText(1).Length != 0 ||
+                    ((ValuePattern)pattern).Current.Value != full) return null;
                 current.Full = full; current.Caret = full.Length;
             }
             return current;
@@ -282,7 +290,15 @@ namespace AmadeusWriting
             finally { Reset(); }
         }
         protected override void OnFormClosed(FormClosedEventArgs e) { timer.Stop(); Native.UnhookWinEvent(foregroundHook); Native.UnhookWinEvent(focusHook); Reset(); timer.Dispose(); hint.Dispose(); http.Dispose(); base.OnFormClosed(e); }
-        public static void Run(string address, int parentPid)
+        [STAThread]
+        public static int Main(string[] args)
+        {
+            int pid;
+            if(args.Length!=2||!Int32.TryParse(args[1],out pid))return 2;
+            try {Run(args[0],pid);return 0;}
+            catch {return 1;}
+        }
+        static void Run(string address, int parentPid)
         {
             var uri = new Uri(address); if (uri.Scheme != "http" || uri.Host != "127.0.0.1" || uri.AbsolutePath != "/") throw new ArgumentException("Local Amadeus service required");
             Application.EnableVisualStyles();

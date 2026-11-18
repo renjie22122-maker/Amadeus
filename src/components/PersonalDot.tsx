@@ -265,18 +265,20 @@ export function PersonalDot() {
         )}
         <div className="dot-body">
           <nav className="dot-tools" aria-label="写作工具">
-            {(window as Window & { amadeusDesktop?: { openWritingApps?: () => Promise<void> } })
-              .amadeusDesktop?.openWritingApps && (
-              <button
-                onClick={() => {
-                  void (window as any).amadeusDesktop
-                    .openWritingApps()
-                    .catch(() => setError('无法启动应用写作辅助'));
-                }}
-              >
-                应用辅助
-              </button>
-            )}
+            {(window as Window & { amadeusDesktop?: { platform?: string } }).amadeusDesktop
+              ?.platform === 'win32' &&
+              (window as Window & { amadeusDesktop?: { openWritingApps?: () => Promise<void> } })
+                .amadeusDesktop?.openWritingApps && (
+                <button
+                  onClick={() => {
+                    void (window as any).amadeusDesktop
+                      .openWritingApps()
+                      .catch(() => setError('无法启动应用写作辅助'));
+                  }}
+                >
+                  应用辅助
+                </button>
+              )}
             {['聊天', ...Object.keys(writingTools)].map((name) => (
               <button key={name} aria-pressed={mode === name} onClick={() => setMode(name)}>
                 {name}
