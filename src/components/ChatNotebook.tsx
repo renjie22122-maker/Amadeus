@@ -47,15 +47,21 @@ export function ChatNotebook({
   };
   useEffect(() => {
     if (!open) return;
-    let disposed = false;
+    let disposed = false,
+      pending = false;
     const timer = setInterval(() => {
+      if (pending || document.hidden) return;
+      pending = true;
       void api('/chat-connections/' + id + '/notebook')
         .then((d: any) => {
           if (disposed) return;
           setMaintenance(d.maintenance);
           if (!dirty && !busy) setData({ ...d, tone: { ...defaults, ...d.tone } });
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          pending = false;
+        });
     }, 10000);
     return () => {
       disposed = true;
@@ -362,11 +368,30 @@ export function ChatNotebook({
                   unchanged: tr('已检查，无变化', 'Checked, no change'),
                   retrying: tr('失败，等待自动重试', 'Retry scheduled'),
                   needs_attention: tr(
-                    '连续五次失败，需检查模型连接；关闭并保存后重新开启可重试',
-                    'Five attempts failed; check model connection, then disable/save and re-enable to retry',
+                    '五次重试未成功；模型配置变化或本会话模型调用恢复后自动接续',
+                    'Five attempts failed; resumes after model configuration changes or a successful model response in this chat',
                   ),
                   waiting_model: tr('等待配置模型', 'Waiting for model'),
                 }[maintenance?.status as string] || tr('等待增量整理', 'Pending')}
+            {data.automatic && maintenance?.status === 'needs_attention' && (
+              <button
+                disabled={busy || dirty}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await api('/chat-connections/' + id + '/notebook/retry', {});
+                    await load();
+                  } catch (e: any) {
+                    notify(e.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {tr('重新检查并接续', 'Retry maintenance')}
+              </button>
+            )}
+            {maintenance?.error && <span> · {maintenance.error}</span>}
             {maintenance?.at && <> · {new Date(maintenance.at).toLocaleString()}</>}
             {maintenance?.checkedMessages != null && (
               <>

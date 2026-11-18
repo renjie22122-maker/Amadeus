@@ -13,7 +13,7 @@ export function streamReadAloud(
     signal,
   });
 }
-export async function api<T = any>(
+async function requestApi<T = any>(
   path: string,
   body?: unknown,
   method?: string,
@@ -55,6 +55,25 @@ export async function api<T = any>(
   const etag = response.headers.get('etag');
   if (stateKey && etag) stateResponses.set(stateKey, { etag, value });
   return value;
+}
+export async function api<T = any>(
+  path: string,
+  body?: unknown,
+  method?: string,
+  extraHeaders: Record<string, string> = {},
+  signal?: AbortSignal,
+): Promise<T> {
+  try {
+    return await requestApi<T>(path, body, method, extraHeaders, signal);
+  } catch (error) {
+    if (!signal?.aborted && error instanceof Error && error.name === 'TimeoutError') {
+      const verb = method || (body === undefined ? 'GET' : 'POST');
+      throw new Error(
+        `API request timed out: ${verb} /api${path.split('?')[0]}. ${verb === 'GET' ? 'Refresh to retry this read.' : 'The result is unknown; inspect current state before retrying.'}`,
+      );
+    }
+    throw error;
+  }
 }
 let bootstrapping: Promise<any> | undefined;
 export function bootstrap() {

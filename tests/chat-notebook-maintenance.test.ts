@@ -226,3 +226,51 @@ test('disabled and archived chats never invoke a model', async (t) => {
   await worker.tick(f.now);
   assert.equal(calls, 0);
 });
+
+test('a changed model reconnects a failed notebook without replaying completed sources', async (t) => {
+  const f = fixture(t),
+    first = f.add();
+  let fail = false;
+  const worker = new ChatNotebookMaintenance(f.store, f.config, () => ({
+    complete: async () => {
+      if (fail) throw Error('offline');
+      return result({ changed: false, style: '', diary: '', reason: 'No update', evidence: [] });
+    },
+  }));
+  await worker.tick(f.now);
+  assert.equal(f.state().cursor, first.id);
+  const next = f.add('New message');
+  fail = true;
+  let now = f.now + 200000;
+  for (let i = 0; i < 5; i++) {
+    await worker.tick(now);
+    now = f.state().nextAt + 1;
+  }
+  assert.equal(f.state().status, 'needs_attention');
+  assert.equal(f.state().cursor, first.id);
+  f.config.save({
+    ...f.config.get(),
+    profiles: f.config.get().profiles.map((p) => ({ ...p, model: 'reconnected' })),
+  });
+  fail = false;
+  await worker.tick(now);
+  assert.equal(f.state().status, 'unchanged');
+  assert.equal(f.state().cursor, next.id);
+});
+
+test('foreign source pages cannot starve later scoped messages', async (t) => {
+  const f = fixture(t);
+  for (let i = 0; i < 130; i++) f.add('foreign', { ...f.c, id: 'foreign', peerId: 'other' });
+  const target = f.add();
+  let calls = 0;
+  const worker = new ChatNotebookMaintenance(f.store, f.config, () => ({
+    complete: async (req) => {
+      calls++;
+      assert.ok(!req.messages[1].content.includes('foreign'));
+      return changed(target);
+    },
+  }));
+  for (let i = 0; i < 5; i++) await worker.tick(f.now + i * 100000);
+  assert.equal(calls, 1);
+  assert.equal(f.state().cursor, target.id);
+});

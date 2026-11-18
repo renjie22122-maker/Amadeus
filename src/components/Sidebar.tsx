@@ -133,7 +133,7 @@ export function Sidebar({
         />
       </div>
       <nav className="chat-navigation" ref={navRef}>
-        <details className="workspace-navigation" open>
+        <details className="workspace-navigation">
           <summary>
             <PanelsTopLeft size={16} />
             <span>{language === 'zh' ? '工作台' : 'Workspace'}</span>

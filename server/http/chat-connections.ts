@@ -9,6 +9,7 @@ import { assert } from '../core/errors.js';
 import { id } from '../storage/store.js';
 import {
   notebookContext,
+  notebookKey,
   inspectNotebook,
   updateNotebook,
   notebookRevision,
@@ -83,6 +84,31 @@ export function chatConnectionRoutes(app: FastifyInstance, channels: ChatConnect
         z.coerce.number().int().positive().parse(req.params.revision),
       ),
   );
+  app.post<{ Params: { id: string } }>('/api/chat-connections/:id/notebook/retry', async (req) => {
+    const c = channels.get(req.params.id),
+      note = inspectNotebook(channels.store, c);
+    assert(
+      note.automatic,
+      'NOTEBOOK_DISABLED',
+      'Enable automatic notebook maintenance first.',
+      409,
+    );
+    const key = notebookKey(c);
+    const old = channels.store.maybe<any>('chat-notebook-maintenance', key) || {};
+    assert(
+      old.status !== 'running',
+      'NOTEBOOK_BUSY',
+      'Notebook maintenance is already running.',
+      409,
+    );
+    return channels.store.put('chat-notebook-maintenance', {
+      ...old,
+      id: key,
+      attempts: 0,
+      status: 'pending',
+      nextAt: 0,
+    });
+  });
   app.post<{ Params: { id: string } }>('/api/chat-connections/:id/notebook', async (req) =>
     updateNotebook(channels.store, channels.get(req.params.id), req.body, 'human'),
   );

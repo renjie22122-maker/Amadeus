@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
-import { conditionalState, stateRun } from '../server/http/state-response.js';
+import { conditionalState, stateRun, shellRuns } from '../server/http/state-response.js';
 import { mergeState } from '../src/state-refresh.js';
 import { api, bootstrap } from '../src/api.js';
 
@@ -90,4 +90,18 @@ test('shell omits only unused diagnostic fields without changing stored history'
   assert.equal(full.contextSample, run.contextSample);
   assert.equal(run.checkpoints.length, 1);
   assert.equal('checkpoints' in full, false);
+});
+
+test('shell retains current trees and unfinished work while omitting terminal history', () => {
+  const runs: any[] = [
+    { id: 'old', conversationId: 'c', status: 'completed' },
+    { id: 'active', conversationId: 'c', status: 'waiting_approval' },
+    { id: 'latest', conversationId: 'c', status: 'completed' },
+    { id: 'child', conversationId: 'child-chat', parentRunId: 'latest', status: 'completed' },
+  ];
+  assert.deepEqual(
+    shellRuns(runs).map((r) => r.id),
+    ['active', 'latest', 'child'],
+  );
+  assert.equal(runs.length, 4);
 });

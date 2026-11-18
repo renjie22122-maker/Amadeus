@@ -404,6 +404,34 @@ export class Knowledge {
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
   }
+  private reuseVectors(rows: { id: string; text: string }[]): Promise<any[][]> {
+    if (this.store.path === ':memory:') {
+      const query = this.store.db.prepare(
+        'SELECT vector FROM chunks WHERE text=? AND scope=(SELECT scope FROM chunks WHERE id=?) AND vector IS NOT NULL LIMIT 100',
+      );
+      return Promise.resolve(rows.map((row) => query.all(row.text, row.id)));
+    }
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(new URL('./knowledge-reuse-worker.cjs', import.meta.url), {
+        workerData: { path: this.store.path, rows },
+      });
+      this.statusWorkers.add(worker);
+      const timer = setTimeout(() => {
+        void worker.terminate();
+        reject(Error('Vector reuse lookup timed out.'));
+      }, 120000);
+      worker.once('message', (message) => {
+        clearTimeout(timer);
+        message.error ? reject(Error(message.error)) : resolve(message.rows);
+      });
+      worker.once('error', reject);
+      worker.once('exit', () => {
+        clearTimeout(timer);
+        this.statusWorkers.delete(worker);
+        reject(Error('Vector reuse worker exited before returning a result.'));
+      });
+    });
+  }
   async index(
     key: string,
     allowed: () => boolean = () => true,
@@ -444,17 +472,14 @@ export class Knowledge {
       }
       filled += batch.length;
       const vectors: number[][] = [];
-      for (const row of batch) {
+      const reused = await this.reuseVectors(batch.map((row) => ({ id: row.id, text: row.text })));
+      for (const [rowIndex, row] of batch.entries()) {
         assert(
           allowed() && this.embeddings!.fingerprint() === fingerprint,
           'INDEX_CANCELLED',
           'Index configuration changed.',
         );
-        const reuse = this.store.db
-          .prepare(
-            'SELECT vector FROM chunks WHERE text=? AND scope=(SELECT scope FROM chunks WHERE id=?) AND vector IS NOT NULL LIMIT 100',
-          )
-          .all(row.text, row.id) as any[];
+        const reuse = reused[rowIndex];
         const cached = reuse
           .map((r) => {
             try {

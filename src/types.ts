@@ -31,6 +31,7 @@ export interface UiState {
   };
 }
 export interface ConversationDetail {
+  runs?: RunView[];
   hasOlderEvents?: boolean;
   teamAutomation?: any;
   teamRecovery?: any[];

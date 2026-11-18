@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { stateRun } from './state-response.js';
 import type { MediaJob } from '../../shared/media.js';
 import type { Conversation } from '../../shared/types.js';
 import type { Runtime } from '../core/runtime.js';
@@ -43,6 +44,7 @@ export function conversationViewRoutes(app: FastifyInstance, runtime: Runtime) {
     return {
       ...(page ? { hasOlderEvents: page.hasOlderEvents } : {}),
       conversation: c,
+      runs: history.map((r) => stateRun(r, true)),
       deliveries: Object.fromEntries(deliveries),
       events: (page?.events || store.events(c.id, after)).map((e) => {
         // Historical receipts predate purpose metadata; enrich only presentation, never rewrite events.

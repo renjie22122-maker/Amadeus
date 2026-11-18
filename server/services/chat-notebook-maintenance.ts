@@ -61,24 +61,45 @@ export class ChatNotebookMaintenance {
   private stamp(c: ChatConnection, p: Profile) {
     return hash([c, chatNotebook(this.store, c).revision, p.id, p.baseUrl, p.model]);
   }
-  private sources(c: ChatConnection) {
+  private sources(c: ChatConnection, cursor = 0, ids?: number[]) {
     const chat = this.store.get<Conversation>('conversation', c.conversationId);
-    return this.store.events(c.conversationId, 0, 'chat.memory-source').filter((e) => {
-      const d = e.data;
-      return (
-        d.connectionId === c.id &&
-        d.peerId === c.peerId &&
-        d.peerType === (c.peerType || 'private') &&
-        (!d.transport || d.transport === c.transport) &&
-        (!d.accountId || d.accountId === c.accountId) &&
-        d.senderId &&
-        typeof d.text === 'string' &&
-        !this.store.maybe(
-          'memory-source-forgotten',
-          sourceKey(conversationMemoryScope(chat), chat.id, e.id),
-        )
-      );
-    });
+    const keys = ids || [
+      ...(
+        this.store.db
+          .prepare(
+            "SELECT id FROM events WHERE conversation_id=? AND type='chat.memory-source' AND id<? ORDER BY id DESC LIMIT 8",
+          )
+          .all(c.conversationId, cursor) as { id: number }[]
+      )
+        .reverse()
+        .map((r) => r.id),
+      ...(
+        this.store.db
+          .prepare(
+            "SELECT id FROM events WHERE conversation_id=? AND type='chat.memory-source' AND id>=? ORDER BY id LIMIT 64",
+          )
+          .all(c.conversationId, cursor) as { id: number }[]
+      ).map((r) => r.id),
+    ];
+    return keys
+      .map((key) => this.store.eventById(c.conversationId, key))
+      .filter((e): e is NonNullable<typeof e> => Boolean(e))
+      .filter((e) => {
+        const d = e.data;
+        return (
+          d.connectionId === c.id &&
+          d.peerId === c.peerId &&
+          d.peerType === (c.peerType || 'private') &&
+          (!d.transport || d.transport === c.transport) &&
+          (!d.accountId || d.accountId === c.accountId) &&
+          d.senderId &&
+          typeof d.text === 'string' &&
+          !this.store.maybe(
+            'memory-source-forgotten',
+            sourceKey(conversationMemoryScope(chat), chat.id, e.id),
+          )
+        );
+      });
   }
   private async sweep(now: number) {
     const connections = this.store
@@ -90,9 +111,9 @@ export class ChatNotebookMaintenance {
       );
     for (const c of connections) {
       if (!this.eligible(c)) continue;
-      const id = notebookKey(c),
-        previous = this.store.maybe<any>(kind, id) || {};
-      if (previous.nextAt > now || previous.status === 'needs_attention') continue;
+      const id = notebookKey(c);
+      let previous = this.store.maybe<any>(kind, id) || {};
+      if (previous.nextAt > now && previous.status !== 'needs_attention') continue;
       const note = chatNotebook(this.store, c);
       let profile: Profile;
       try {
@@ -109,11 +130,41 @@ export class ChatNotebookMaintenance {
         });
         continue;
       }
-      const all = this.sources(c),
-        cursor = previous.cursor || 0,
+      const modelStamp = hash(profile);
+      if (previous.status === 'needs_attention') {
+        const usage = this.store.selectedEvents(c.conversationId, ['usage'], 1).at(-1);
+        const sourceRun = usage?.runId ? this.store.maybeRunHeader(usage.runId) : undefined;
+        const recovered =
+          usage &&
+          usage.createdAt > previous.at &&
+          usage.data.outputTokens > 0 &&
+          sourceRun?.profileId === profile.id;
+        if (previous.modelStamp === modelStamp && !recovered) continue;
+        previous = { ...previous, attempts: 0, status: 'pending' };
+      }
+      const cursor = previous.cursor || 0,
         offset = previous.offset || 0;
+      const all = this.sources(c, cursor);
       const pending = all.filter((e) => e.id > cursor || (e.id === cursor && offset > 0));
-      if (!pending.length) continue;
+      if (!pending.length) {
+        const skipped = this.store.db
+          .prepare(
+            "SELECT id FROM events WHERE conversation_id=? AND type='chat.memory-source' AND id>=? ORDER BY id LIMIT 64",
+          )
+          .all(c.conversationId, cursor) as { id: number }[];
+        const through = skipped.at(-1)?.id;
+        if (through != null && (through > cursor || offset > 0))
+          this.store.put(kind, {
+            ...previous,
+            id,
+            cursor: through,
+            offset: 0,
+            status: 'unchanged',
+            at: now,
+            nextAt: now + 60000,
+          });
+        continue;
+      }
       // Coalesce bursts, but never starve a continuously active chat.
       if (
         now - pending[pending.length - 1].createdAt < 30000 &&
@@ -157,6 +208,7 @@ export class ChatNotebookMaintenance {
         at: now,
         status: 'running',
         attempts,
+        modelStamp,
         nextAt: now + profile.timeoutMs + 30000,
       };
       this.store.put(kind, job);
@@ -198,6 +250,7 @@ export class ChatNotebookMaintenance {
             }),
             signal,
           );
+          if (!(result.message.content || '').trim()) throw Error('NOTEBOOK_EMPTY_RESPONSE');
           if (result.message.calls?.length) throw Error('NOTEBOOK_TOOL_OUTPUT');
           const a = output.parse(
             JSON.parse(result.message.content.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')),
@@ -214,9 +267,11 @@ export class ChatNotebookMaintenance {
             ) !== initial ||
             // New arrivals do not invalidate the batch; changes/removal of existing evidence do.
             hash(
-              this.sources(latest)
-                .filter((e) => all.some((old) => old.id === e.id))
-                .map((e) => [e.id, e.data]),
+              this.sources(
+                latest,
+                cursor,
+                all.map((e) => e.id),
+              ).map((e) => [e.id, e.data]),
             ) !== sourceStamp
           )
             throw Error('NOTEBOOK_SOURCE_CHANGED');
@@ -279,11 +334,21 @@ export class ChatNotebookMaintenance {
           at: now,
           status: stale ? 'pending' : attempts >= 5 ? 'needs_attention' : 'retrying',
           attempts: stale ? 0 : attempts,
+          modelStamp,
           error: stale
             ? 'source_changed'
-            : code.startsWith('NOTEBOOK_')
+            : /^NOTEBOOK_[A-Z_]{1,64}$/.test(code)
               ? code
-              : 'model_or_response_failed',
+              : (/^[A-Z][A-Z0-9_]{1,64}$/.test(String((error as any)?.code || ''))
+                  ? String((error as any).code)
+                  : undefined) ||
+                ((error as any)?.name === 'TimeoutError'
+                  ? 'MODEL_TIMEOUT'
+                  : error instanceof SyntaxError
+                    ? 'NOTEBOOK_INVALID_JSON'
+                    : error instanceof z.ZodError
+                      ? 'NOTEBOOK_INVALID_SCHEMA'
+                      : 'model_or_response_failed'),
           nextAt: now + Math.min(1800000, 30000 * 2 ** Math.min(attempts, 5)),
         });
       }

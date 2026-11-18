@@ -58,7 +58,7 @@ const Library = lazy(() => import('./pages/Library').then((m) => ({ default: m.L
 const SettingsPage = lazy(() =>
   import('./pages/Settings').then((m) => ({ default: m.SettingsPage })),
 );
-import type { ConversationDetail, UiState } from './types';
+import type { ConversationDetail, UiState, RunView } from './types';
 const ended = (s: string) => ['completed', 'failed', 'interrupted'].includes(s);
 export function App() {
   const [state, setState] = useState<UiState | null>(null),
@@ -397,7 +397,14 @@ export function App() {
     return c.id;
   }
   const conversation = detail?.conversation as Conversation | undefined;
-  const currentRuns = state?.runs.filter((r: any) => r.conversationId === selected) || [],
+  const currentRuns = [
+      ...new Map<string, RunView>(
+        [
+          ...(detail?.runs?.filter((r) => r.conversationId === selected) || []),
+          ...(state?.runs.filter((r: any) => r.conversationId === selected) || []),
+        ].map((r: any) => [r.id, r] as [string, RunView]),
+      ).values(),
+    ].sort((a, b) => a.createdAt - b.createdAt),
     run = currentRuns.at(-1),
     running = run && !ended(run.status);
   const descendants = useMemo(

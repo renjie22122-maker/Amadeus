@@ -79,11 +79,11 @@ export async function learnMemoryGraph(
         const source = chatMemorySources(store, c.id).find((s) => s.id === m.sourceEventId);
         return source ? [{ m, original: source.text }] : [];
       }
-      const event = store
-        .events(c.id, 0, 'user.message')
-        .find(
-          (e) => e.id === m.sourceEventId && e.type === 'user.message' && !e.data.scheduledTrigger,
-        );
+      const candidate = m.sourceEventId ? store.eventById(c.id, m.sourceEventId) : undefined;
+      const event =
+        candidate?.type === 'user.message' && !candidate.data.scheduledTrigger
+          ? candidate
+          : undefined;
       return event ? [{ m, original: String(event.data.content || event.data.text || '') }] : [];
     });
   if (!batch.length) return;

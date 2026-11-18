@@ -39,7 +39,7 @@ import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
 import Fastify from 'fastify';
 import { randomBytes, createHash } from 'node:crypto';
-import { conditionalState, stateRun } from './state-response.js';
+import { conditionalState, stateRun, shellRuns } from './state-response.js';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, mkdtemp, rm, open, rename } from 'node:fs/promises';
 import { basename, join, resolve, extname } from 'node:path';
@@ -199,7 +199,9 @@ export async function createApp(options: { directory: string; dist?: string; run
     })),
     conversations: store.conversations(),
     projects: store.list('project'),
-    runs: store.runMetadata().map((run) => stateRun(run, shell)),
+    runs: (shell ? shellRuns(store.runMetadata()) : store.runMetadata()).map((run) =>
+      stateRun(run, shell),
+    ),
     skills: store.list<Skill>('skill').map(({ content, source, ...s }) => ({
       ...s,
       sourceGroup:
