@@ -260,60 +260,70 @@ try {
   results.push({ name: 'descendant-timeout', reaped });
 
   // A replacement directory is synthetic and starts outside the granted root.
-  const granted = join(root, 'granted');
-  const replacement = join(root, 'replacement');
-  mkdirSync(granted);
-  mkdirSync(replacement);
-  writeFileSync(join(granted, 'identity'), 'original');
-  writeFileSync(join(replacement, 'identity'), 'replacement');
-  const target = quote(join(granted, 'identity'));
-  const readyFile = join(work, 'path-ready');
-  const proceed = join(work, 'path-continue');
-  const psSwap =
-    "$ErrorActionPreference='Stop';if((Get-Content " +
-    target +
-    ") -ne 'original'){exit 5};Set-Content " +
-    quote(readyFile) +
-    ' ready;while(!(Test-Path ' +
-    quote(proceed) +
-    ')){Start-Sleep -Milliseconds 30};try{Get-Content ' +
-    target +
-    "}catch [System.UnauthorizedAccessException]{'denied'}";
-  await withPinnedDirectories(koffi, [granted], async () => {
-    const pendingSwap = run({
-      ...policy,
-      filesystem: {
-        ...policy.filesystem,
-        readonlyPaths: [...policy.filesystem.readonlyPaths, granted],
+  for (const nested of [false, true]) {
+    const scope = join(root, nested ? 'mutable-parent' : 'granted');
+    mkdirSync(scope);
+    const granted = nested ? join(scope, 'child') : scope;
+    const replacement = join(root, nested ? 'child-replacement' : 'replacement');
+    if (nested) mkdirSync(granted);
+    mkdirSync(replacement);
+    writeFileSync(join(granted, 'identity'), 'original');
+    writeFileSync(join(replacement, 'identity'), 'replacement');
+    const target = quote(join(granted, 'identity'));
+    const readyFile = join(work, nested ? 'child-ready' : 'path-ready');
+    const proceed = join(work, nested ? 'child-continue' : 'path-continue');
+    const psSwap =
+      "$ErrorActionPreference='Stop';if((Get-Content " +
+      target +
+      ") -ne 'original'){exit 5};Set-Content " +
+      quote(readyFile) +
+      ' ready;while(!(Test-Path ' +
+      quote(proceed) +
+      ')){Start-Sleep -Milliseconds 30};try{Get-Content ' +
+      target +
+      "}catch [System.UnauthorizedAccessException]{'denied'}";
+    await withPinnedDirectories(
+      koffi,
+      [scope],
+      async () => {
+        const pendingSwap = run({
+          ...policy,
+          filesystem: {
+            ...policy.filesystem,
+            readonlyPaths: [...policy.filesystem.readonlyPaths, scope],
+          },
+          command:
+            '"' +
+            windows +
+            '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -EncodedCommand ' +
+            Buffer.from(psSwap, 'utf16le').toString('base64'),
+        });
+        let renameDenied = false;
+        try {
+          for (let i = 0; i < 100 && !existsSync(readyFile); i++) await delay(50);
+          if (!existsSync(readyFile)) throw Error('Replacement fixture not ready');
+          try {
+            renameSync(granted, join(root, nested ? 'old-child' : 'previous'));
+          } catch (error) {
+            if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+            renameDenied = true;
+          }
+          if (!renameDenied) renameSync(replacement, granted);
+        } finally {
+          writeFileSync(proceed, 'done');
+        }
+        const swap = await pendingSwap;
+        results.push({
+          name: nested ? 'mutable-child-replacement' : 'directory-replacement',
+          passed:
+            swap.exitCode === 0 && swap.stdout.trim() === (renameDenied ? 'original' : 'denied'),
+          observed: swap.stdout.trim(),
+        });
       },
-      command:
-        '"' +
-        windows +
-        '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -EncodedCommand ' +
-        Buffer.from(psSwap, 'utf16le').toString('base64'),
-    });
-    let renameDenied = false;
-    try {
-      for (let i = 0; i < 100 && !existsSync(readyFile); i++) await delay(50);
-      if (!existsSync(readyFile)) throw Error('Replacement fixture not ready');
-      try {
-        renameSync(granted, join(root, 'previous'));
-      } catch (error) {
-        if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
-        renameDenied = true;
-      }
-      if (!renameDenied) renameSync(replacement, granted);
-    } finally {
-      writeFileSync(proceed, 'done');
-    }
-    const swap = await pendingSwap;
-    results.push({
-      name: 'directory-replacement',
-      passed: swap.exitCode === 0 && swap.stdout.trim() === (renameDenied ? 'original' : 'denied'),
-      observed: swap.stdout.trim(),
-    });
-  });
-  renameSync(granted, join(root, 'released-grant'));
+      { pinExistingSubdirectories: true },
+    );
+    renameSync(scope, join(root, nested ? 'released-parent' : 'released-grant'));
+  }
   // Look up only a fresh test window by its random title, first from the host.
   const desktopSource = join(work, 'WindowFixture.cs');
   const desktopExe = join(work, 'WindowFixture.exe');
@@ -324,7 +334,9 @@ using System.Runtime.InteropServices;
 class WindowFixture {
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr FindWindow(string cls,string title);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr CreateWindowEx(int ex,string cls,string title,uint style,int x,int y,int w,int h,IntPtr parent,IntPtr menu,IntPtr instance,IntPtr param);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int kind,out uint value,uint size,out uint used);
  static int Main(string[] args) {
+   if(args[0]=="job"){uint flags,used;bool ok=QueryInformationJobObject(IntPtr.Zero,4,out flags,4,out used);Console.WriteLine(ok?flags.ToString():"unavailable-"+Marshal.GetLastWin32Error());return 0;}
    if(args[0]=="host"){
      var window=CreateWindowEx(0,"STATIC",args[1],0,0,0,1,1,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero);
      if(window==IntPtr.Zero)return 2;
@@ -355,6 +367,12 @@ class WindowFixture {
         'found'
     )
       throw Error('Host window control failed');
+    const job = await run({ ...policy, command: '"' + desktopExe + '" job' });
+    results.push({
+      name: 'current-job-ui-flags',
+      value: job.stdout.trim(),
+      exitCode: job.exitCode,
+    });
     const check = await run({ ...policy, command: '"' + desktopExe + '" check ' + title });
     results.push({
       name: 'host-window-visibility',

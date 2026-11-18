@@ -1,9 +1,14 @@
-import { dirname, isAbsolute, parse, resolve } from 'node:path';
-import { lstatSync } from 'node:fs';
+import { dirname, isAbsolute, parse, resolve, join } from 'node:path';
+import { lstatSync, readdirSync } from 'node:fs';
 
 // Keep each directory component in place while MXC consumes a path-based grant.
 // The broker owns the handles. Windows releases them if the broker exits.
-export async function withPinnedDirectories(koffi, paths, action) {
+export async function withPinnedDirectories(
+  koffi,
+  paths,
+  action,
+  { pinExistingSubdirectories = false } = {},
+) {
   const kernel = koffi.load('kernel32.dll');
   const open = kernel.func(
     'intptr_t __stdcall CreateFileW(str16, uint32_t, uint32_t, void *, uint32_t, uint32_t, intptr_t)',
@@ -13,7 +18,9 @@ export async function withPinnedDirectories(koffi, paths, action) {
   const handles = [];
   const seen = new Set();
   try {
-    for (const input of paths) {
+    const pending = [...paths];
+    while (pending.length) {
+      const input = pending.pop();
       if (!isAbsolute(input) || !/^[a-z]:[\\/]/i.test(input))
         throw Error('A local absolute directory is required');
       const path = resolve(input);
@@ -33,6 +40,12 @@ export async function withPinnedDirectories(koffi, paths, action) {
         if (flags === 0xffffffff || flags & 0x400 || !info.isDirectory() || info.isSymbolicLink())
           throw Error('Unsupported directory component');
         seen.add(key);
+      }
+      if (pinExistingSubdirectories) {
+        for (const child of readdirSync(path, { withFileTypes: true })) {
+          if (child.isSymbolicLink()) throw Error('Unsupported directory entry');
+          if (child.isDirectory()) pending.push(join(path, child.name));
+        }
       }
     }
     return await action();
