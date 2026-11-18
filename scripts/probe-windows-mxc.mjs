@@ -28,6 +28,26 @@ if (manifest.name !== '@microsoft/mxc-sdk' || manifest.version !== '1.1.0')
 const { withPinnedDirectories } = await import('../native/windows/mxc-directory-grants.mjs');
 const { createRequire } = await import('node:module');
 const koffi = createRequire(entry)('koffi');
+const saveReport = process.argv[3] === '--save-report';
+const reportDirectory = resolve(process.env.AGENTDEMO_DATA_DIR || '.data');
+const save = (status, checks = []) => {
+  if (!saveReport) return;
+  mkdirSync(reportDirectory, { recursive: true });
+  const target = join(reportDirectory, 'mxc-verification.json');
+  const temporary = target + '.' + process.pid + '.tmp';
+  writeFileSync(
+    temporary,
+    JSON.stringify({
+      status,
+      checkedAt: new Date().toISOString(),
+      sdk: manifest.version,
+      node: process.version,
+      checks,
+    }),
+  );
+  renameSync(temporary, target);
+};
+save('incomplete');
 const { probe, run } = await import(pathToFileURL(entry).href);
 const root = mkdtempSync(join(tmpdir(), 'amadeus-mxc-design-probe-'));
 const work = join(root, 'workspace'),
@@ -324,6 +344,62 @@ try {
     );
     renameSync(scope, join(root, nested ? 'released-parent' : 'released-grant'));
   }
+  // Isolated disposable tree: inherited directory-only denies are applied before launch.
+  const dynamicRoot = join(work, 'dynamic');
+  mkdirSync(dynamicRoot);
+  const aclTool = join(windows, 'System32', 'icacls.exe');
+  const dynamicChild = join(dynamicRoot, 'new-child');
+  const replacementDir = join(root, 'dynamic-replacement');
+  mkdirSync(replacementDir);
+  writeFileSync(join(replacementDir, 'identity'), 'replacement');
+  const ready = join(work, 'dynamic-ready'),
+    resume = join(work, 'dynamic-resume');
+  const code =
+    "$ErrorActionPreference='Stop';[IO.Directory]::CreateDirectory(" +
+    quote(dynamicChild) +
+    ')|Out-Null;Set-Content ' +
+    quote(join(dynamicChild, 'identity')) +
+    ' original;Set-Content ' +
+    quote(ready) +
+    ' ready;while(!(Test-Path ' +
+    quote(resume) +
+    ')){Start-Sleep -Milliseconds 30};Get-Content ' +
+    quote(join(dynamicChild, 'identity'));
+  // Apply only to the fresh test directory. No host/project ACL is inherited from this fixture.
+  execFileSync(aclTool, [dynamicRoot, '/deny', '*S-1-1-0:(CI)(DC)'], { windowsHide: true });
+  try {
+    execFileSync(aclTool, [dynamicRoot, '/deny', '*S-1-1-0:(CI)(IO)(DE)'], { windowsHide: true });
+    const pending = run({
+      ...policy,
+      command:
+        '"' +
+        windows +
+        '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -EncodedCommand ' +
+        Buffer.from(code, 'utf16le').toString('base64'),
+    });
+    let denied = false;
+    try {
+      for (let i = 0; i < 100 && !existsSync(ready); i++) await delay(50);
+      if (!existsSync(ready)) throw Error('Dynamic fixture did not start');
+      try {
+        renameSync(dynamicChild, join(root, 'dynamic-old'));
+      } catch (error) {
+        if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+        denied = true;
+      }
+      if (!denied) renameSync(replacementDir, dynamicChild);
+    } finally {
+      writeFileSync(resume, 'go');
+    }
+    const result = await pending;
+    results.push({
+      name: 'new-child-replacement',
+      passed: denied && result.exitCode === 0 && result.stdout.trim() === 'original',
+      observed: result.stdout.trim(),
+    });
+  } finally {
+    execFileSync(aclTool, [dynamicRoot, '/remove:d', '*S-1-1-0'], { windowsHide: true });
+  }
   // Look up only a fresh test window by its random title, first from the host.
   const desktopSource = join(work, 'WindowFixture.cs');
   const desktopExe = join(work, 'WindowFixture.exe');
@@ -374,9 +450,26 @@ class WindowFixture {
       exitCode: job.exitCode,
     });
     const check = await run({ ...policy, command: '"' + desktopExe + '" check ' + title });
+    const privateRequest = join(root, 'private-request.json');
+    const privateOutput = join(root, 'private-result.json');
+    writeFileSync(privateRequest, JSON.stringify(policy));
+    execFileSync(
+      'python',
+      [
+        resolve('native/windows/mxc-private-desktop-test.py'),
+        process.execPath,
+        entry,
+        privateRequest,
+        title,
+        privateOutput,
+      ],
+      { windowsHide: true, timeout: 28000 },
+    );
+    const isolated = JSON.parse(readFileSync(privateOutput, 'utf8'));
     results.push({
       name: 'host-window-visibility',
-      passed: check.exitCode === 0 && check.stdout.trim() === 'hidden',
+      defaultDesktop: check.stdout.trim(),
+      passed: isolated.exitCode === 0 && isolated.hidden && !isolated.found,
     });
   } finally {
     owner.stdin.end('\n');
@@ -431,6 +524,12 @@ class WindowFixture {
   }
 
   if (results.some((item) => item.passed === false)) process.exitCode = 1;
+  save(
+    process.exitCode ? 'blocked' : 'verified',
+    results
+      .filter((item) => item.name !== 'current-job-ui-flags')
+      .map((item) => ({ name: item.name, passed: item.passed !== false })),
+  );
   console.log(
     JSON.stringify(
       {

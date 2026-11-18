@@ -20,6 +20,7 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
     [busy, setBusy] = useState(false),
     [models, setModels] = useState<any[]>([]),
     [executionCheck, setExecutionCheck] = useState<any>(null);
+  const [mxcReport, setMxcReport] = useState<any>(null);
   const profile = value.profiles.find((p: any) => p.id === selected);
   useEffect(() => {
     let cancelled = false;
@@ -431,6 +432,42 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
           </p>
           {executionCheck && <pre role="status">{JSON.stringify(executionCheck, null, 2)}</pre>}
         </div>
+        <details
+          onToggle={(event) => {
+            if (event.currentTarget.open)
+              run(async () => setMxcReport(await api('/execution/mxc-verification')));
+          }}
+        >
+          <summary>
+            {t('settings') === 'Settings' ? 'MXC verification results' : 'MXC 隔离验证结果'}
+          </summary>
+          {mxcReport && (
+            <div role="status">
+              <p>
+                {
+                  (
+                    {
+                      verified: '✓',
+                      blocked: '✗',
+                      incomplete: 'Incomplete / 未完成',
+                      unmeasured: 'No local result / 尚无本机记录',
+                      unreadable: 'Unreadable / 记录无法读取',
+                    } as Record<string, string>
+                  )[mxcReport.status]
+                }{' '}
+                {mxcReport.checkedAt && new Date(mxcReport.checkedAt).toLocaleString()}{' '}
+                {mxcReport.sdk && ' · SDK ' + mxcReport.sdk + ' · Node ' + mxcReport.node}
+              </p>
+              <ul>
+                {mxcReport.checks?.map((item: { name: string; passed: boolean }) => (
+                  <li key={item.name}>
+                    {item.passed ? '✓' : '✗'} {item.name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </details>
         <fieldset className="execution-modes">
           <legend>
             {t('settings') !== 'Settings'

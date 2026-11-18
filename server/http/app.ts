@@ -1158,6 +1158,27 @@ export async function createApp(options: { directory: string; dist?: string; run
     await rm(a.path, { force: true });
     return { ok: true };
   });
+  app.get('/api/execution/mxc-verification', async () => {
+    const { readFile } = await import('node:fs/promises');
+    try {
+      const report = JSON.parse(await readFile(join(directory, 'mxc-verification.json'), 'utf8'));
+      return z
+        .object({
+          status: z.enum(['verified', 'blocked', 'incomplete']),
+          checkedAt: z.string().datetime(),
+          sdk: z.string().max(40),
+          node: z.string().max(40),
+          checks: z
+            .array(z.object({ name: z.string().regex(/^[a-z-]{1,64}$/), passed: z.boolean() }))
+            .max(64),
+        })
+        .parse(report);
+    } catch (error) {
+      return {
+        status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'unmeasured' : 'unreadable',
+      };
+    }
+  });
   app.post('/api/execution/check', async () => {
     const settings = config.get(),
       folder = await mkdtemp(join(directory, 'execution-check-'));
