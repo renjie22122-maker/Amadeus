@@ -6,6 +6,8 @@ A local-first AI workspace for conversation, coding, research and creative work.
 
 Named after Amadeus from _Steins;Gate_. Formerly AgentDemo. Built with TypeScript, Node.js, React, Fastify and SQLite.
 
+[All guides](docs/README.md) · [Connect chat](docs/CHAT-CONNECTIONS.md) · [Knowledge](docs/MEMORY.md) · [Setup help](docs/MIGRATION.md)
+
 ## Quick start
 
 Install **Node.js 24+ including npm**, then download and fully extract this repository.
@@ -24,7 +26,25 @@ pnpm start
 
 In Settings, add a model connection with endpoint, model and API key, then test it. Provider/model capability fields are not a guarantee of endpoint support.
 
-## Everyday use
+## Workspace
+
+```mermaid
+flowchart LR
+  a["Browser"]
+  b["Desktop client"]
+  c["Local service"]
+  d["Projects and tools"]
+  e["Chats and settings"]
+  f["Model provider"]
+  a --> c
+  b --> c
+  c --> d
+  c --> e
+  c --> f
+```
+
+<details>
+<summary>Everyday use</summary>
 
 - Use **general chats** for conversation and session artifacts; choose a **project** to authorize local folders and commands. Projects can contain up to 12 non-overlapping folders.
 - Select supported reasoning, collaboration, approval and execution-isolation settings near the composer. An approved host command still has host-user permissions.
@@ -35,19 +55,28 @@ In Settings, add a model connection with endpoint, model and API key, then test 
 
 The interface supports English/Chinese, custom assistant names, automatic sizing and 25–150% text presets. See the [complete bilingual documentation](docs/README.md).
 
-## Updating
+</details>
+
+<details>
+<summary>Updating</summary>
 
 Stop the service after finishing active tasks, replace/pull code, then run Quick Start. It detects changed dependencies and source. First Start refuses to replace dependencies while a service is running; Quick Start opens the existing service without hot-updating it. Check .data/logs on startup failure.
 
 Old AgentDemo launcher names remain compatible. Existing data and custom assistant names are preserved. Internal AGENTDEMO_* variables, cookie/storage keys and signature filenames intentionally retain compatibility names. The local checkout folder need not be renamed.
 
-## Safety and local data
+</details>
+
+<details>
+<summary>Safety and local data</summary>
 
 New configurations default to AppContainer on Windows and Docker elsewhere; prerequisites must be configured before commands can run. Existing configurations retain their backend. There is no automatic host fallback. Browser/MCP/desktop integrations have separate host authority. See [security](docs/SECURITY.md) and [execution setup](docs/MIGRATION.md).
 
 .data contains private configuration, conversations and artifacts; .diagnostics contains local test output. Both are excluded from Git. Windows secrets use current-user DPAPI; other platforms use restricted files. Back up private state before migration. Model/embedding/media calls send their inputs to the selected providers; local embedding does not make the answer-generating LLM local.
 
-## Development
+</details>
+
+<details>
+<summary>Development</summary>
 
 ```sh
 pnpm dev
@@ -76,7 +105,10 @@ CI runs on Windows and Ubuntu. Public tests are sanitized; optional desktop/brow
 | tests / evals           | Regression / evaluation harnesses                |
 | docs                    | Current guides and clearly separated history     |
 
-## Help and changes
+</details>
+
+<details>
+<summary>Help and changes</summary>
 
 For failures, include OS, Node version, backend, reproduction and sanitized error output. Never post credentials or private conversations. Missing sandbox dependencies and unknown interrupted effects are not fixed by blindly rerunning commands.
 
@@ -85,16 +117,24 @@ For failures, include OS, Node version, backend, reproduction and sanitized erro
 - [History and original reports](docs/history/README.md)
 - [Testing and evidence boundaries](docs/VERIFICATION.md)
 
-## Build and distribution status
+</details>
+
+<details>
+<summary>Build and distribution status</summary>
 
 The standard build emits backend JavaScript plus native/worker assets in build/ and browser assets in dist/. pnpm start and the Windows supervisor run the compiled backend; tsx is retained for development and tests. Keep build/, dist/, package metadata and installed dependencies together; the CI artifact is not a standalone installer.
 
 This repository is licensed under the [MIT License](LICENSE). Third-party dependencies, models and datasets retain their own licenses. Version 0.1.0 is a development package identifier, not a promise that dated changelog entries are numbered releases.
 
-## Local retrieval
+</details>
+
+<details>
+<summary>Local retrieval</summary>
 
 [Optional local LightRAG, GPU embedding and reranking](docs/LOCAL-RAG.md)
 
 Optional isolated computation and media analysis: with Docker running, use `Setup-Analysis.cmd`, then select Docker and the prepared image in Settings. Normal startup does not download this image. See [work chains](docs/TOOL-ECOSYSTEM.md).
 
 Local Chinese/English transcription, synthesis and reply read-aloud: [Guide](docs/LOCAL-VOICE.md).
+
+</details>

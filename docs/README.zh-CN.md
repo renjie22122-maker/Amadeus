@@ -8,33 +8,42 @@
 
 ## 当前指南
 
-- [Windows Sandbox 设计与原型](WINDOWS-SANDBOX.zh-CN.md)
+### 使用工作空间
 
+- [功能指南](FEATURES.zh-CN.md)
+- [对话、进度与恢复](INTERACTION.zh-CN.md)
 - [办公文件与结构化分析](OFFICE.zh-CN.md)
-
 - [视频读取与桌面交互](VIDEO-READING.zh-CN.md)
+- [对话排版与媒体](CHAT-FORMATTING.zh-CN.md)
+- [工具生态](TOOL-ECOSYSTEM.zh-CN.md)
+
+### 接入聊天和语音
 
 - [接入聊天](CHAT-CONNECTIONS.zh-CN.md)
 - [Bot 启动与独立状态提示](BOT-STARTUP.zh-CN.md)
 - [本地语音与回复朗读](LOCAL-VOICE.zh-CN.md)
 
-- [评测设计](BENCHMARKS.zh-CN.md)
-- [评测下载清单](BENCHMARK-DOWNLOADS.zh-CN.md)
+### 导入与检索
 
-- [本地检索与 GPU](LOCAL-RAG.zh-CN.md)
-- [架构](ARCHITECTURE.zh-CN.md)
-- [功能指南](FEATURES.zh-CN.md)
-- [对话、进度与恢复](INTERACTION.zh-CN.md)
-- [自动审批](AUTO-REVIEW.zh-CN.md)
-- [安全模型](SECURITY.zh-CN.md)
 - [记忆、知识库与检索](MEMORY.zh-CN.md)
+- [本地检索与 GPU](LOCAL-RAG.zh-CN.md)
+- [文件夹导入与自动维护](knowledge-import-resilience.zh-CN.md)
+
+### 安装与权限
+
+- [安全模型](SECURITY.zh-CN.md)
+- [自动审批](AUTO-REVIEW.zh-CN.md)
 - [安装、升级与执行后端](MIGRATION.zh-CN.md)
+- [Windows Sandbox 设计与原型](WINDOWS-SANDBOX.zh-CN.md)
+
+### 开发与评测
+
+- [架构](ARCHITECTURE.zh-CN.md)
 - [测试与证据](VERIFICATION.zh-CN.md)
 - [规划与经验反馈调度](PLANNING-AND-ROUTING.zh-CN.md)
 - [前缀缓存与 Token 效率](DEEPSEEK-CACHE.zh-CN.md)
-- [文件夹导入与自动维护](knowledge-import-resilience.zh-CN.md)
-- [工具生态](TOOL-ECOSYSTEM.zh-CN.md)
-- [对话排版与媒体](CHAT-FORMATTING.zh-CN.md)
+- [评测设计](BENCHMARKS.zh-CN.md)
+- [评测下载清单](BENCHMARK-DOWNLOADS.zh-CN.md)
 
 ## 评测与历史结果
 

@@ -129,6 +129,36 @@ try {
     existsSync(join(outside, 'bad.txt'))
   )
     throw Error('Host canary changed');
+  // The child records its PID before sleeping so a failed spawn cannot pass cleanup.
+  const childCode =
+    "require('node:fs').writeFileSync('child.pid', String(process.pid));setTimeout(() => {}, 30000)";
+  const encodedChild = Buffer.from(childCode).toString('base64');
+  const parentCode =
+    "require('node:child_process').spawn(process.execPath, ['-e', Buffer.from('" +
+    encodedChild +
+    "', 'base64').toString()], {stdio:'ignore'})";
+  const expired = await run({
+    ...policy,
+    command: '"' + process.execPath + '" -e "' + parentCode + '"',
+    timeoutMs: 3000,
+  });
+  if (!expired.timedOut) throw Error('Expected parent timeout: ' + JSON.stringify(expired));
+  const childPid = Number(readFileSync(join(work, 'child.pid'), 'utf8'));
+  if (!Number.isSafeInteger(childPid) || childPid <= 0) throw Error('Missing child PID');
+  let reaped = false;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      process.kill(childPid, 0);
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+      reaped = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (!reaped) throw Error('Descendant survived timeout');
+  results.push({ name: 'descendant-timeout', reaped });
+
   console.log(
     JSON.stringify(
       {

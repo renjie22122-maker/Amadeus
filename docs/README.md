@@ -8,32 +8,42 @@ This is the maintained English/Chinese documentation set, reviewed on 2026-10-05
 
 ## Current guides
 
-- [Office files and structured analysis](OFFICE.md)
+### Use the workspace
 
+- [Feature guide](FEATURES.md)
+- [Conversations, progress and recovery](INTERACTION.md)
+- [Office files and structured analysis](OFFICE.md)
 - [Video reading and desktop interaction](VIDEO-READING.md)
+- [Rich conversation content](CHAT-FORMATTING.md)
+- [Tool ecosystem](TOOL-ECOSYSTEM.md)
+
+### Connect chat and voice
 
 - [Chat connections](CHAT-CONNECTIONS.md)
 - [Bot startup and independent notices](BOT-STARTUP.md)
 - [Local speech and reply read-aloud](LOCAL-VOICE.md)
 
-- [Benchmark plan](BENCHMARKS.md)
-- [Benchmark downloads](BENCHMARK-DOWNLOADS.md)
+### Import and retrieve
 
-- [Local retrieval and GPU](LOCAL-RAG.md)
-- [Architecture](ARCHITECTURE.md)
-- [Feature guide](FEATURES.md)
-- [Conversations, progress and recovery](INTERACTION.md)
-- [Automatic approval](AUTO-REVIEW.md)
-- [Security model](SECURITY.md)
-- [Windows Sandbox design and prototype](WINDOWS-SANDBOX.md)
 - [Memory, knowledge and retrieval](MEMORY.md)
+- [Local retrieval and GPU](LOCAL-RAG.md)
+- [Folder import and automatic maintenance](knowledge-import-resilience.md)
+
+### Installation and permissions
+
+- [Security model](SECURITY.md)
+- [Automatic approval](AUTO-REVIEW.md)
 - [Installation, upgrades and execution backends](MIGRATION.md)
+- [Windows Sandbox design and prototype](WINDOWS-SANDBOX.md)
+
+### Develop and evaluate
+
+- [Architecture](ARCHITECTURE.md)
 - [Testing and evidence](VERIFICATION.md)
 - [Planning and empirical routing](PLANNING-AND-ROUTING.md)
 - [Prefix cache and token efficiency](DEEPSEEK-CACHE.md)
-- [Folder import and automatic maintenance](knowledge-import-resilience.md)
-- [Tool ecosystem](TOOL-ECOSYSTEM.md)
-- [Rich conversation content](CHAT-FORMATTING.md)
+- [Benchmark plan](BENCHMARKS.md)
+- [Benchmark downloads](BENCHMARK-DOWNLOADS.md)
 
 ## Evaluation and historical results
 

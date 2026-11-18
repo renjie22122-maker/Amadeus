@@ -2,8 +2,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 const root = resolve(import.meta.dirname, '..');
 const index = readFileSync(resolve(root, 'docs/README.md'), 'utf8');
-const section = index.split('## Current guides')[1].split('## ')[0];
+const section = index.split('## Current guides')[1].split(/^## /m)[0];
 const guides = [...section.matchAll(/\]\(([^)]+\.md)\)/g)].map((m) => 'docs/' + m[1]);
+if (!guides.length) throw new Error('No current guides found in the documentation index');
 const files = ['README.md', 'CHANGELOG.md', 'docs/README.md', ...guides];
 const errors = [];
 for (const file of files) {

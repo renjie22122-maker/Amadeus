@@ -21,6 +21,11 @@ Windows Sandbox, the optional VM feature, is a different execution mode. Reserve
 
 ## Amadeus integration contract
 
+```mermaid
+flowchart TD
+  a["Conversation permissions"] --> b["Execution policy"] --> c["Process broker"] --> d["Isolated command"] --> e["Execution receipt"]
+```
+
 1. Resolve the conversation's existing execution permissions into a typed policy. Model text, retrieved documents and command descriptions cannot add permissions.
 2. Canonicalize roots; reject unsupported paths, reparse points and ambiguous overlaps. Bind the request to the workspace identity and policy digest.
 3. Run a capability probe and a known-good executable startup check. Distinguish unsupported OS, missing SDK, unsupported policy, runtime startup failure and workload failure.
@@ -82,3 +87,4 @@ Required before enabling the backend:
 - Performance: cold and warm startup, concurrent requests, output limits and nonblocking HTTP responsiveness; keep benchmark and running RAG independent.
 
 Use opt-in preview, then capability-gated rollout. Unknown capability or policy failure blocks execution with a useful diagnostic. Never fix startup by granting an entire drive, inheriting the host environment, enabling denial capture in allow mode, or silently running outside the sandbox.
+A child Node process wrote its PID before a three-second parent timeout. The host confirmed the child exited. Loading a .cjs entry point hit a drive-root lstat permission error during Node path resolution. Inline execution passed. Project script compatibility remains open.
