@@ -135,6 +135,8 @@ CI 在 Windows 和 Ubuntu 运行。公开测试已脱敏；可选桌面／浏览
 
 可选隔离计算与媒体分析：Docker 运行后执行 `Setup-Analysis.cmd`，再在设置中选择 Docker 和准备好的镜像。普通启动不下载此镜像。详见[通用工作链](docs/TOOL-ECOSYSTEM.zh-CN.md)。
 
+[Dot 写作面板和 Windows 应用输入辅助](docs/DOT-WRITING.zh-CN.md)
+
 本地中英语音转写、语音合成与回复朗读：[Guide](docs/LOCAL-VOICE.zh-CN.md).
 
 </details>

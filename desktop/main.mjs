@@ -10,6 +10,7 @@ import {
   desktopCapturer,
   screen,
 } from 'electron';
+import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { DesktopBackend, AttachedDesktopBackend } from './backend.mjs';
@@ -19,6 +20,7 @@ app.setName('Amadeus');
 if (process.env.AMADEUS_DESKTOP_USER_DATA)
   app.setPath('userData', resolve(process.env.AMADEUS_DESKTOP_USER_DATA));
 const primary = app.requestSingleInstanceLock();
+let writingHelper;
 let window,
   dot,
   tray,
@@ -41,6 +43,7 @@ else {
     event.preventDefault();
     if (quitPending) return;
     quitPending = true;
+    writingHelper?.kill();
     // Release the window's live HTTP/SSE connections before awaiting Fastify shutdown.
     if (window && !window.isDestroyed()) window.destroy();
     if (dot && !dot.isDestroyed()) dot.destroy();
@@ -106,6 +109,58 @@ else {
           y: area.y + Math.floor((area.height - height) / 2),
         });
       }
+      ipcMain.handle('amadeus:writing-apps', async (event) => {
+        if (
+          process.platform !== 'win32' ||
+          !dot ||
+          dot.isDestroyed() ||
+          event.sender !== dot.webContents ||
+          event.senderFrame !== dot.webContents.mainFrame ||
+          !backend.url ||
+          new URL(event.senderFrame.url).origin !== backend.url
+        )
+          throw Error('Dot window required');
+        if (writingHelper) {
+          await dialog.showMessageBox(dot, {
+            message: '应用写作辅助已打开，请在任务栏切换到该窗口。',
+          });
+          return;
+        }
+        const shell = join(
+          process.env.SystemRoot,
+          'System32',
+          'WindowsPowerShell',
+          'v1.0',
+          'powershell.exe',
+        );
+        writingHelper = spawn(
+          shell,
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-STA',
+            '-File',
+            join(root, 'desktop', 'windows-writing', 'start.ps1'),
+            '-Service',
+            backend.url,
+            '-ParentPid',
+            String(process.pid),
+          ],
+          { windowsHide: true, stdio: 'ignore' },
+        );
+        writingHelper.once('error', () => {
+          writingHelper = undefined;
+          dialog.showErrorBox('Amadeus Dot', '无法启动 Windows 应用写作辅助。');
+        });
+        writingHelper.once('exit', (code) => {
+          writingHelper = undefined;
+          if (code && !quitPending)
+            dialog.showErrorBox(
+              'Amadeus Dot',
+              '应用写作辅助已退出，请检查 Windows PowerShell、.NET Framework 和脚本执行策略。',
+            );
+        });
+      });
       ipcMain.handle('amadeus:dot-collapse', (event, compact) => {
         if (
           !dot ||
@@ -154,6 +209,7 @@ else {
         dot.webContents.on('will-navigate', (event) => event.preventDefault());
         dot.webContents.on('will-redirect', (event) => event.preventDefault());
         dot.webContents.on('will-attach-webview', (event) => event.preventDefault());
+        dot.once('closed', () => writingHelper?.kill());
         dot.on('close', () => {
           if (!quitPending) writeFileSync(dotPreference, 'false');
         });

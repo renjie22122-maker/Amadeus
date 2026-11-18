@@ -407,6 +407,34 @@
   }
 }
 
+.personal-dot[hidden],
+.dot-body [hidden] {
+  display: none !important;
+}
+.dot-workspace {
+  order: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+.dot-writing label,
+.dot-writing article {
+  display: grid;
+  gap: 6px;
+}
+.dot-writing textarea,
+.dot-writing select {
+  width: 100%;
+  box-sizing: border-box;
+}
+.dot-writing h2 {
+  font-size: 18px;
+  margin: 4px 0;
+}
+.dot-writing article p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .dot-tab {
   width: 100vw;
   height: 100vh;

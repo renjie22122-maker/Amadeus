@@ -45,6 +45,7 @@ await build({
       'dist/**/*',
       'desktop/main.mjs',
       'desktop/menus.mjs',
+      'desktop/windows-writing/**/*',
       'desktop/backend.mjs',
       'desktop/preload.cjs',
       'desktop/icon.png',

@@ -139,6 +139,8 @@ Local Chinese/English transcription, synthesis and reply read-aloud: [Guide](doc
 
 </details>
 
+[Windows writing assistance and per-app setup](docs/DOT-WRITING.md)
+
 ### Desktop Dot
 
 Choose **View → Floating personal agent** in the desktop application. Click the small tab at the right edge of the display to expand it. Use **会话** to select an existing local chat or create a dedicated chat in a project or your general workspace. Dot keeps its own binding, independent of paired devices and goals. The right rail applies a writing task to text you submit. Screenshots require selection and confirmation. Voice chat and the main assistant remain accessible. Collapse the panel to return to the tab. On wider layouts, drag the main sidebar divider to resize it.

@@ -387,6 +387,29 @@ test('editing and resuming an exhausted goal keeps identity, progress and used b
   );
 });
 
+test('external writing checks Dot binding and exact approved model before calling the provider', async (t) => {
+  const f = fixture(t),
+    app = Fastify();
+  personalAgentRoutes(app, f.service);
+  t.after(() => app.close());
+  const ctx = await app.inject('/api/personal/dot/writing-context');
+  assert.equal(ctx.statusCode, 200);
+  const { conversationId, origin, profileKey } = ctx.json();
+  assert.equal(origin, 'https://model.test');
+  assert.equal(conversationId, 'c');
+  assert.match(profileKey, /^[a-f0-9]{64}$/);
+  f.runtime.config.profile = () => ({
+    id: 'p',
+    baseUrl: 'https://changed.test',
+    model: 'different',
+  });
+  const r = await app.inject({
+    method: 'POST',
+    url: '/api/personal/dot/draft-suggestion',
+    payload: { conversationId, draft: 'example', mode: 'sentence', profileKey },
+  });
+  assert.equal(r.json().code, 'PROFILE_CHANGED');
+});
 test('local Dot can switch to a project without rebinding the primary identity or exposing remote chats', async (t) => {
   const f = fixture(t),
     app = Fastify();

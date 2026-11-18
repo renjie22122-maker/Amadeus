@@ -130,6 +130,7 @@ try {
     'onCommand',
     'openAgent',
     'openMenu',
+    'openWritingApps',
     'platform',
     'setDotCollapsed',
   ]);
@@ -197,7 +198,32 @@ try {
   await tab.click();
   await dotPage.getByRole('button', { name: '收起到屏幕边缘' }).click();
   await tab.click();
-  await dotPage.locator('.personal-dot').waitFor();
+  await dotPage.locator('.personal-dot:not([hidden])').waitFor();
+  await dotPage.getByRole('button', { name: '会话', exact: true }).click();
+  await dotPage.getByRole('button', { name: '新建会话' }).click();
+  await dotPage.getByText('随时可以聊').waitFor();
+  const source = dotPage.getByRole('textbox', { name: '原文', exact: true });
+  await dotPage.getByRole('button', { name: '改写', exact: true }).click();
+  await source.fill('First paragraph.');
+  await dotPage.getByRole('button', { name: '读者反馈', exact: true }).click();
+  await dotPage.getByLabel('目标读者').selectOption('客户');
+  assert.equal(await source.inputValue(), 'First paragraph.');
+  await dotPage.getByRole('button', { name: '翻译', exact: true }).click();
+  await dotPage.getByLabel('目标语言').selectOption('英语');
+  await dotPage.route('**/api/personal/dot/writing', (route) => {
+    const body = route.request().postDataJSON();
+    assert.equal(body.option, '英语');
+    assert.equal(body.source, 'First paragraph.');
+    return route.fulfill({ json: { value: 'Revised paragraph.' } });
+  });
+  await dotPage.getByRole('button', { name: '翻译原文' }).click();
+  await dotPage.getByRole('button', { name: '采纳到原文' }).click();
+  assert.equal(await source.inputValue(), 'Revised paragraph.');
+  await dotPage.getByRole('button', { name: '撤销上次采纳' }).click();
+  await dotPage.getByRole('button', { name: '收起到屏幕边缘' }).click();
+  await tab.click();
+  assert.equal(await source.inputValue(), 'First paragraph.');
+  await dotPage.getByRole('button', { name: '聊天', exact: true }).click();
   await dotPage.getByRole('button', { name: '打开助手与后台任务' }).click();
   await page.locator('.personal-agent').waitFor();
   await page.screenshot({ path: '.diagnostics/personal-agent.png' });

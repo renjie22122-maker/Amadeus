@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld(
     setDotCollapsed(value) {
       return ipcRenderer.invoke('amadeus:dot-collapse', value);
     },
+    openWritingApps() {
+      return ipcRenderer.invoke('amadeus:writing-apps');
+    },
     captureContext() {
       return ipcRenderer.invoke('amadeus:capture-context');
     },
