@@ -79,6 +79,7 @@ class Fixture
                 SwitchToThisWindow(handles[0], true);
                 try {System.Windows.Automation.AutomationElement.FromHandle(handles[1]).SetFocus();} catch (InvalidOperationException) { /* Non-interactive runner. */ }
                 Func<string, string> command = c => { child.StandardInput.WriteLine(c); child.StandardInput.Flush(); return child.StandardOutput.ReadLine(); };
+                command("end");
                 Check(Sample.Read(allowed) == null, "Unauthorized app");
                 allowed[path] = new Grant { Path = path, Mode = "sentence" };
                 Func<int, Sample> read = index => Sample.ReadEditor(handles[0], child.Id, System.Windows.Automation.AutomationElement.FromHandle(handles[index]), allowed[path]);
@@ -98,7 +99,8 @@ class Fixture
                 if (!foregroundVerified) sample = read(1);
                 Check(sample != null && sample.Draft == "sample draft", "Focused plain editor unsupported");
                 sample.Apply(" works");
-                Check(command("state") == "sample draft works", "Targeted edit failed");
+                string edited = command("state");
+                Check(edited == "sample draft works", "Targeted edit failed in synthetic fixture: [" + edited + "]; caret=" + sample.Caret + "; native=" + (sample.Edit != IntPtr.Zero));
                 Check(!sample.Same(read(1)), "Stale suggestion still valid");
                 if (foregroundVerified)
                 {

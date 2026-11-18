@@ -160,7 +160,9 @@ namespace AmadeusWriting
             string replacement = Grant.Mode == "paragraph" ? "\r\n\r\n" + suggestion : suggestion;
             if (Edit != IntPtr.Zero)
             {
-                if (grammar) Native.Message(Edit, 0xb1, new IntPtr(Caret - Draft.Length), new IntPtr(Caret));
+                long selection = Native.Message(Edit, 0xb0, IntPtr.Zero, IntPtr.Zero);
+                if (selection == -1 || (selection & 65535) != Caret || ((selection >> 16) & 65535) != Caret) return;
+                Native.Message(Edit, 0xb1, new IntPtr(grammar ? Caret - Draft.Length : Caret), new IntPtr(Caret));
                 IntPtr buffer = Marshal.StringToHGlobalUni(replacement);
                 try { Native.Message(Edit, 0xc2, new IntPtr(1), buffer); } finally { Marshal.FreeHGlobal(buffer); }
             }
