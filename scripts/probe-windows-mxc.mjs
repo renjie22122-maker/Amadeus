@@ -25,6 +25,9 @@ if (!entry || !isAbsolute(entry))
 const manifest = JSON.parse(readFileSync(resolve(dirname(entry), '../../package.json'), 'utf8'));
 if (manifest.name !== '@microsoft/mxc-sdk' || manifest.version !== '1.1.0')
   throw Error('This design probe requires @microsoft/mxc-sdk 1.1.0');
+const { withPinnedDirectories } = await import('../native/windows/mxc-directory-grants.mjs');
+const { createRequire } = await import('node:module');
+const koffi = createRequire(entry)('koffi');
 const { probe, run } = await import(pathToFileURL(entry).href);
 const root = mkdtempSync(join(tmpdir(), 'amadeus-mxc-design-probe-'));
 const work = join(root, 'workspace'),
@@ -276,38 +279,41 @@ try {
     ')){Start-Sleep -Milliseconds 30};try{Get-Content ' +
     target +
     "}catch [System.UnauthorizedAccessException]{'denied'}";
-  const pendingSwap = run({
-    ...policy,
-    filesystem: {
-      ...policy.filesystem,
-      readonlyPaths: [...policy.filesystem.readonlyPaths, granted],
-    },
-    command:
-      '"' +
-      windows +
-      '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -EncodedCommand ' +
-      Buffer.from(psSwap, 'utf16le').toString('base64'),
-  });
-  let renameDenied = false;
-  try {
-    for (let i = 0; i < 100 && !existsSync(readyFile); i++) await delay(50);
-    if (!existsSync(readyFile)) throw Error('Replacement fixture not ready');
+  await withPinnedDirectories(koffi, [granted], async () => {
+    const pendingSwap = run({
+      ...policy,
+      filesystem: {
+        ...policy.filesystem,
+        readonlyPaths: [...policy.filesystem.readonlyPaths, granted],
+      },
+      command:
+        '"' +
+        windows +
+        '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -EncodedCommand ' +
+        Buffer.from(psSwap, 'utf16le').toString('base64'),
+    });
+    let renameDenied = false;
     try {
-      renameSync(granted, join(root, 'previous'));
-    } catch (error) {
-      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
-      renameDenied = true;
+      for (let i = 0; i < 100 && !existsSync(readyFile); i++) await delay(50);
+      if (!existsSync(readyFile)) throw Error('Replacement fixture not ready');
+      try {
+        renameSync(granted, join(root, 'previous'));
+      } catch (error) {
+        if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+        renameDenied = true;
+      }
+      if (!renameDenied) renameSync(replacement, granted);
+    } finally {
+      writeFileSync(proceed, 'done');
     }
-    if (!renameDenied) renameSync(replacement, granted);
-  } finally {
-    writeFileSync(proceed, 'done');
-  }
-  const swap = await pendingSwap;
-  results.push({
-    name: 'directory-replacement',
-    passed: swap.exitCode === 0 && swap.stdout.trim() === (renameDenied ? 'original' : 'denied'),
-    observed: swap.stdout.trim(),
+    const swap = await pendingSwap;
+    results.push({
+      name: 'directory-replacement',
+      passed: swap.exitCode === 0 && swap.stdout.trim() === (renameDenied ? 'original' : 'denied'),
+      observed: swap.stdout.trim(),
+    });
   });
+  renameSync(granted, join(root, 'released-grant'));
   // Look up only a fresh test window by its random title, first from the host.
   const desktopSource = join(work, 'WindowFixture.cs');
   const desktopExe = join(work, 'WindowFixture.exe');
