@@ -303,3 +303,5 @@ Shell refresh includes current run trees and unfinished work; historical timing 
 Source desktop launches attach to the independent local web service, sharing chats, bot settings and service configuration. `Start-Amadeus-Desktop.ps1` starts that service when necessary. Direct `desktop/launch.mjs` requires it already running; explicit `AMADEUS_BACKEND_URL` remains supported, and `AMADEUS_DESKTOP_STANDALONE=1` retains separate standalone development mode. Renderer sandboxing, isolated preload IPC and backend permissions remain enforced.
 
 Vector reuse lookups run on read-only workers, retaining scope and fingerprint checks before encoding/writing. Memory graph evidence uses an indexed event lookup for local messages. This avoids synchronous archive scans on the HTTP event loop; it does not rebuild LightRAG.
+
+Schema failures now retain only bounded field/code diagnostics, never model response bodies, and feed those diagnostics into the next bounded retry. A retry clears obsolete displayed errors while running; the original cursor is not advanced by an invalid response.

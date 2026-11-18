@@ -274,3 +274,31 @@ test('foreign source pages cannot starve later scoped messages', async (t) => {
   assert.equal(calls, 1);
   assert.equal(f.state().cursor, target.id);
 });
+
+test('schema failures carry bounded field feedback into retry without advancing sources', async (t) => {
+  const f = fixture(t);
+  f.add();
+  let calls = 0;
+  const worker = new ChatNotebookMaintenance(f.store, f.config, () => ({
+    complete: async (req) => {
+      calls++;
+      if (calls === 1)
+        return result({ changed: true, style: [], diary: '', reason: 'test', evidence: [] });
+      assert.deepEqual(JSON.parse(req.messages[1].content).validationFeedback, [
+        { code: 'invalid_type', field: 'style' },
+      ]);
+      return result({
+        changed: false,
+        style: '',
+        diary: '',
+        reason: 'Nothing useful',
+        evidence: [],
+      });
+    },
+  }));
+  await worker.tick(f.now);
+  assert.equal(f.state().error, 'NOTEBOOK_INVALID_SCHEMA');
+  assert.equal(f.state().cursor, undefined);
+  await worker.tick(f.state().nextAt + 1);
+  assert.equal(f.state().status, 'unchanged');
+});
