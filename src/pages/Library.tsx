@@ -28,10 +28,14 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
   );
   const [text, setText] = useState(''),
     [name, setName] = useState(''),
-    [results, setResults] = useState<any[]>([]),
+    [report, setReport] = useState<{ scope: string; query: string; data: any } | null>(null),
     [busy, setBusy] = useState(false);
+  const searchVersion = useRef(0);
+  const visible = report?.scope === scope ? report : null;
+  const results: any[] = visible?.data.results ?? [];
   useEffect(() => {
-    setResults([]);
+    ++searchVersion.current;
+    setReport(null);
   }, [scope]);
   const [knowledgeDate, setKnowledgeDate] = useState('');
   const [indexStatuses, setIndexStatuses] = useState<any>({});
@@ -184,15 +188,21 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
               <button
                 disabled={!scope || !text}
                 onClick={() =>
-                  go(async () =>
-                    setResults(
-                      await api('/knowledge/search', {
+                  (async () => {
+                    const version = ++searchVersion.current;
+                    try {
+                      const data = await api('/knowledge/search', {
                         scope,
                         query: text,
+                        includeDiagnostics: true,
                         asOf: knowledgeDate ? Date.parse(knowledgeDate + 'Z') : undefined,
-                      }),
-                    ),
-                  )
+                      });
+                      if (version === searchVersion.current)
+                        setReport({ scope, query: text, data });
+                    } catch (e: any) {
+                      if (version === searchVersion.current) notify(e.message);
+                    }
+                  })()
                 }
               >
                 <Search size={16} />
@@ -208,6 +218,59 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
                 onChange={(e) => setKnowledgeDate(e.target.value)}
               />
             </label>
+            {visible && (
+              <details className="search-result">
+                <summary>
+                  {t('settings') === 'Settings' ? 'Search details' : '本次检索详情'} ·{' '}
+                  {results.length} · {visible.data.retrievalDiagnostics.backend ?? '—'}
+                </summary>
+                <p>
+                  {t('settings') === 'Settings' ? 'Query' : '查询'}：{visible.query}
+                </p>
+                <p>
+                  {t('settings') === 'Settings' ? 'Semantic status' : '语义检索状态'}：
+                  {visible.data.retrievalDiagnostics.semanticStatus} ·{' '}
+                  {visible.data.retrievalDiagnostics.vectorInputMode}
+                </p>
+                <p>
+                  {t('settings') === 'Settings'
+                    ? 'Local vector rows read / eligible coverage'
+                    : '本次读取的本地向量行 / 有效范围覆盖'}
+                  ：{visible.data.retrievalDiagnostics.vectorRowsRead ?? '—'} /{' '}
+                  {visible.data.retrievalDiagnostics.vectorCoverage ?? '—'}
+                </p>
+                <p>
+                  {t('settings') === 'Settings'
+                    ? 'Configured backend / index'
+                    : '配置的后端 / 索引'}
+                  ：{visible.data.retrievalDiagnostics.configuredVectorBackend} /{' '}
+                  {visible.data.retrievalDiagnostics.configuredIndex}
+                </p>
+                {visible.data.retrievalDiagnostics.effectiveIndex && (
+                  <p>
+                    {t('settings') === 'Settings' ? 'Executed index' : '本次使用的索引'}：
+                    {visible.data.retrievalDiagnostics.effectiveIndex}
+                  </p>
+                )}
+                {visible.data.retrievalDiagnostics.cachedBuildIndex && (
+                  <p>
+                    {t('settings') === 'Settings'
+                      ? 'Index reported when cached'
+                      : '建立缓存时报告的索引'}
+                    ：{visible.data.retrievalDiagnostics.cachedBuildIndex}
+                  </p>
+                )}
+                {(visible.data.retrievalDiagnostics.reason ||
+                  visible.data.retrievalDiagnostics.fallbackReason) && (
+                  <p>
+                    {t('settings') === 'Settings' ? 'Fallback reason' : '降级原因'}：
+                    {visible.data.retrievalDiagnostics.reason ||
+                      visible.data.retrievalDiagnostics.fallbackReason}
+                  </p>
+                )}
+                <small>Trace: {visible.data.retrievalTraceId}</small>
+              </details>
+            )}
             {results.map((r) => (
               <div className="search-result" key={r.id}>
                 <strong>
@@ -224,7 +287,7 @@ export function Library({ page, state, selected, t, refresh, notify }: any) {
             key={scope}
             documents={state.documents.filter((d: any) => !scope || d.scope === scope)}
             statuses={indexStatuses}
-            query={results.length ? text : ''}
+            query={results.length ? visible!.query : ''}
             scope={scope}
             zh={t('settings') !== 'Settings'}
             go={go}

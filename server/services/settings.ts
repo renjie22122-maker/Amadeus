@@ -337,6 +337,10 @@ const schema = z.object({
 });
 export class Configuration {
   private value: Settings;
+  private generation = 0;
+  get revision() {
+    return this.generation;
+  }
   constructor(
     private path: string,
     private options: { persistSecrets?: boolean; secretCodec?: SecretCodec } = {},
@@ -500,6 +504,7 @@ export class Configuration {
     writePrivate(this.path + '.tmp', JSON.stringify(protectedValue, null, 2));
     renameSync(this.path + '.tmp', this.path);
     this.value = next;
+    ++this.generation;
     return this.public();
   }
 }

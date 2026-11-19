@@ -182,10 +182,26 @@ test('persistent manifests query without vector payload, invalidate on deletion,
     assert.equal(batched.diagnostics.batchedCacheSearch, true);
     assert.deepEqual(batched.rows, hit.rows);
     assert.equal(probes, 1);
+    const outside: any = kb.import('project:other', 'other', 'private');
+    store.db
+      .prepare('UPDATE chunks SET vector=? WHERE document_id=?')
+      .run(JSON.stringify({ model: 'm', values: [1, 0] }), outside.id);
+    const afterOtherImport = await run();
+    assert.equal(afterOtherImport.diagnostics.vectorRowsRead, 0);
+    assert.equal(afterOtherImport.diagnostics.vectorCoverage, 1);
+    assert.equal(uploads, 1);
+    assert(afterOtherImport.rows.every((r) => r.document_id === doc.id));
+    // Same-scope vector updates invalidate the warm manifest even when the IDs have not changed.
+    store.db
+      .prepare('UPDATE chunks SET vector=? WHERE document_id=?')
+      .run(JSON.stringify({ model: 'm', values: [0, 1] }), doc.id);
+    const changed = await run();
+    assert.equal(changed.diagnostics.vectorRowsRead, 1);
+    assert.equal(uploads, 2);
     batchSupported = false;
     snapshots.clear();
     assert.equal((await run()).rows.length, 1);
-    assert.equal(uploads, 2);
+    assert.equal(uploads, 3);
     const insert = store.db.prepare(
       'INSERT INTO chunks(id,scope,document_id,name,ordinal,text,vector,source_hash) VALUES(?,?,?,?,?,?,?,?)',
     );

@@ -145,8 +145,8 @@ export function Inspector({
             </label>
             <p className="muted">
               {t('settings') === 'Settings'
-                ? 'Opt-in: after 2 minutes idle, sends up to 30 recent user messages and 80 same-scope memories to this chat model. Automatically extracts, recalls, consolidates and builds sourced memory relations. Newer explicit same-attribute facts replace older automatic entries; uncertain conflicts are excluded without prompting. Turning off stops extraction and recall. No tool outputs or attachments. Uses model quota.'
-                : '开启后空闲 2 分钟，将最多 30 条近期用户消息及 80 条同范围记忆发送给此对话模型并消耗额度。自动提取、召回、去重并建立来源关系；同属性的新明确陈述替代旧自动记忆，不确定冲突自动隔离，不打断询问。关闭后停止提取和召回。不发送工具输出和附件。'}
+                ? 'Automatic management uses this chat’s authorized model to review eligible messages and relevant same-scope memories; some verified tool outcomes can serve as evidence. This uses model quota. To stop using existing memories, turn off “Use existing memories” as well.'
+                : '自动管理使用本对话已授权的模型复审符合条件的消息及同范围的相关记忆；经验证的工具结果也可以作为依据。这会消耗模型额度。若还要停止召回已有记忆，请同时关闭“使用已有记忆”。'}
               <br />
               {state.settings.profiles.find((p: any) => p.id === conversation.profileId)?.baseUrl}
             </p>

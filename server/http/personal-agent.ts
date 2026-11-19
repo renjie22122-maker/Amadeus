@@ -1,3 +1,4 @@
+import { runReceipt } from '../services/run-receipt.js';
 import { writingTools, type WritingMode } from '../../shared/dot-writing.js';
 import { providerFor } from '../providers/registry.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -624,6 +625,20 @@ export function personalAgentRoutes(
     service.runtime.stop(voiceOwner(req.params.runId).id);
     return { ok: true };
   });
+  app.get<{ Params: { conversationId: string; runId: string } }>(
+    '/api/personal/dot/:conversationId/runs/:runId/receipt',
+    async (req) => {
+      const identity = dotIdentity();
+      assert(
+        identity?.conversationId === req.params.conversationId,
+        'NOT_FOUND',
+        'Dot binding changed.',
+        404,
+      );
+      service.available(req.params.conversationId);
+      return runReceipt(service.store, req.params.conversationId, req.params.runId);
+    },
+  );
   app.get('/api/personal/dot', async () => {
     const identity = dotIdentity();
     if (!identity) return { identity: null, events: [], active: false };
@@ -631,6 +646,12 @@ export function personalAgentRoutes(
     return {
       identity,
       title: c.title,
+      latestRunId:
+        service.store.db
+          .prepare(
+            'SELECT id FROM run_metadata WHERE conversation_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1',
+          )
+          .get(c.id)?.id ?? null,
       active: Boolean(service.runtime.active(c.id)),
       events: service.store
         .selectedEvents(c.id, ['user.message', 'assistant.message'], 8)

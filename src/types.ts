@@ -12,6 +12,12 @@ import type {
 } from '../shared/types';
 export type RunView = Omit<Run, 'checkpoints'>;
 export interface UiState {
+  serviceBuild?: {
+    version: string;
+    commit: string | null;
+    dirty: boolean | null;
+    builtAt: string | null;
+  };
   conversations: Conversation[];
   projects: Project[];
   runs: RunView[];

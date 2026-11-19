@@ -38,14 +38,15 @@ export class MemoryIndex {
   ) {
     const fingerprint = this.embeddings.fingerprint();
     let indexed = 0;
-    for (const m of this.store
-      .list<Memory>('memory')
-      .filter(
-        (m) =>
-          (!scope || m.scope === scope) &&
-          memoryValid(m) &&
-          new MemoryLifecycle(this.store).evidenceValid(m),
-      )) {
+    for (const m of (scope
+      ? this.store.memoriesInScopes([scope])
+      : this.store.list<Memory>('memory')
+    ).filter(
+      (m) =>
+        (!scope || m.scope === scope) &&
+        memoryValid(m) &&
+        new MemoryLifecycle(this.store).evidenceValid(m),
+    )) {
       const existing = this.storedVector(m.id);
       if (
         existing?.hash === hash(m) &&
@@ -91,15 +92,21 @@ export class MemoryIndex {
       const source = origin ? this.store.maybe<Conversation>('conversation', origin) : undefined;
       return !m.scope.startsWith('chat:') && !source?.remoteChatOnly && !source?.remoteMemoryOnly;
     };
-    const memories = this.store
-        .list<Memory>('memory')
+    const scopes = isolatedScope
+      ? [isolatedScope]
+      : [...(includeUserMemory ? ['user'] : []), ...(projectId ? ['project:' + projectId] : [])];
+    const lifecycle = new MemoryLifecycle(this.store);
+    const readCandidates = () =>
+      this.store
+        .memoriesInScopes(scopes)
         .filter(
           (m) =>
             domainAllowed(m) &&
             (includeUserMemory || m.scope !== 'user') &&
             memoryAccessible(m, conversationId) &&
-            new MemoryLifecycle(this.store).evidenceValid(m),
-        ),
+            lifecycle.evidenceValid(m),
+        );
+    const memories = readCandidates(),
       scores = new Map<string, number>();
     const eligible = memories.filter(
       (m) =>
@@ -120,7 +127,8 @@ export class MemoryIndex {
       });
     let method = 'scoped-lexical',
       fallback: string | undefined;
-    if (this.embeddings.enabled() && vectors.length) {
+    const needsEmbedding = this.embeddings.enabled() && vectors.length > 0;
+    if (needsEmbedding) {
       try {
         const [q] = await this.embeddings.encode([query], signal, 'query');
         for (const { m, v } of vectors) {
@@ -138,17 +146,29 @@ export class MemoryIndex {
       }
     }
     // Re-read scope/activation after any remote request; concurrent deletion or edits must win.
-    const current = this.store
-      .list<Memory>('memory')
-      .filter(
-        (m) =>
-          domainAllowed(m) &&
-          (includeUserMemory || m.scope !== 'user') &&
-          memoryAccessible(m, conversationId) &&
-          new MemoryLifecycle(this.store).evidenceValid(m),
-      );
-    for (const m of memories)
-      if (!current.some((c) => c.id === m.id && hash(c) === hash(m))) scores.delete(m.id);
+    if (needsEmbedding && conversationId) {
+      const latest = this.store.maybe<Conversation>('conversation', conversationId);
+      if (
+        !!conversation !== !!latest ||
+        (latest &&
+          conversation &&
+          conversationMemoryScope(latest) !== conversationMemoryScope(conversation))
+      )
+        return {
+          memories: [],
+          method,
+          fallback: 'Conversation scope changed during recall.',
+          invalidVectors,
+        };
+    }
+    const current = needsEmbedding ? readCandidates() : memories;
+    if (scores.size) {
+      const previousById = new Map(memories.map((m) => [m.id, m]));
+      for (const m of current) {
+        const before = previousById.get(m.id);
+        if (scores.has(m.id) && (!before || hash(before) !== hash(m))) scores.delete(m.id);
+      }
+    }
     return {
       memories: recallMemories(
         current,

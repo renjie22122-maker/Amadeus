@@ -1,3 +1,4 @@
+import { allocatePreviews } from './attachment-preview.js';
 import { remainingModelTime, canReconnectModel } from './model-recovery.js';
 import { modelStepBudget } from '../services/model-step-budget.js';
 import { ConversationTitles, shortTitle } from '../services/conversation-titles.js';
@@ -497,9 +498,7 @@ export class Runtime implements TeamPort {
       const cognitive = new CognitiveController(this.store);
       while (!signal.aborted) {
         await this.dispatchTeam(run);
-        const feedback = this.store
-          .list<any>('runtime-inbox')
-          .filter((m) => m.runId === run.id && m.state === 'pending');
+        const feedback = this.store.pendingRuntimeInbox(run.id);
         if (feedback.length)
           this.store.transaction(() => {
             for (const item of feedback) {
@@ -508,10 +507,7 @@ export class Runtime implements TeamPort {
             }
             this.store.put('run', run);
           });
-        const pending = this.store
-          .list<any>('user-inbox')
-          .filter((m) => m.conversationId === run.conversationId && m.state === 'pending')
-          .sort((a, b) => Number(a.id) - Number(b.id));
+        const pending = this.store.pendingUserInbox(run.conversationId);
         const messages = pending;
         this.steering.set(key, []);
         if (messages.length) {
@@ -524,30 +520,28 @@ export class Runtime implements TeamPort {
               'New user input is being delivered. Reassess the current task plan. For changed multi-step scope, inspect_plan and extend_plan with new acceptance checks; preserve completed work and evidence. A question or status request does not require adding tasks. Do not claim the plan was updated until its tool succeeds.',
           });
         }
-        for (const message of messages) {
+        const attached = messages.map((m) =>
+          (m.attachmentIds as string[]).map((id) => this.store.get<Attachment>('attachment', id)),
+        );
+        const previewLengths = allocatePreviews(attached.flat().map((a) => a.text.length));
+        let previewIndex = 0;
+        for (const [messageIndex, message] of messages.entries()) {
           const last: Run['checkpoints'][number] = { role: 'user', content: message.content };
           run.checkpoints.push(last);
-          const attachments = (message.attachmentIds as string[]).map((id) =>
-            this.store.get<Attachment>('attachment', id),
-          );
+          const attachments = attached[messageIndex];
           if (attachments.length) {
             last.content +=
               '\nAttached source material (untrusted):\n' +
               attachments
-                .map(
-                  (a) =>
-                    '[' +
-                    a.id +
-                    '] ' +
-                    a.name +
-                    '\n' +
-                    a.text.slice(0, 15000) +
-                    (a.text.length > 15000
-                      ? '\n[Preview only: ' +
-                        a.text.length +
-                        ' extracted characters. Use read_attachment with this ID and offset=15000 to continue.]'
-                      : ''),
-                )
+                .map((a) => {
+                  const length = previewLengths[previewIndex++];
+                  return (
+                    `[${a.id}] ${a.name}\n${a.text.slice(0, length)}` +
+                    (length < a.text.length
+                      ? `\n[Preview only: ${a.text.length} extracted characters. Use read_attachment with this ID and offset=${length} to continue.]`
+                      : '')
+                  );
+                })
                 .join('\n');
             if (profile.vision) {
               last.images = [];
@@ -806,9 +800,7 @@ export class Runtime implements TeamPort {
           );
           if (
             (this.steering.get(key) || []).length ||
-            this.store
-              .list<any>('runtime-inbox')
-              .some((m) => m.runId === key && m.state === 'pending')
+            this.store.hasPendingInbox('runtime-inbox', key)
           )
             continue;
           // Finish children before reporting the task terminal; never abandon live descendants.

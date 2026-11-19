@@ -276,6 +276,21 @@ test('desktop dot reads only its bound conversation and voice cannot stop anothe
   assert.equal(state.json().identity.conversationId, 'c');
   assert.deepEqual(state.json().events, []);
   assert.equal('devices' in state.json(), false);
+  f.store.put('run', {
+    id: 'receipt-check',
+    conversationId: 'c',
+    status: 'completed',
+    modelCalls: 0,
+    createdAt: 100,
+  });
+  const view = await app.inject('/api/personal/dot/c/runs/receipt-check/receipt');
+  assert.equal(view.statusCode, 200);
+  assert.equal(view.json().runId, 'receipt-check');
+  assert.equal(view.json().deliveryAvailable, false);
+  assert.notEqual(
+    (await app.inject('/api/personal/dot/other/runs/receipt-check/receipt')).statusCode,
+    200,
+  );
   const voice = await app.inject({
     method: 'POST',
     url: '/api/personal/voice-turn',

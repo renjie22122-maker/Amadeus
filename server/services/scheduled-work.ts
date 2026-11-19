@@ -58,12 +58,17 @@ export class ScheduledWorkService {
     private store: Store,
     private runtime: any,
   ) {}
+  get active() {
+    return !!this.timer;
+  }
   start() {
+    if (this.timer) return;
     this.timer = setInterval(() => this.tick(), 5000);
     this.timer.unref();
   }
   close() {
     clearInterval(this.timer);
+    this.timer = undefined;
   }
   private record(task: ScheduledWork, status: string, now: number, error?: string) {
     const key = task.id + ':' + (task.runId || 'blocked:' + task.dueAt);
@@ -92,7 +97,7 @@ export class ScheduledWorkService {
     });
   }
   tick(now = Date.now()) {
-    for (let task of this.store.list<ScheduledWork>('scheduled-work')) {
+    for (let task of this.store.unsettledSchedules<ScheduledWork>()) {
       // Repair stale pre-upgrade pointers without relaunching or notifying twice.
       if (task.status === 'needs_attention' && task.runId) {
         const settled = this.store.maybeRunHeader(task.runId);

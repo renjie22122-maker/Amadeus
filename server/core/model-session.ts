@@ -19,12 +19,35 @@ export async function completeModel(
   run: Run,
   input: ModelRequest,
 ) {
-  const requestedAt = Date.now();
+  const requestId = id(),
+    requestedAt = Date.now(),
+    started = performance.now();
+  const elapsed = () => Math.max(0, Math.round(performance.now() - started));
+  let firstTextMs: number | null = null,
+    firstThinkingMs: number | null = null;
+  const timing = (outcome: 'returned' | 'failed') => ({
+    outcome,
+    elapsedMs: elapsed(),
+    firstTextMs,
+    firstThinkingMs,
+  });
   // Numeric diagnostics only: never store streamed reasoning or request secrets.
   const loopDelay = monitorEventLoopDelay({ resolution: 20 });
   loopDelay.enable();
   try {
-    const result = await resolveProvider(input.profile).complete(input);
+    const result = await resolveProvider(input.profile).complete({
+      ...input,
+      onText: (text) => {
+        if (text.length && firstTextMs === null) firstTextMs = elapsed();
+        input.onText(text);
+      },
+      onThinking: input.onThinking
+        ? () => {
+            firstThinkingMs ??= elapsed();
+            input.onThinking!();
+          }
+        : undefined,
+    });
     // Validate delivery before treating an otherwise successful transport as a result.
     // Keep measured usage on rejection so a repair does not hide the first call's cost.
     if (!result.message.content.trim() && !result.message.calls?.length)
@@ -53,10 +76,19 @@ export async function completeModel(
       store.put('context-diagnostics', { id: run.id, ...diagnostics });
       store.event(run.conversationId, run.id, 'context.cache_observed', diagnostics);
     }
-    accountModelUsage(store, run, result.usage, input.profile, id(), requestedAt);
+    accountModelUsage(
+      store,
+      run,
+      result.usage,
+      input.profile,
+      requestId,
+      requestedAt,
+      timing('returned'),
+    );
     return result;
   } catch (error) {
     store.event(run.conversationId, run.id, 'model.request-failed', {
+      requestId,
       failure: providerFailureDiagnostic(error),
       elapsedMs: Date.now() - requestedAt,
       timeoutMs: input.profile.timeoutMs,
@@ -88,7 +120,7 @@ export async function completeModel(
             ? 'CONNECTION_FAILED'
             : 'REQUEST_FAILED';
     }
-    accountModelUsage(store, run, usage, input.profile, id(), requestedAt);
+    accountModelUsage(store, run, usage, input.profile, requestId, requestedAt, timing('failed'));
     if (error instanceof AppError && error.code === 'MODEL_INCOMPLETE') {
       const info = error as AppError & {
         finishReason?: string;
@@ -119,6 +151,12 @@ export function accountModelUsage(
   profile: Profile,
   requestId: string,
   requestedAt = Date.now(),
+  timing?: {
+    outcome: 'returned' | 'failed';
+    elapsedMs: number;
+    firstTextMs: number | null;
+    firstThinkingMs: number | null;
+  },
 ) {
   const pricing = modelPricing(profile, requestedAt);
   run.priceBands = [...new Set([...(run.priceBands || []), pricing.basis])];
@@ -127,7 +165,7 @@ export function accountModelUsage(
     .run(
       requestId,
       run.id,
-      JSON.stringify({ usage, model: profile.model, pricing, at: Date.now() }),
+      JSON.stringify({ usage, model: profile.model, pricing, at: Date.now(), timing }),
     );
   run.inputTokens += usage.input;
   run.outputTokens += usage.output;
@@ -156,6 +194,7 @@ export function accountModelUsage(
   } else run.estimatedUsd = null;
   store.put('run', run);
   store.event(run.conversationId, run.id, 'usage', {
+    requestId,
     inputTokens: run.inputTokens,
     outputTokens: run.outputTokens,
     cachedTokens: run.cachedTokens,

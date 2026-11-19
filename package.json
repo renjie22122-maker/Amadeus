@@ -16,6 +16,8 @@
     "format:check": "prettier --check .",
     "test": "node scripts/run-tests.mjs",
     "build:server": "node scripts/build-server.mjs",
+    "test:contracts": "node --import tsx --test --test-concurrency=1 tests/architecture-boundaries.test.ts tests/streamed-research.test.ts tests/memory-context.test.ts tests/chat-notebook-maintenance.test.ts tests/runtime-control-upgrade.test.ts tests/office.test.ts tests/delegation-recovery.test.ts tests/memory-scopes.test.ts tests/memory-local-index.test.ts tests/recovery-policy.test.ts tests/model-pricing.test.ts tests/chat-connections.test.ts tests/personal-agent.test.ts",
+    "verify:server": "node scripts/build-server.mjs --verify",
     "check:docs": "node scripts/check-docs.mjs",
     "eval:preflight": "node evals/benchmark/preflight.mjs",
     "desktop": "node desktop/launch.mjs",

@@ -1,3 +1,4 @@
+import { RunReceipt } from './RunReceipt';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 const BrowserVoiceChat = lazy(() =>
   import('./BrowserVoiceChat').then((m) => ({ default: m.BrowserVoiceChat })),
@@ -301,6 +302,15 @@ export function PersonalDot() {
                     ? '随时可以聊'
                     : '请先选择常驻助手会话')}
             </span>
+            {snapshot?.latestRunId && conversationId && (
+              <RunReceipt
+                key={conversationId + ':' + snapshot.latestRunId}
+                runId={snapshot.latestRunId}
+                conversationId={conversationId}
+                zh
+                dot
+              />
+            )}
             <div className="personal-dot-messages" aria-label="最近消息">
               {snapshot?.events.map((e: any) => (
                 <p key={e.id}>

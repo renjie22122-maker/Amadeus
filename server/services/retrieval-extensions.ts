@@ -242,7 +242,7 @@ async function vectorShardSearch(
     snapshotCached: !!result.snapshotCached,
     result: result.result as { id: string; score: number }[],
     backend: c.backend,
-    effectiveIndex: String(result.effectiveIndex || c.index).slice(0, 80),
+    effectiveIndex: String(result.effectiveIndex || 'unreported').slice(0, 80),
     fallbackReason: result.fallbackReason ? String(result.fallbackReason).slice(0, 160) : null,
   };
 }

@@ -2,6 +2,16 @@ import { createHash } from 'node:crypto';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
 /** Explicit client revalidation; no disk/browser cache of private workspace state. */
+export function revisionState(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  revision: string,
+  read: () => unknown,
+) {
+  const tag = '"' + revision + '"';
+  reply.header('ETag', tag).header('Cache-Control', 'no-store');
+  return req.headers['if-none-match'] === tag ? reply.code(304).send() : reply.send(read());
+}
 export function conditionalState(req: FastifyRequest, reply: FastifyReply, state: unknown) {
   const body = JSON.stringify(state);
   const etag = '"' + createHash('sha256').update(body).digest('hex') + '"';

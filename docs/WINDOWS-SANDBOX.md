@@ -2,7 +2,7 @@
 
 [English](WINDOWS-SANDBOX.md) | [简体中文](WINDOWS-SANDBOX.zh-CN.md)
 
-Status: proposed backend; prototype verified on 2026-11-18. This document and the opt-in probe do not enable a new execution backend, change permissions, or replace the existing native-windows implementation.
+Current status: Windows MXC is an optional execution backend for offline commands in a disposable directory. It does not mount project files. Choose it in execution settings; inspect the timestamp and results of the local verifier on that machine. The earlier prototype and failed experiments below are historical evidence.
 
 ## Decision and evidence
 

@@ -4,7 +4,7 @@ import { Store } from '../storage/store.js';
 import { vectorRecord } from './vector-record.js';
 import { cosine } from './embedding.js';
 import { externalVectorSearch, retrievalPost } from './retrieval-extensions.js';
-import { documentEligibilitySQL } from './knowledge-versions.js';
+import { scopedVectorView } from './scoped-vector-view.js';
 import type { RetrievalSettings } from '../../shared/retrieval.js';
 
 /** Keyset paging bounds host memory; only top candidates retain original text. */
@@ -18,24 +18,17 @@ export async function streamedVectors(
   external: RetrievalSettings['vectors'],
   signal?: AbortSignal,
 ) {
-  const revision = () =>
-    (store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any).version;
-  const before = revision();
-  const docs = () =>
-    JSON.stringify(
-      store.db.prepare("SELECT id,data FROM records WHERE kind='document' ORDER BY id").all(),
-    );
-  const beforeDocs = docs();
-  const eligible = store.db
-    .prepare(documentEligibilitySQL)
-    .all(asOf, asOf)
-    .map((r: any) => r.id)
-    .sort();
+  const { before, eligible, eligibleSet, scopeEligibility, changed } = scopedVectorView(
+    store,
+    scopes,
+    documentIds,
+    asOf,
+  );
   const identity = createHash('sha256')
     .update(
       JSON.stringify([
+        'scoped-vector-manifest-v1',
         before,
-        beforeDocs,
         eligible,
         [...scopes].sort(),
         [...documentIds].sort(),
@@ -115,15 +108,14 @@ export async function streamedVectors(
         hits.sort((a, b) => b.score - a.score);
         hits = hits.slice(0, 60);
       }
-      if (revision() !== before || docs() !== beforeDocs)
-        throw Object.assign(Error('Index changed'), { code: 'INDEX_CHANGED' });
+      if (changed()) throw Object.assign(Error('Index changed'), { code: 'INDEX_CHANGED' });
       const read = store.db.prepare(
         'SELECT id,scope,document_id,name,ordinal,text FROM chunks WHERE id=?',
       );
       const rows: any[] = hits.map((hit) => ({ ...read.get(hit.id), score: hit.score }));
       if (
         rows.some(
-          (r) => !r.id || !scopes.includes(r.scope as string) || !eligible.includes(r.document_id),
+          (r) => !r.id || !scopes.includes(r.scope as string) || !eligibleSet.has(r.document_id),
         )
       )
         throw Error('Cached scope changed');
@@ -131,6 +123,9 @@ export async function streamedVectors(
         rows,
         diagnostics: {
           backend: 'persistent-external',
+          cachedBuildIndex: manifest.effectiveIndex ?? 'unreported',
+          vectorRowsRead: 0,
+          vectorCoverage: manifest.vectorHealth.scanned,
           vectorHealthBasis: 'cached_manifest_coverage',
           vectorInputMode: 'cached_index_query',
           cacheHit: true,
@@ -148,15 +143,14 @@ export async function streamedVectors(
     }
   }
   const snapshots: any[] = [];
+  const indexes = new Set<string>(),
+    fallbackReasons = new Set<string>();
   const sql =
     'SELECT c.* FROM chunks c WHERE c.id IN (SELECT p.id FROM chunks p WHERE p.vector IS NOT NULL AND p.scope IN (' +
     scopes.map(() => '?').join(',') +
     ') AND p.document_id IN (' +
-    documentEligibilitySQL +
+    scopeEligibility +
     ')' +
-    (documentIds.length
-      ? ' AND p.document_id IN (' + documentIds.map(() => '?').join(',') + ')'
-      : '') +
     ' AND p.id>? ORDER BY p.id LIMIT ?) ORDER BY c.id';
   const batchSize = Math.max(
     1,
@@ -173,7 +167,7 @@ export async function streamedVectors(
     signal?.throwIfAborted();
     const rows = store.db
       .prepare(sql)
-      .all(...scopes, asOf, asOf, ...documentIds, after, batchSize) as any[];
+      .all(...scopes, asOf, asOf, ...scopes, ...documentIds, after, batchSize) as any[];
     if (!rows.length) break;
     after = rows.at(-1).id;
     scanned += rows.length;
@@ -200,6 +194,8 @@ export async function streamedVectors(
           signal,
         );
         hits = found.result;
+        indexes.add(found.effectiveIndex);
+        if (found.fallbackReason) fallbackReasons.add(found.fallbackReason);
         snapshots.push(...found.snapshots);
       } catch (e) {
         if (signal?.aborted) throw e;
@@ -219,7 +215,7 @@ export async function streamedVectors(
     best = best.slice(0, 60);
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
-  if (revision() !== before || docs() !== beforeDocs)
+  if (changed())
     throw Object.assign(new Error('Knowledge changed during streaming; query again.'), {
       code: 'INDEX_CHANGED',
     });
@@ -233,19 +229,28 @@ export async function streamedVectors(
     store.put('vector-query-manifest', {
       id: identity,
       shards: snapshots,
+      effectiveIndex: [...indexes].join(',') || 'unreported',
       vectorHealth: { scanned, usable: scanned, invalid, incompatible },
       createdAt: Date.now(),
     });
-    for (const old of store
-      .list<any>('vector-query-manifest')
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(8))
-      store.remove('vector-query-manifest', old.id);
+    store.db
+      .prepare(
+        "DELETE FROM records WHERE kind='vector-query-manifest' AND id IN (SELECT id FROM records WHERE kind='vector-query-manifest' ORDER BY json_extract(data,'$.createdAt') DESC,rowid DESC LIMIT -1 OFFSET 8)",
+      )
+      .run();
   }
   return {
     rows: best,
     diagnostics: {
-      backend: external?.enabled ? 'streamed-external' : 'streamed-exact',
+      backend: external?.enabled && batches > fallback ? 'streamed-external' : 'streamed-exact',
+      effectiveIndex:
+        [...new Set([...indexes, ...(!external?.enabled || fallback ? ['flat'] : [])])].join(',') ||
+        'unreported',
+      fallbackReason: fallback
+        ? 'external_batch_unavailable'
+        : [...fallbackReasons].join('; ') || null,
+      vectorRowsRead: scanned,
+      vectorCoverage: scanned,
       vectorHealthBasis: 'rows_read_this_request',
       vectorInputMode: external?.enabled ? 'bounded_snapshot_upload' : 'exact_scan',
       batches,

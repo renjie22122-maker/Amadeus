@@ -8,6 +8,8 @@
 
 ## 当前指南
 
+- [运行行为、版本与诊断](architecture-runtime-contracts.zh-CN.md)
+
 ### 使用工作空间
 
 - [功能指南](FEATURES.zh-CN.md)

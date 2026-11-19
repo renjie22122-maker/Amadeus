@@ -121,7 +121,7 @@ export function installKnowledgeTools(registry: ToolRegistry) {
           ),
         );
       }
-      const results = await c.knowledge.hybrid(
+      const report = await c.knowledge.queryReport(
         c.scopes,
         a.query,
         a.limit,
@@ -132,12 +132,11 @@ export function installKnowledgeTools(registry: ToolRegistry) {
         a.mode,
       );
       return text(
-        results.length
-          ? results
+        report.results.length
+          ? report.results
           : {
-              results,
+              ...report,
               diagnostics: await c.knowledge.diagnosticsAsync(c.scopes, a.asOf),
-              retrievalDiagnostics: c.knowledge.lastRetrieval,
             },
       );
     },

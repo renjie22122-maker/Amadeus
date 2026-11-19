@@ -136,3 +136,68 @@ test('failed requests retain safe usage reasons without inventing measured token
     store.close();
   }
 });
+
+test('stream timing correlates with the usage ledger and records no text, including a tool-only response', async (t) => {
+  const { Store } = await import('../server/storage/store.js'),
+    { completeModel } = await import('../server/core/model-session.js');
+  const s = new Store(':memory:');
+  t.after(() => s.close());
+  const run = {
+    id: 'timed',
+    conversationId: 'c',
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    modelCalls: 0,
+    estimatedUsd: 0,
+  } as import('../shared/types.js').Run;
+  const secret = 'example private string';
+  const text: string[] = [];
+  let thoughts = 0;
+  for (const fail of [false, true]) {
+    const promise = completeModel(
+      s,
+      () => ({
+        complete: async (req) => {
+          req.onThinking?.();
+          if (fail) {
+            req.onText(secret);
+            throw Error(secret);
+          }
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              calls: [{ id: 'x', name: 'tool', arguments: {} }],
+            },
+            usage: { input: 0, output: 0, cached: 0, measured: false },
+          };
+        },
+      }),
+      run,
+      {
+        profile: p,
+        messages: [{ role: 'user', content: 'fixture' }],
+        tools: [],
+        signal: new AbortController().signal,
+        onThinking: () => {
+          thoughts++;
+        },
+        onText: (x) => text.push(x),
+      },
+    );
+    if (fail) await assert.rejects(promise);
+    else await promise;
+  }
+  assert.deepEqual(text, [secret]);
+  assert.equal(thoughts, 2);
+  const rows = s.db.prepare('SELECT request_id,data FROM ledger ORDER BY rowid').all();
+  const [first, last] = rows.map((r) => JSON.parse(String(r.data)).timing);
+  assert.equal(first.firstTextMs, null);
+  assert.equal(first.outcome, 'returned');
+  assert.equal(last.outcome, 'failed');
+  assert(last.elapsedMs >= last.firstTextMs && last.elapsedMs >= last.firstThinkingMs);
+  const failure = s.eventsForRun(run.id, ['model.request-failed'])[0];
+  assert.equal(failure.data.requestId, rows[1].request_id);
+  assert(!JSON.stringify(rows).includes(secret));
+});

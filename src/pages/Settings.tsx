@@ -13,13 +13,14 @@ import { matchModel } from '../../shared/model-metadata';
 import { PlugZap, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { useEffect, useState, useRef } from 'react';
 import { api } from '../api';
-export function SettingsPage({ settings, t, refresh, notify }: any) {
+export function SettingsPage({ build, settings, t, refresh, notify }: any) {
   const videoAccounts = useRef<VideoAccountSettingsHandle>(null);
   const [value, setValue] = useState(() => structuredClone(settings)),
     [selected, setSelected] = useState(settings.defaultProfileId),
     [busy, setBusy] = useState(false),
     [models, setModels] = useState<any[]>([]),
     [executionCheck, setExecutionCheck] = useState<any>(null);
+  const [operational, setOperational] = useState<any>(null);
   const [mxcReport, setMxcReport] = useState<any>(null);
   const profile = value.profiles.find((p: any) => p.id === selected);
   useEffect(() => {
@@ -93,6 +94,47 @@ export function SettingsPage({ settings, t, refresh, notify }: any) {
         <h1>{t('settings')}</h1>
         <p>{t('Configure your models and choose how tools may run.')}</p>
       </div>
+      <details
+        className="panel"
+        onToggle={(e) => {
+          if (e.currentTarget.open)
+            void run(async () => setOperational(await api('/runtime/status')));
+        }}
+      >
+        <summary>
+          {t('settings') === 'Settings' ? 'Running service' : '当前运行的服务'} ·{' '}
+          {build?.version ?? '—'} ·{' '}
+          {build?.commit?.slice(0, 12) ??
+            (t('settings') === 'Settings' ? 'unknown commit' : '提交未记录')}
+        </summary>
+        <p>
+          {build?.builtAt ?? '—'}
+          {build?.dirty
+            ? t('settings') === 'Settings'
+              ? ' · includes local changes'
+              : ' · 构建时含本地改动'
+            : ''}
+        </p>
+        {operational && (
+          <>
+            <p>
+              {t('settings') === 'Settings' ? 'Scheduler' : '后台调度'}：
+              {operational.schedulerActive ? '●' : '○'} ·{' '}
+              {t('settings') === 'Settings'
+                ? 'Notebook sweep failures (consecutive)'
+                : '日记整理循环连续异常'}
+              ：{operational.notebook.consecutiveFailures}
+            </p>
+            {operational.notebook.lastFailureAt && (
+              <small>
+                {t('settings') === 'Settings' ? 'Last sweep error' : '最近循环异常'}：
+                {new Date(operational.notebook.lastFailureAt).toLocaleString()} ·{' '}
+                {operational.notebook.lastFailureCode}
+              </small>
+            )}
+          </>
+        )}
+      </details>
       <TokenActivity zh={t('settings') !== 'Settings'} />
       <section className="panel">
         <label>

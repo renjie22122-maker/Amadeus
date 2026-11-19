@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { AgentEvent, Conversation, PendingInput, Run } from '../../shared/types.js';
+import type { AgentEvent, Conversation, Memory, PendingInput, Run } from '../../shared/types.js';
 import { AppError, assert } from '../core/errors.js';
 import { checkTransition, terminal } from '../core/lifecycle.js';
 function parseStored(data: string, kind: string, key: string) {
@@ -39,6 +39,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS events_conversation_type ON events(conversation_id,type,id);
       CREATE INDEX IF NOT EXISTS events_run ON events(run_id,id);
       CREATE INDEX IF NOT EXISTS events_tool_result ON events(run_id,json_extract(data,'$.callId')) WHERE type='tool.completed';
+      CREATE INDEX IF NOT EXISTS events_settled_tools ON events(run_id,id) WHERE type='tool.progress' AND json_extract(data,'$.phase')='settled';
       CREATE INDEX IF NOT EXISTS events_tool_started ON events(run_id,json_extract(data,'$.callId'),id) WHERE type='tool.started';
       CREATE TABLE IF NOT EXISTS chunks(id TEXT PRIMARY KEY,scope TEXT NOT NULL,document_id TEXT NOT NULL,name TEXT NOT NULL,ordinal INTEGER NOT NULL,text TEXT NOT NULL,vector TEXT,source_hash TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS chunks_scope ON chunks(scope);
@@ -47,6 +48,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS chunks_vector_page ON chunks(scope,id,document_id) WHERE vector IS NOT NULL;
       CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(id UNINDEXED,terms);
       CREATE TABLE IF NOT EXISTS ledger(request_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS ledger_run ON ledger(run_id);
       CREATE TABLE IF NOT EXISTS effects(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,tool TEXT NOT NULL,args TEXT NOT NULL,state TEXT NOT NULL,result TEXT);
     `);
     this.db.exec(`
@@ -54,14 +56,42 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_runs_conversation ON records(json_extract(data,'$.conversationId'),json_extract(data,'$.createdAt')) WHERE kind='run';
       INSERT OR IGNORE INTO schema_migrations VALUES(1,unixepoch()*1000);
       CREATE TABLE IF NOT EXISTS run_metadata(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL,created_at INTEGER NOT NULL,data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS run_metadata_parent ON run_metadata(json_extract(data,'$.parentRunId'));
       CREATE INDEX IF NOT EXISTS run_metadata_conversation ON run_metadata(conversation_id,created_at);
       INSERT OR IGNORE INTO run_metadata SELECT id,COALESCE(json_extract(data,'$.conversationId'),''),COALESCE(json_extract(data,'$.createdAt'),0),json_remove(data,'$.checkpoints') FROM records WHERE kind='run';
       CREATE INDEX IF NOT EXISTS records_conversation_scope ON records(kind,CASE WHEN json_valid(data) THEN json_extract(data,'$.conversationId') END);
+      CREATE INDEX IF NOT EXISTS records_memory_scope ON records(CASE WHEN json_valid(data) THEN json_extract(data,'$.scope') END,id) WHERE kind='memory';
       CREATE INDEX IF NOT EXISTS effects_unfinished ON effects(run_id) WHERE state='started';
       CREATE INDEX IF NOT EXISTS records_pending_inputs ON records(json_extract(data,'$.createdAt')) WHERE kind='input' AND json_extract(data,'$.status')='pending';
+      CREATE INDEX IF NOT EXISTS schedule_unsettled ON records(id) WHERE kind='scheduled-work' AND (json_extract(data,'$.enabled')=1 OR json_extract(data,'$.runId') IS NOT NULL);
+      CREATE INDEX IF NOT EXISTS inbox_pending_user_conversation ON records(json_extract(data,'$.conversationId'), CAST(id AS INTEGER),id) WHERE kind='user-inbox' AND json_extract(data,'$.state')='pending';
+      CREATE INDEX IF NOT EXISTS inbox_pending_user_run ON records(json_extract(data,'$.runId'),id) WHERE kind='user-inbox' AND json_extract(data,'$.state')='pending';
+      CREATE INDEX IF NOT EXISTS inbox_pending_runtime_run ON records(json_extract(data,'$.runId'),id) WHERE kind='runtime-inbox' AND json_extract(data,'$.state')='pending';
       CREATE TABLE IF NOT EXISTS run_checkpoints(id TEXT PRIMARY KEY,data TEXT NOT NULL);
       INSERT OR IGNORE INTO run_checkpoints SELECT id,COALESCE(json_extract(data,'$.checkpoints'),'[]') FROM records WHERE kind='run';
     `);
+    this.db
+      .exec(`CREATE TABLE IF NOT EXISTS state_revision (id INTEGER PRIMARY KEY, shell INTEGER NOT NULL, library INTEGER NOT NULL);
+      INSERT OR IGNORE INTO state_revision VALUES(1,0,0)`);
+    for (const [column, kinds] of [
+      ['shell', "'conversation','project','input','skill','run'"],
+      [
+        'library',
+        "'memory','memory-learning','memory-graph-learning','memory-index-maintenance','memory-relation-review','memory-reorganization','document'",
+      ],
+    ]) {
+      for (const event of ['INSERT', 'UPDATE', 'DELETE']) {
+        const row = event === 'DELETE' ? 'OLD' : 'NEW';
+        this.db
+          .exec(`CREATE TRIGGER IF NOT EXISTS state_revision_${column}_${event} AFTER ${event} ON records WHEN ${row}.kind IN (${kinds}) BEGIN
+          UPDATE state_revision SET ${column}=${column}+1 WHERE id=1; END`);
+      }
+    }
+  }
+  stateRevisions(epoch: string, configRevision: number) {
+    const row = this.db.prepare('SELECT shell,library FROM state_revision WHERE id=1').get()!;
+    const shell = `${epoch}:${configRevision}:${row.shell}`;
+    return { shell, full: `${shell}:${row.library}` };
   }
   // Metadata projections never contain model checkpoints. Keep them transactionally
   // alongside records so UI reads do not deserialize every historical prompt.
@@ -72,6 +102,21 @@ export class Store {
           .all(conversationId)
       : this.db.prepare('SELECT data FROM run_metadata ORDER BY created_at').all();
     return (rows as { data: string }[]).map((r) => ({ ...JSON.parse(r.data), checkpoints: [] }));
+  }
+  descendantStatusCounts(root: string) {
+    return this.db
+      .prepare(
+        `WITH RECURSIVE tree(id) AS (VALUES(?) UNION SELECT r.id FROM run_metadata AS r JOIN tree ON json_extract(r.data,'$.parentRunId')=tree.id) SELECT json_extract(r.data,'$.status') AS status,count(*) AS n FROM tree JOIN run_metadata AS r ON r.id=tree.id WHERE tree.id<>? GROUP BY status`,
+      )
+      .all(root, root) as { status: Run['status']; n: number }[];
+  }
+  finalAnswerForRun(run: Pick<Run, 'id' | 'conversationId'>): string {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(data,'$.text') AS answer FROM events WHERE run_id=? AND conversation_id=? AND type='assistant.message' AND json_extract(data,'$.final')=1 AND coalesce(json_extract(data,'$.incomplete'),0)=0 ORDER BY id DESC LIMIT 1`,
+      )
+      .get(run.id, run.conversationId);
+    return typeof row?.answer === 'string' ? row.answer : '';
   }
   runHeader(key: string): Run {
     const row = this.db.prepare('SELECT data FROM run_metadata WHERE id=?').get(key) as
@@ -100,6 +145,42 @@ export class Store {
           createdAt: row.created_at,
         }
       : undefined;
+  }
+  // Kind is a closed choice: use literal predicates so SQLite can use the partial indices.
+  hasPendingInbox(kind: 'runtime-inbox' | 'user-inbox', runId: string) {
+    const predicate = kind === 'runtime-inbox' ? "kind='runtime-inbox'" : "kind='user-inbox'";
+    return !!this.db
+      .prepare(
+        `SELECT 1 FROM records WHERE ${predicate} AND json_extract(data,'$.state')='pending' AND json_extract(data,'$.runId')=? LIMIT 1`,
+      )
+      .get(runId);
+  }
+  unsettledSchedules<T>(): T[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT id,data FROM records WHERE kind='scheduled-work' AND (json_extract(data,'$.enabled')=1 OR json_extract(data,'$.runId') IS NOT NULL) ORDER BY id",
+        )
+        .all() as { id: string; data: string }[]
+    ).map((r) => parseStored(r.data, 'scheduled-work', r.id));
+  }
+  pendingRuntimeInbox(runId: string) {
+    return (
+      this.db
+        .prepare(
+          "SELECT id,data FROM records WHERE kind='runtime-inbox' AND json_extract(data,'$.state')='pending' AND json_extract(data,'$.runId')=? ORDER BY id",
+        )
+        .all(runId) as { id: string; data: string }[]
+    ).map((r) => parseStored(r.data, 'runtime-inbox', r.id));
+  }
+  pendingUserInbox(conversationId: string) {
+    return (
+      this.db
+        .prepare(
+          "SELECT id,data FROM records WHERE kind='user-inbox' AND json_extract(data,'$.state')='pending' AND json_extract(data,'$.conversationId')=? ORDER BY CAST(id AS INTEGER),id",
+        )
+        .all(conversationId) as { id: string; data: string }[]
+    ).map((r) => parseStored(r.data, 'user-inbox', r.id));
   }
   pendingInputs(): PendingInput[] {
     return (
@@ -208,6 +289,15 @@ export class Store {
     return (
       this.db.prepare('SELECT data FROM records WHERE kind=?').all(kind) as { data: string }[]
     ).map((row) => JSON.parse(row.data));
+  }
+  memoriesInScopes(scopes: readonly string[]): Memory[] {
+    if (!scopes.length) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT id,data FROM records WHERE kind='memory' AND CASE WHEN json_valid(data) THEN json_extract(data,'$.scope') END IN (${scopes.map(() => '?').join(',')}) ORDER BY id`,
+      )
+      .all(...scopes);
+    return rows.map((row) => parseStored(String(row.data), 'memory', String(row.id)) as Memory);
   }
   /** Filter in SQLite before decoding unrelated conversations' payloads. */
   forConversation<T>(kind: string, conversationId: string): T[] {

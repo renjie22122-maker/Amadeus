@@ -1,3 +1,5 @@
+import { runReceipt } from '../services/run-receipt.js';
+import { buildIdentity } from './build-identity.js';
 import { archiveExtension, inspectArchive } from '../services/archive-reader.js';
 import { identifyAttachment } from '../services/attachment-identification.js';
 import { documentMime } from '../services/file-delivery.js';
@@ -39,7 +41,7 @@ import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
 import Fastify from 'fastify';
 import { randomBytes, createHash } from 'node:crypto';
-import { conditionalState, stateRun, shellRuns } from './state-response.js';
+import { revisionState, stateRun, shellRuns } from './state-response.js';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, mkdtemp, rm, open, rename } from 'node:fs/promises';
 import { basename, join, resolve, extname } from 'node:path';
@@ -180,7 +182,26 @@ export async function createApp(options: { directory: string; dist?: string; run
   mcpRoutes(app, runtime);
   tokenActivityRoutes(app, store.path);
   runtime.media.start();
-  app.get('/api/health', async () => ({ application: 'Amadeus', version: '0.1.0', ready: true }));
+  const build = buildIdentity();
+  let serving = false;
+  app.addHook('onReady', async () => {
+    serving = true;
+  });
+  app.addHook('preClose', async () => {
+    serving = false;
+  });
+  app.get('/api/health', async (_req, reply) => {
+    let ready = false;
+    try {
+      ready =
+        serving &&
+        !!store.db.prepare('SELECT version FROM schema_migrations WHERE version=1').get();
+    } catch {
+      /* storage unavailable */
+    }
+    if (!ready) reply.code(503);
+    return { application: 'Amadeus', version: build.version, ready };
+  });
   app.get('/api/bootstrap', async (req, reply) => {
     const origin = req.headers.origin;
     assert(
@@ -190,9 +211,18 @@ export async function createApp(options: { directory: string; dist?: string; run
       403,
     );
     reply.header('Set-Cookie', 'agentdemo=' + cookie + '; HttpOnly; SameSite=Strict; Path=/');
-    return { csrf, version: '0.1.0', settings: config.public() };
+    return { csrf, version: build.version, settings: config.public() };
   });
-  const state = (shell = false) => ({
+  app.get('/api/runtime/status', async () => ({
+    build,
+    schedulerActive: scheduledWork.active,
+    notebook: notebookMaintenance.sweepHealth(),
+  }));
+  const stateEpoch = id();
+  const revisions = () => store.stateRevisions(stateEpoch, config.revision);
+  const state = (shell: boolean, viewRevision: string) => ({
+    viewRevision,
+    serviceBuild: build,
     pendingInputs: store.pendingInputs().map((q) => ({
       ...q,
       title: store.get<Conversation>('conversation', q.conversationId)?.title,
@@ -229,9 +259,11 @@ export async function createApp(options: { directory: string; dist?: string; run
         }),
     settings: config.public(),
   });
-  app.get<{ Querystring: { view?: string } }>('/api/state', async (req, reply) =>
-    conditionalState(req, reply, state(req.query.view === 'shell')),
-  );
+  app.get<{ Querystring: { view?: string } }>('/api/state', async (req, reply) => {
+    const shell = req.query.view === 'shell';
+    const revision = revisions()[shell ? 'shell' : 'full'];
+    return revisionState(req, reply, revision, () => state(shell, revision));
+  });
   conversationViewRoutes(app, runtime);
   inspectionRoutes(app, runtime);
   app.post<{ Params: { id: string } }>('/api/conversations/:id/recovery/check', async (req) => {
@@ -510,6 +542,10 @@ export async function createApp(options: { directory: string; dist?: string; run
     const { checkpoints: _checkpoints, ...receipt } = started;
     return receipt;
   });
+  app.get<{ Params: { conversationId: string; runId: string } }>(
+    '/api/conversations/:conversationId/runs/:runId/receipt',
+    async (req) => runReceipt(store, req.params.conversationId, req.params.runId),
+  );
   app.post<{ Params: { id: string } }>('/api/runs/:id/stop', async (req) => {
     runtime.stop(req.params.id);
     return { ok: true };
@@ -904,13 +940,21 @@ export async function createApp(options: { directory: string; dist?: string; run
   app.post('/api/knowledge/search', async (req) => {
     const data = z
       .object({
+        includeDiagnostics: z.boolean().default(false),
         scope: z.string(),
         query: z.string().min(1),
         asOf: z.number().int().nonnegative().optional(),
       })
       .parse(req.body);
     checkScope(data.scope);
-    return runtime.knowledge.hybrid([data.scope], data.query, 6, undefined, data.asOf);
+    const report = await runtime.knowledge.queryReport(
+      [data.scope],
+      data.query,
+      6,
+      undefined,
+      data.asOf,
+    );
+    return data.includeDiagnostics ? report : report.results;
   });
   app.get<{ Params: { id: string } }>('/api/knowledge/:id/chunks', async (req) => {
     const doc = store.get<any>('document', req.params.id);
@@ -1321,15 +1365,21 @@ export async function createApp(options: { directory: string; dist?: string; run
       'X-Accel-Buffering': 'no',
     });
     const send = (type: string, data: any) => {
-      if (!reply.raw.destroyed)
-        reply.raw.write(
-          (type === 'agent' && Number.isSafeInteger(data.id) ? 'id: ' + data.id + '\n' : '') +
-            'event: ' +
-            type +
-            '\ndata: ' +
-            JSON.stringify(data) +
-            '\n\n',
-        );
+      // Never queue an unbounded stream for a suspended or stalled tab. A fresh
+      // connection replays durable events and reloads the authoritative snapshot.
+      if (reply.raw.destroyed) return;
+      if (reply.raw.writableLength > 512 * 1024) {
+        reply.raw.destroy();
+        return;
+      }
+      reply.raw.write(
+        (type === 'agent' && Number.isSafeInteger(data.id) ? 'id: ' + data.id + '\n' : '') +
+          'event: ' +
+          type +
+          '\ndata: ' +
+          JSON.stringify(data) +
+          '\n\n',
+      );
     };
     const event = (e: any) => send('agent', e),
       delta = (e: any) => send('delta', e);
@@ -1342,24 +1392,34 @@ export async function createApp(options: { directory: string; dist?: string; run
       (store.db.prepare('SELECT COALESCE(MAX(id),0) AS id FROM events').get() as any).id,
     );
     if (rawCursor != null && Number.isSafeInteger(cursor) && cursor >= 0) {
-      const rows = store.db
-        .prepare('SELECT * FROM events WHERE id>? ORDER BY id LIMIT 1001')
-        .all(cursor) as any[];
-      if (rows.length > 1000 || cursor > latestEvent) resync = true;
-      else
-        for (const r of rows)
+      // Bound replay before materializing payloads. Large gaps are reconciled from
+      // the authoritative snapshot instead of repeatedly disconnecting mid-replay.
+      const size = store.db
+        .prepare(
+          'SELECT count(*) AS n,coalesce(sum(bytes),0) AS bytes FROM (SELECT length(CAST(data AS BLOB))+length(conversation_id)+coalesce(length(run_id),0)+length(type)+180 AS bytes FROM events WHERE id>? ORDER BY id LIMIT 1001)',
+        )
+        .get(cursor)!;
+      resync = cursor > latestEvent || Number(size.n) > 1000 || Number(size.bytes) > 256 * 1024;
+      if (!resync)
+        for (const r of store.db
+          .prepare('SELECT * FROM events WHERE id>? AND id<=? ORDER BY id')
+          .iterate(cursor, latestEvent)) {
           send('agent', {
             id: r.id,
             conversationId: r.conversation_id,
             runId: r.run_id,
             type: r.type,
-            data: JSON.parse(r.data),
+            data: JSON.parse(String(r.data)),
             createdAt: r.created_at,
           });
+        }
     }
     // The client reloads the authoritative snapshot on every ready (including replay gaps).
-    send('ready', { resync, cursor: latestEvent });
-    const timer = setInterval(() => send('heartbeat', { at: Date.now() }), 15000);
+    send('ready', { resync, cursor: latestEvent, revisions: revisions() });
+    const timer = setInterval(
+      () => send('heartbeat', { at: Date.now(), revisions: revisions() }),
+      15000,
+    );
     req.raw.on('close', () => {
       clearInterval(timer);
       runtime.bus.off('event', event);

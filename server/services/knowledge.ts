@@ -1,3 +1,4 @@
+import { scopedVectorView } from './scoped-vector-view.js';
 import { Worker } from 'node:worker_threads';
 import { selectEvidence } from './research-evidence.js';
 import { streamedVectors } from './streamed-vectors.js';
@@ -25,7 +26,6 @@ export class Knowledge {
   private statusJobs = new Map<string, Promise<any>>();
   private statusWorkers = new Set<Worker>();
   private statusCache = new Map<string, any>();
-  lastRetrieval: Record<string, unknown> = {};
   close() {
     this.ann.close();
     for (const worker of this.statusWorkers) void worker.terminate();
@@ -42,6 +42,18 @@ export class Knowledge {
     store.db
       .exec(`CREATE TABLE IF NOT EXISTS vector_revision(id INTEGER PRIMARY KEY,version INTEGER NOT NULL);
     INSERT OR IGNORE INTO vector_revision VALUES(1,0);
+    CREATE TABLE IF NOT EXISTS vector_scope_revision(scope TEXT PRIMARY KEY,version INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS document_scope ON records(json_extract(data,'$.scope'), id) WHERE kind='document';
+    CREATE TRIGGER IF NOT EXISTS scope_vector_insert AFTER INSERT ON chunks WHEN NEW.vector IS NOT NULL BEGIN
+      INSERT INTO vector_scope_revision VALUES(NEW.scope,1) ON CONFLICT(scope) DO UPDATE SET version=version+1;
+    END;
+    CREATE TRIGGER IF NOT EXISTS scope_vector_delete AFTER DELETE ON chunks WHEN OLD.vector IS NOT NULL BEGIN
+      INSERT INTO vector_scope_revision VALUES(OLD.scope,1) ON CONFLICT(scope) DO UPDATE SET version=version+1;
+    END;
+    CREATE TRIGGER IF NOT EXISTS scope_vector_update AFTER UPDATE OF id,scope,document_id,vector,text,name,ordinal,source_hash ON chunks WHEN OLD.vector IS NOT NULL OR NEW.vector IS NOT NULL BEGIN
+      INSERT INTO vector_scope_revision VALUES(OLD.scope,1) ON CONFLICT(scope) DO UPDATE SET version=version+1;
+      INSERT INTO vector_scope_revision SELECT NEW.scope,1 WHERE OLD.scope<>NEW.scope ON CONFLICT(scope) DO UPDATE SET version=version+1;
+    END;
     CREATE TRIGGER IF NOT EXISTS vectors_insert AFTER INSERT ON chunks BEGIN UPDATE vector_revision SET version=version+1 WHERE id=1; END;
     CREATE TRIGGER IF NOT EXISTS vectors_update AFTER UPDATE OF vector ON chunks BEGIN UPDATE vector_revision SET version=version+1 WHERE id=1; END;
     CREATE TRIGGER IF NOT EXISTS vectors_delete AFTER DELETE ON chunks BEGIN UPDATE vector_revision SET version=version+1 WHERE id=1; END;`);
@@ -531,10 +543,28 @@ export class Knowledge {
     documentIds: string[] = [],
     mode: 'hybrid' | 'lexical' = 'hybrid',
   ) {
+    return (
+      await this.queryReport(scopes, query, limit, signal, asOf, bypassPolicy, documentIds, mode)
+    ).results;
+  }
+  async queryReport(
+    scopes: string[],
+    query: string,
+    limit = 6,
+    signal?: AbortSignal,
+    asOf = Date.now(),
+    bypassPolicy = false,
+    documentIds: string[] = [],
+    mode: 'hybrid' | 'lexical' = 'hybrid',
+  ) {
     const traceId = id(),
       startedAt = Date.now();
+    const configuredVectors = this.retrieval().vectors;
     const diagnostics: Record<string, unknown> = {
+      configuredVectorBackend: configuredVectors?.enabled ? configuredVectors.backend : 'builtin',
+      configuredIndex: configuredVectors?.enabled ? configuredVectors.index : 'auto',
       requestedMode: mode,
+      vectorRowsRead: 0,
       semanticStatus: 'not_started',
       embeddingModel: null,
       embeddingDimension: null,
@@ -595,12 +625,13 @@ export class Knowledge {
         })),
         conclusion: 'unassessed',
       });
-      return results.map((r) => ({
+      const hits = results.map((r) => ({
         ...r,
         retrievalTraceId: traceId,
         retrievalDiagnostics: diagnostics,
         relevanceStatus: 'unassessed',
       }));
+      return { results: hits, retrievalTraceId: traceId, retrievalDiagnostics: diagnostics };
     } catch (error) {
       record({ status: signal?.aborted ? 'cancelled' : 'failed' });
       throw error;
@@ -617,7 +648,6 @@ export class Knowledge {
     diagnostics: Record<string, unknown> = {},
     mode: 'hybrid' | 'lexical' = 'hybrid',
   ) {
-    this.lastRetrieval = diagnostics;
     const timings = (diagnostics.timingsMs ||= {}) as Record<string, number>;
     const measure = <T>(stage: string, fn: () => T): T => {
       const at = performance.now();
@@ -706,6 +736,7 @@ export class Knowledge {
         )
         .get(...scopes) as any
     ).n;
+    diagnostics.builtinPath = vectorCount >= 2000 ? 'streamed-exact' : 'exact';
     if (vectorCount >= 2000) {
       try {
         const vectorStarted = performance.now();
@@ -777,22 +808,12 @@ export class Knowledge {
         return this.search(scopes, query, limit, asOf, documentIds);
       }
     }
-    const rows = this.store.db
+    const view = scopedVectorView(this.store, scopes, documentIds, asOf);
+    const eligible = this.store.db
       .prepare(
-        'SELECT * FROM chunks WHERE vector IS NOT NULL AND scope IN (' +
-          scopes.map(() => '?').join(',') +
-          ')' +
-          (documentIds.length
-            ? ' AND document_id IN (' + documentIds.map(() => '?').join(',') + ')'
-            : '') +
-          ' ORDER BY id',
+        `SELECT * FROM chunks WHERE vector IS NOT NULL AND scope IN (${scopes.map(() => '?').join(',')}) AND document_id IN (${view.scopeEligibility}) ORDER BY id`,
       )
-      .all(...scopes, ...documentIds) as any[];
-    const eligible = rows.filter(
-      (r) =>
-        (documentIds.length === 0 || documentIds.includes(r.document_id)) &&
-        documentAt(this.store.maybe('document', r.document_id), asOf),
-    );
+      .all(...scopes, asOf, asOf, ...scopes, ...documentIds) as any[];
     let invalid = 0,
       incompatible = 0;
     const vectors = eligible.flatMap((r) => {
@@ -815,6 +836,9 @@ export class Knowledge {
     };
     Object.assign(diagnostics, {
       vectorHealth,
+      vectorRowsRead: eligible.length,
+      vectorCoverage: eligible.length,
+      vectorHealthBasis: 'rows_read_this_request',
       degraded: invalid > 0 || incompatible > 0,
       backend: 'lexical',
       semanticStatus: 'no_compatible_candidates',
@@ -824,9 +848,6 @@ export class Knowledge {
     let ranked: { id: string; score: number }[];
     const external = this.retrieval().vectors;
     if (external?.enabled) {
-      const revision = (
-        this.store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any
-      ).version;
       let result;
       try {
         result = await externalVectorSearch(
@@ -844,21 +865,24 @@ export class Knowledge {
           semanticStatus: 'backend_failed',
           errorCode: String(error.code || 'RETRIEVAL_SERVICE'),
         });
-        return lexical
-          .slice(0, limit)
-          .map((hit) => ({ ...hit, retrievalDiagnostics: diagnostics }));
+        return this.search(scopes, query, limit, asOf, documentIds).map((hit) => ({
+          ...hit,
+          retrievalDiagnostics: diagnostics,
+        }));
       }
       assert(
-        (this.store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any)
-          .version === revision,
+        !view.changed(),
         'INDEX_CHANGED',
         'Knowledge changed during external retrieval; search again.',
       );
       ranked = result.result;
       Object.assign(diagnostics, {
         ...diagnostics,
-        ...result,
-        result: undefined,
+        backend: result.backend,
+        effectiveIndex: result.effectiveIndex,
+        fallbackReason: result.fallbackReason,
+        shards: result.shards,
+        vectorInputMode: 'bounded_snapshot_upload',
         chunks: vectors.length,
       });
     } else if (vectors.length < 2000) {
@@ -866,13 +890,16 @@ export class Knowledge {
         .map((r) => ({ id: r.id, score: cosine(q, r.v.values) }))
         .sort((a, b) => b.score - a.score)
         .slice(0, 60);
-      Object.assign(diagnostics, { ...diagnostics, backend: 'exact', chunks: vectors.length });
+      Object.assign(diagnostics, {
+        backend: 'exact',
+        effectiveIndex: 'flat',
+        vectorInputMode: 'exact_scan',
+        chunks: vectors.length,
+      });
     } else {
-      const revision = (
-        this.store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any
-      ).version;
       const generation = JSON.stringify([
-        revision,
+        view.before,
+        view.eligible,
         [...scopes].sort(),
         this.embeddings.fingerprint(),
         q.length,
@@ -884,12 +911,7 @@ export class Knowledge {
         60,
         signal,
       );
-      assert(
-        (this.store.db.prepare('SELECT version FROM vector_revision WHERE id=1').get() as any)
-          .version === revision,
-        'INDEX_CHANGED',
-        'Knowledge changed during retrieval; search again.',
-      );
+      assert(!view.changed(), 'INDEX_CHANGED', 'Knowledge changed during retrieval; search again.');
       ranked = result.result;
       Object.assign(diagnostics, {
         ...diagnostics,
@@ -1358,9 +1380,9 @@ export class Knowledge {
         stopReason = 'time-budget';
         break;
       }
-      let hits: any[];
+      let hits: any[], traceId: string;
       try {
-        hits = await this.hybrid(
+        const report = await this.queryReport(
           scopes,
           query,
           Math.min(24, Math.max(12, limit * 3)),
@@ -1372,6 +1394,8 @@ export class Knowledge {
           false,
           documentIds,
         );
+        hits = report.results;
+        traceId = report.retrievalTraceId;
       } catch (error) {
         if (signal?.aborted) throw error;
         stopReason = Date.now() - startedAt >= timeBudgetMs ? 'time-budget' : 'retrieval-failed';
@@ -1387,7 +1411,7 @@ export class Knowledge {
         query,
         hits: hits.length,
         newChunks: added,
-        traceId: hits[0]?.retrievalTraceId ?? null,
+        traceId,
         assessment: 'unassessed',
         missingEvidence: hits.length ? null : 'No candidates; corpus absence is not proven.',
       });

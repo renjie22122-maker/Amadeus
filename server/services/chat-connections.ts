@@ -103,6 +103,7 @@ export class ChatConnections {
       ['chat_inbox', 'sender_id', 'TEXT'],
       ['chat_inbox', 'attachment_ids', "TEXT NOT NULL DEFAULT '[]'"],
       ['chat_outbox', 'reference', 'TEXT'],
+      ['chat_outbox', 'run_id', 'TEXT'],
       ['chat_outbox', 'reply_plan', 'TEXT'],
       ['chat_outbox', 'attempts', 'INTEGER NOT NULL DEFAULT 0'],
       ['chat_outbox', 'retry_at', 'INTEGER NOT NULL DEFAULT 0'],
@@ -115,6 +116,9 @@ export class ChatConnections {
         store.db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
     }
     store.db.prepare("UPDATE chat_inbox SET state='media-failed' WHERE state='downloading'").run();
+    store.db.exec(
+      'CREATE INDEX IF NOT EXISTS chat_outbox_run ON chat_outbox(run_id,state) WHERE run_id IS NOT NULL',
+    );
     // A crash after send may have delivered it. Never silently replay uncertain sends.
     store.db.prepare("UPDATE chat_outbox SET state='uncertain' WHERE state='sending'").run();
     // Only refresh previously valid bindings. Never revive stale grants or paused connections.
@@ -822,11 +826,11 @@ export class ChatConnections {
     }
     return command ? 'done' : 'queued';
   }
-  reply(c: ChatConnection, key: string, text: string, plan?: ChatReplyPlan) {
+  reply(c: ChatConnection, key: string, text: string, plan?: ChatReplyPlan, runId?: string) {
     for (const [n, part] of messageParts(text).entries())
       this.store.db
         .prepare(
-          'INSERT OR IGNORE INTO chat_outbox (id,connection_id,state,text,created_at,reply_plan) VALUES(?,?,?,?,?,?)',
+          'INSERT OR IGNORE INTO chat_outbox (id,connection_id,state,text,created_at,reply_plan,run_id) VALUES(?,?,?,?,?,?,?)',
         )
         .run(
           key + ':' + n,
@@ -835,6 +839,7 @@ export class ChatConnections {
           part,
           Date.now(),
           n === 0 && plan ? JSON.stringify(plan) : null,
+          runId ?? null,
         );
   }
   private belongs(c: ChatConnection, runId: string): boolean {
@@ -1187,7 +1192,7 @@ export class ChatConnections {
             for (const reference of plan.references || [])
               this.store.db
                 .prepare(
-                  'INSERT OR IGNORE INTO chat_outbox(id,connection_id,state,text,created_at,reference) VALUES(?,?,?,?,?,?)',
+                  'INSERT OR IGNORE INTO chat_outbox(id,connection_id,state,text,created_at,reference,run_id) VALUES(?,?,?,?,?,?,?)',
                 )
                 .run(
                   c.id + ':' + run.id + ':' + reference,
@@ -1196,6 +1201,7 @@ export class ChatConnections {
                   '',
                   Date.now(),
                   reference,
+                  run.id,
                 );
           if (!silent) {
             const jobs = new Map<string, any>();
@@ -1246,6 +1252,7 @@ export class ChatConnections {
                   row.id + ':message:' + index,
                   chatPlainText(message),
                   index === 0 && !plan?.mediaOnly ? plan : undefined,
+                  run.id,
                 );
             }
           }
@@ -1465,7 +1472,13 @@ export class ChatConnections {
         const mode = this.store.maybe<any>('chat-media-only-run', event.run_id);
         if (mode?.connectionId === c.id && mode.jobIds.includes(data.job.id)) {
           if (data.job.status !== 'completed' || !data.job.outputs?.length)
-            this.reply(c, 'media-only-failed:' + data.job.id, '媒体生成未成功完成，请稍后重试。');
+            this.reply(
+              c,
+              'media-only-failed:' + data.job.id,
+              '媒体生成未成功完成，请稍后重试。',
+              undefined,
+              event.run_id,
+            );
           const remaining = mode.jobIds.filter((id: string) => id !== data.job.id);
           if (remaining.length)
             this.store.put('chat-media-only-run', { ...mode, jobIds: remaining });
@@ -1487,7 +1500,7 @@ export class ChatConnections {
       for (const file of files)
         this.store.db
           .prepare(
-            'INSERT OR IGNORE INTO chat_outbox (id,connection_id,state,text,created_at,reference) VALUES(?,?,?,?,?,?)',
+            'INSERT OR IGNORE INTO chat_outbox (id,connection_id,state,text,created_at,reference,run_id) VALUES(?,?,?,?,?,?,?)',
           )
           .run(
             c.id + ':' + event.run_id + ':' + file.reference,
@@ -1496,6 +1509,7 @@ export class ChatConnections {
             file.name,
             Date.now(),
             file.reference,
+            event.run_id,
           );
       this.store.put('chat-file-cursor', { id: c.id, eventId: event.id });
     }

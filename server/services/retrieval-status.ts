@@ -10,7 +10,7 @@ export function indexAdvice(count: number, dimensions: number[], memoryBudgetMiB
   const bytes = dimensions.length === 1 ? count * dimensions[0] * 4 : null;
   const budget = memoryBudgetMiB == null ? null : memoryBudgetMiB * 1024 * 1024;
   return {
-    builtinSelection: count < 2000 ? 'exact' : 'hnsw',
+    builtinSelection: count < 2000 ? 'exact' : 'streamed-exact',
     recommendation:
       dimensions.length > 1
         ? 'repair_mixed_dimensions'

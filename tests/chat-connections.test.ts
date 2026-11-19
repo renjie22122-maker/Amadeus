@@ -1,3 +1,4 @@
+import { runReceipt } from '../server/services/run-receipt.js';
 import { onebotSendError, ChatSendRejected } from '../server/services/chat-send-error.js';
 import Fastify from 'fastify';
 import { chatConnectionRoutes } from '../server/http/chat-connections.js';
@@ -928,6 +929,47 @@ test('media-only reply suppresses final emoji and duplicate explicit media refer
   assert.equal(rows.length, 1);
   assert.equal(rows[0].reference, 'media:voice:0');
   assert(!rows.some((r) => r.text === '🔊'));
+});
+test('outgoing run receipt separates queued, platform acknowledgement and unknown effects, scoped to its conversation', (t) => {
+  const { store, channel, c } = completedRemoteReply(t, { messages: ['private text', 'second'] });
+  channel.tick(Date.now() + 20000);
+  const read = () => runReceipt(store, 'chat', 'delivery-run');
+  assert.equal(Number(read().delivery[0].count), 2);
+  store.event('chat', 'delivery-run', 'tool.progress', {
+    name: 'read_file',
+    phase: 'waiting-or-running',
+    elapsedMs: 1,
+  });
+  store.event('chat', 'delivery-run', 'tool.progress', {
+    name: 'read_file',
+    phase: 'settled',
+    elapsedMs: 713,
+    outcome: { status: 'succeeded' },
+    arguments: 'private tool input',
+  });
+  const ids = store.db.prepare('SELECT id,created_at FROM chat_outbox ORDER BY id').all();
+  store.db.prepare("UPDATE chat_outbox SET state='sent' WHERE id=?").run(ids[0].id);
+  store.db.prepare("UPDATE chat_outbox SET state='uncertain' WHERE id=?").run(ids[1].id);
+  store.db
+    .prepare(
+      'INSERT INTO chat_delivery(id,connection_id,route,message_id,sent_at) VALUES(?,?,?,?,?)',
+    )
+    .run(ids[0].id, c.id, 'sample', 'private platform id', Number(ids[0].created_at) + 83);
+  assert.equal(read().delivery[0].maxAckMs, 83);
+  assert.equal(read().delivery[1].maxAckMs, null);
+  assert.deepEqual(
+    read().settledTools.map((x) => [x.name, x.elapsedMs, x.status]),
+    [['read_file', 713, 'succeeded']],
+  );
+  assert.deepEqual(
+    read().delivery.map((r) => [r.state, r.count, r.platformReceipts]),
+    [
+      ['sent', 1, 1],
+      ['uncertain', 1, 0],
+    ],
+  );
+  assert(!JSON.stringify(read()).includes('private'));
+  assert.throws(() => runReceipt(store, 'other', 'delivery-run'), /not found/i);
 });
 test('media-only pending generation sends no placeholder and reports a late failure once', (t) => {
   const { store, channel } = completedRemoteReply(t, { mediaOnly: true }, '🔊');

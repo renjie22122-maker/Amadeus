@@ -66,3 +66,50 @@ test('bounded memory backfill resumes missing vectors without re-encoding comple
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('scoped recall and backfill skip unrelated histories and recheck scope after embedding', async (t) => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const convo = { id: 'owner', projectId: 'alpha' };
+  store.put('conversation', convo);
+  const mem = {
+    id: 'alpha',
+    scope: 'project:alpha',
+    content: 'alignment workflow',
+    source: 'User',
+    active: true,
+    status: 'active',
+    revision: 1,
+    createdAt: 1,
+  };
+  store.put('memory', mem);
+  store.put('memory', { ...mem, id: 'elsewhere', scope: 'project:other' });
+  const encodeCalls: string[] = [];
+  const index = new MemoryIndex(store, {
+    enabled: () => true,
+    fingerprint: () => 'fixture',
+    encode: async (texts: string[], _signal?: AbortSignal, purpose?: string) => {
+      encodeCalls.push(...texts);
+      if (purpose === 'query') store.put('conversation', { ...convo, remoteMemoryOnly: true });
+      return texts.map(() => [1, 2]);
+    },
+  } as any);
+  assert.deepEqual(store.memoriesInScopes([]), []);
+  assert.deepEqual(
+    store.memoriesInScopes(['project:alpha']).map((m) => m.id),
+    ['alpha'],
+  );
+  assert.deepEqual((await index.index('project:alpha')).indexed, 1);
+  assert.deepEqual(encodeCalls, ['alignment workflow']);
+  const result = await index.recall(
+    'workflow',
+    'alpha',
+    new AbortController().signal,
+    false,
+    Date.now(),
+    'owner',
+  );
+  assert.deepEqual(result.memories, []);
+  assert.match(result.fallback || '', /scope changed/);
+  assert.deepEqual(encodeCalls, ['alignment workflow', 'workflow']);
+});

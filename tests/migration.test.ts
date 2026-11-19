@@ -184,8 +184,8 @@ test('streamed knowledge retrieval preserves scope, deletion and embedding model
       );
     });
     let result = await kb.hybrid(['project:a'], 'unmatchedquery', 6);
-    assert.equal(kb.lastRetrieval.backend, 'streamed-exact');
-    assert.equal(kb.lastRetrieval.semanticStatus, 'searched');
+    assert.equal(result[0].retrievalDiagnostics.backend, 'streamed-exact');
+    assert.equal(result[0].retrievalDiagnostics.semanticStatus, 'searched');
     assert.ok(result.length);
     assert.ok(result.every((r) => r.scope === 'project:a'));
     const removed = result[0].id;

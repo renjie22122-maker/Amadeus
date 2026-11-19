@@ -28,6 +28,15 @@ const hash = (x: unknown) => createHash('sha256').update(JSON.stringify(x)).dige
 const kind = 'chat-notebook-maintenance';
 /** Text-only maintenance. One bounded batch per sweep; never sends platform messages. */
 export class ChatNotebookMaintenance {
+  private health = {
+    lastSuccessAt: null as number | null,
+    lastFailureAt: null as number | null,
+    lastFailureCode: null as string | null,
+    consecutiveFailures: 0,
+  };
+  sweepHealth() {
+    return { ...this.health };
+  }
   private timer?: ReturnType<typeof setInterval>;
   private task: Promise<void> | null = null;
   private controller = new AbortController();
@@ -37,6 +46,7 @@ export class ChatNotebookMaintenance {
     private provider: (p: Profile) => ModelProvider = providerFor,
   ) {}
   start() {
+    if (this.timer || this.controller.signal.aborted) return;
     this.timer = setInterval(() => void this.tick(), 30000);
     this.timer.unref();
   }
@@ -48,7 +58,20 @@ export class ChatNotebookMaintenance {
   async tick(now = Date.now()) {
     if (this.task || this.controller.signal.aborted) return;
     this.task = this.sweep(now)
-      .catch(() => {})
+      .then(() => {
+        if (!this.controller.signal.aborted) {
+          this.health.lastSuccessAt = now;
+          this.health.consecutiveFailures = 0;
+        }
+      })
+      .catch((error: unknown) => {
+        if (this.controller.signal.aborted) return;
+        ++this.health.consecutiveFailures;
+        this.health.lastFailureAt = now;
+        // Never include prompts, model response text, account IDs or raw storage errors.
+        this.health.lastFailureCode =
+          error instanceof SyntaxError ? 'INVALID_RECORD' : 'SWEEP_FAILED';
+      })
       .finally(() => {
         this.task = null;
       });

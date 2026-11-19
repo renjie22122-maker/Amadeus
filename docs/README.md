@@ -8,6 +8,8 @@ This is the maintained English/Chinese documentation set, reviewed on 2026-10-05
 
 ## Current guides
 
+- [Runtime behaviour, version and diagnostics](architecture-runtime-contracts.md)
+
 ### Use the workspace
 
 - [Feature guide](FEATURES.md)

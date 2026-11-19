@@ -70,3 +70,4 @@ build/
 
 /.desktop-connected/
 !/scripts/probe-windows-mxc.mjs
+!/scripts/inbox-profile.mjs

@@ -58,11 +58,7 @@ export class TeamCoordinator {
           signal.removeEventListener('abort', abort);
         };
         const check = () => {
-          if (
-            this.store
-              .list<any>('user-inbox')
-              .some((x) => x.runId === run.id && x.state === 'pending')
-          ) {
+          if (this.store.hasPendingInbox('user-inbox', run.id)) {
             clean();
             resolve({ status: 'input_pending', messages: [] });
             return;
@@ -120,11 +116,7 @@ export class TeamCoordinator {
           signal.removeEventListener('abort', abort);
         };
         const check = () => {
-          if (
-            this.store
-              .list<any>('user-inbox')
-              .some((x) => x.runId === run.id && x.state === 'pending')
-          ) {
+          if (this.store.hasPendingInbox('user-inbox', run.id)) {
             cleanup();
             resolve({ status: 'input_pending', tasks: [] });
             return;

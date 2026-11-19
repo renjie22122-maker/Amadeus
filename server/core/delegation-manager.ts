@@ -55,8 +55,8 @@ export class DelegationManager {
     const fingerprint = delegationFingerprint(task, deliverable);
     assert(
       this.store
-        .runMetadata()
-        .filter((r) => r.parentRunId && !terminal(r.status) && this.root(r) === root).length +
+        .descendantStatusCounts(root)
+        .reduce((count, row) => count + (terminal(row.status) ? 0 : row.n), 0) +
         (this.pendingSpawns.get(root) || 0) <
         configuredLimit(settings.maxChildren),
       'CHILD_LIMIT',
@@ -279,8 +279,8 @@ export class DelegationManager {
     assertDelegationRecovery(this.store, root, child.id, fingerprint);
     assert(
       this.store
-        .runMetadata()
-        .filter((r) => r.parentRunId && !terminal(r.status) && this.root(r) === root).length +
+        .descendantStatusCounts(root)
+        .reduce((count, row) => count + (terminal(row.status) ? 0 : row.n), 0) +
         (this.pendingSpawns.get(root) || 0) <
         configuredLimit(settings.maxChildren),
       'CHILD_LIMIT',
@@ -415,13 +415,18 @@ export class DelegationManager {
   }
   private root(run: Run): string {
     let r = run;
-    while (r.parentRunId) r = this.store.runHeader(r.parentRunId);
+    const seen = new Set<string>();
+    while (r.parentRunId) {
+      assert(!seen.has(r.id), 'RUN_TREE_CYCLE', 'Cannot resolve an inconsistent run tree.');
+      seen.add(r.id);
+      r = this.store.runHeader(r.parentRunId);
+    }
     return r.id;
   }
   async wait(parent: Run, keys: string[], signal: AbortSignal) {
     for (const key of keys)
       assert(
-        this.root(this.store.get<Run>('run', key)) === this.root(parent) && key !== parent.id,
+        this.root(this.store.runHeader(key)) === this.root(parent) && key !== parent.id,
         'TEAM_SCOPE',
         'Cannot wait on an unrelated task.',
       );
@@ -452,9 +457,7 @@ export class DelegationManager {
           signal.removeEventListener('abort', abort);
         };
         const check = () => {
-          const pending = this.store
-            .list<any>('user-inbox')
-            .some((x) => x.runId === parent.id && x.state === 'pending');
+          const pending = this.store.hasPendingInbox('user-inbox', parent.id);
           if (pending || keys.every((key) => terminal(this.store.runHeader(key).status))) {
             waitReason = pending ? 'input_pending' : 'completed';
             cleanup();
@@ -482,15 +485,13 @@ export class DelegationManager {
         this.store.transition(parent.id, 'running');
     }
     return keys.map((key) => {
-      const r = this.store.get<Run>('run', key);
+      const r = this.store.runHeader(key);
       return {
         runId: key,
         waitReason,
         status: r.status,
         error: r.error,
-        answer:
-          this.store.selectedEvents(r.conversationId, ['assistant.message'], 1).at(-1)?.data.text ||
-          '',
+        answer: this.store.finalAnswerForRun(r),
         usage: { input: r.inputTokens, output: r.outputTokens, cost: r.estimatedUsd },
       };
     });

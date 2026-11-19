@@ -84,6 +84,7 @@ export class RunEnvironment {
         .map((m) => m.content),
       ...pending,
     ].join('\n');
+    const recallStart = performance.now();
     const recalled = ctx.conversation.memory
       ? await this.memories.recall(
           query,
@@ -94,9 +95,11 @@ export class RunEnvironment {
           ctx.conversation.id,
         )
       : { memories: [], method: 'disabled', fallback: undefined };
+    const recallMs = Math.round(performance.now() - recallStart);
     const memories = recalled.memories;
     const memoryChecks = new MemoryChecks(this.store).register(run, memories);
     this.store.event(run.conversationId, run.id, 'memory.recalled', {
+      elapsedMs: recallMs,
       ids: memories.map((m) => m.id),
       method: recalled.method,
       fallback: recalled.fallback,

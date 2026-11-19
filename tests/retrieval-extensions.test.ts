@@ -241,9 +241,9 @@ test('optional LightRAG failure preserves scoped base results and reports degrad
   const doc: any = kb.import('general', 'facts', 'The capital is Paris.');
   const result = await kb.hybrid(['general'], 'capital');
   assert.ok(result.some((r: any) => r.documentId === doc.id));
-  assert.equal(kb.lastRetrieval.lightRagStatus, 'unavailable');
-  assert.equal(kb.lastRetrieval.degraded, true);
-  assert.ok((kb.lastRetrieval.timingsMs as any).lightRag >= 0);
+  assert.equal(result[0].retrievalDiagnostics.lightRagStatus, 'unavailable');
+  assert.equal(result[0].retrievalDiagnostics.degraded, true);
+  assert.ok((result[0].retrievalDiagnostics.timingsMs as any).lightRag >= 0);
 });
 
 test('unknown LightRAG jobs reconcile exact scoped batch without a second submission', async (t) => {

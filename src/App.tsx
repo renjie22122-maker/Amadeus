@@ -1,3 +1,4 @@
+import { RunReceipt } from './components/RunReceipt';
 const WorkspacePage = lazy(() =>
   import('./pages/Workspace').then((m) => ({ default: m.WorkspacePage })),
 );
@@ -134,6 +135,7 @@ export function App() {
   useScheduleNotifications(notify, language === 'zh');
   const pageRef = useRef(page);
   pageRef.current = page;
+  const loadedRevisions = useRef<Record<string, string | undefined>>({});
   const refreshPending = useRef(new Map<string, Promise<any>>());
   const refresh = useCallback(() => {
     const view = ['knowledge', 'memory', 'memories'].includes(pageRef.current) ? 'full' : 'shell';
@@ -141,6 +143,7 @@ export function App() {
     if (!pending) {
       pending = api('/state?view=' + view)
         .then((value) => {
+          loadedRevisions.current[view] = value.viewRevision;
           setState((old) =>
             old ? mergeState(old, value) : { memories: [], documents: [], ...value },
           );
@@ -357,8 +360,18 @@ export function App() {
           chunks.set(e.messageId, batch);
           if (!flushTimer) flushTimer = setTimeout(flush, 80);
         },
-        heartbeat: () => {
-          void refresh().catch(() => {});
+        heartbeat: (event) => {
+          const view = ['knowledge', 'memory', 'memories'].includes(pageRef.current)
+            ? 'full'
+            : 'shell';
+          let revision;
+          try {
+            revision = JSON.parse(event.data)?.revisions?.[view];
+          } catch {
+            /* older servers */
+          }
+          if (!revision || revision !== loadedRevisions.current[view])
+            void refresh().catch(() => {});
         },
         ready: () => {
           void refresh().catch((e) => notify(e.message));
@@ -1268,7 +1281,13 @@ export function App() {
             <Suspense
               fallback={<p role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</p>}
             >
-              <SettingsPage settings={state.settings} t={t} refresh={refresh} notify={notify} />
+              <SettingsPage
+                build={state.serviceBuild}
+                settings={state.settings}
+                t={t}
+                refresh={refresh}
+                notify={notify}
+              />
             </Suspense>
           </div>
         ) : page !== 'chat' ? (
@@ -1688,6 +1707,14 @@ export function App() {
                           </span>
                         )}
                       </div>
+                    )}
+                    {run && selected && (
+                      <RunReceipt
+                        key={run.id}
+                        runId={run.id}
+                        conversationId={selected}
+                        zh={language === 'zh'}
+                      />
                     )}
                     <div ref={bottom} />
                   </div>
